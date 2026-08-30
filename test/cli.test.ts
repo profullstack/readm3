@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseArgs } from "../src/cli.ts";
+import { readFile } from "node:fs/promises";
+import { parseArgs, VERSION } from "../src/cli.ts";
 
 test("no arguments browse the working directory", () => {
   const args = parseArgs([]);
@@ -51,4 +52,11 @@ test("bad input is rejected", () => {
 test("help and version are recognised", () => {
   assert.equal(parseArgs(["--help"]).help, true);
   assert.equal(parseArgs(["-v"]).version, true);
+});
+
+test("the reported version matches the package", async () => {
+  const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+    version: string;
+  };
+  assert.equal(VERSION, pkg.version, "bump VERSION in src/cli.ts alongside package.json");
 });

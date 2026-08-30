@@ -93,6 +93,9 @@ export async function run(options: ViewerOptions): Promise<void> {
   // Last measured pane interiors; the panel header needs them a frame early.
   let viewport = { w: 80, h: 20 };
   let treeHeight = 20;
+  // Owned here rather than left to the widget, so a click can be turned back
+  // into an index and the view stays put when the selection moves inside it.
+  let treeOffset = 0;
   // The panel header quotes numbers only the draw can measure, so a change in
   // geometry or document length schedules exactly one more frame.
   let measured = { total: -1, h: -1 };
@@ -339,6 +342,10 @@ export async function run(options: ViewerOptions): Promise<void> {
           },
           (p) => {
             treeHeight = p.height;
+            const capacity = Math.max(1, p.height);
+            if (selected < treeOffset) treeOffset = selected;
+            else if (selected >= treeOffset + capacity) treeOffset = selected - capacity + 1;
+            treeOffset = clamp(treeOffset, 0, Math.max(0, flat.length - capacity));
             if (flat.length === 0) {
               p.text(filter ? "No match." : "No markdown here.", { fg: theme.muted });
               return;
@@ -355,16 +362,15 @@ export async function run(options: ViewerOptions): Promise<void> {
                 return { label: `${indent}${glyph}${entry.name}`, color };
               }),
               selected,
-              followSelection: true,
+              offset: treeOffset,
               scrollbar: true,
               onScroll: (delta) => {
                 moveSelection(delta * 3);
                 app.invalidate();
               },
               onSelectRow: (row) => {
-                const offset = Math.max(0, Math.min(selected - Math.floor(p.height / 2), flat.length - p.height));
-                const index = clamp((flat.length > p.height ? offset : 0) + row, 0, flat.length - 1);
-                selected = index;
+                if (treeOffset + row >= flat.length) return;
+                selected = clamp(treeOffset + row, 0, flat.length - 1);
                 pane = "tree";
                 activate();
                 app.invalidate();

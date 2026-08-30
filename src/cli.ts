@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import { themeList } from "@profullstack/hqtui";
 import { run, type ViewerOptions } from "./viewer.ts";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.1.1";
 
 const USAGE = `readm3 — a terminal markdown reader
 
