@@ -1,0 +1,68 @@
+{
+  "name": "@profullstack/readm3",
+  "version": "0.1.0",
+  "description": "A terminal markdown reader: file browser on the left, rendered markdown on the right. Bun and Node, built on HQTUI.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Profullstack, Inc.",
+  "engines": {
+    "bun": ">=1.1",
+    "node": ">=22.6"
+  },
+  "bin": {
+    "readm3": "./bin/readm3.mjs"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "start": "bun src/cli.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.ts",
+    "test:bun": "bun test test/",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@profullstack/hqtui": "^0.1.9"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.7.2"
+  },
+  "keywords": [
+    "markdown",
+    "reader",
+    "viewer",
+    "tui",
+    "cli",
+    "terminal",
+    "file-browser",
+    "hqtui",
+    "bun"
+  ],
+  "homepage": "https://github.com/profullstack/readm3#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/profullstack/readm3.git"
+  },
+  "bugs": {
+    "url": "https://github.com/profullstack/readm3/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
