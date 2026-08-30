@@ -117,7 +117,8 @@ Windows Terminal.
 ```bash
 bun install
 bun src/cli.ts .     # run it against its own repo
-bun test test/       # 48 tests, no TTY needed
+bun test test/       # 49 tests, no TTY needed
+npm test             # the same tests on node
 bun run typecheck
 bun run build
 ```

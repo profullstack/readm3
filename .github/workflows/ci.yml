@@ -43,7 +43,7 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: bun install --frozen-lockfile
       - name: Test
-        run: node --experimental-strip-types --test test/*.test.ts
+        run: npm test
       - name: Build and smoke-test the bin
         run: |
           bun run build

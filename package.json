@@ -32,7 +32,7 @@
     "start": "bun src/cli.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test test/*.test.ts",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
     "test:bun": "bun test test/",
     "prepublishOnly": "npm run build"
   },
