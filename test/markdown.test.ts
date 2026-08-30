@@ -183,3 +183,8 @@ test("html is not stripped inside a fence", () => {
 test("entities are decoded", () => {
   assert.deepEqual(lines("a &lt;b&gt; &amp; c", 40), ["a <b> & c"]);
 });
+
+test("wrapped lines carry no trailing whitespace", () => {
+  const source = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo";
+  for (const line of lines(source, 24)) assert.equal(line, line.replace(/\s+$/, ""));
+});

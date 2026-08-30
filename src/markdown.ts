@@ -52,6 +52,33 @@ const TABLE_ROW = /^[ \t]*\|/;
 const TABLE_RULE = /^[ \t]*\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
 const INDENTED_CODE = /^(?: {4}|\t)(.*)$/;
 
+function sameStyle(a: Span, b: Span): boolean {
+  return (
+    a.role === b.role &&
+    !a.bold === !b.bold &&
+    !a.italic === !b.italic &&
+    !a.underline === !b.underline &&
+    !a.dim === !b.dim
+  );
+}
+
+/**
+ * Glue neighbouring spans that share a style back together.
+ *
+ * Wrapping splits a line into one span per word, which no consumer wants: it is
+ * an escape sequence per word when printed, and a layout child per word on
+ * screen.
+ */
+export function mergeSpans(spans: Span[]): Span[] {
+  const out: Span[] = [];
+  for (const span of spans) {
+    const last = out[out.length - 1];
+    if (last && sameStyle(last, span)) last.text += span.text;
+    else out.push({ ...span });
+  }
+  return out;
+}
+
 /** The visible text of a line, with all styling dropped. Handy in tests. */
 export function plain(line: Line): string {
   return line.spans.map((s) => s.text).join("");
@@ -260,6 +287,10 @@ export function wrapSpans(spans: Span[], width: number, first = 0, hanging = fir
     filled = false;
   };
   const flush = (): void => {
+    // A wrapped line should not carry the space that ended it.
+    while (cur.length > 0 && (cur[cur.length - 1] as Span).text.trim() === "") cur.pop();
+    const last = cur[cur.length - 1];
+    if (last) last.text = last.text.replace(/[ \t]+$/, "");
     lines.push({ spans: cur.length > 0 ? cur : [{ text: "" }] });
     indent = hanging;
     begin();
@@ -619,5 +650,5 @@ export function renderMarkdown(source: string, width: number): Line[] {
 
   flushParagraph();
   while (out.length > 0 && plain(out[out.length - 1] as Line).trim() === "") out.pop();
-  return out;
+  return out.map((line) => ({ spans: mergeSpans(line.spans) }));
 }

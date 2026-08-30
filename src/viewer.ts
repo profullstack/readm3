@@ -3,8 +3,9 @@
  */
 import { readFileSync, statSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
-import { createApp, stringWidth, type Color, type Theme } from "@profullstack/hqtui";
-import { renderMarkdown, type Line, type Span } from "./markdown.ts";
+import { createApp, stringWidth } from "@profullstack/hqtui";
+import { renderMarkdown, type Line } from "./markdown.ts";
+import { colorOf } from "./roles.ts";
 import {
   filterTree,
   flatten,
@@ -32,38 +33,6 @@ export interface ViewerOptions {
 const MAX_BYTES = 4 * 1024 * 1024;
 
 const clamp = (n: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, n));
-
-/** Map a span's semantic role onto the active theme. */
-function colorOf(span: Span, theme: Theme): Color {
-  switch (span.role) {
-    case "h1":
-      return theme.title;
-    case "h2":
-      return theme.primary;
-    case "h3":
-      return theme.secondary;
-    case "code":
-    case "lang":
-    case "bullet":
-      return theme.accent;
-    case "fence":
-      return theme.foreground;
-    case "gutter":
-    case "rule":
-      return theme.border;
-    case "link":
-    case "url":
-      return theme.info;
-    case "quote":
-      return theme.secondary;
-    case "meta":
-      return theme.muted;
-    case "th":
-      return theme.title;
-    default:
-      return theme.foreground;
-  }
-}
 
 export async function run(options: ViewerOptions): Promise<void> {
   const root = resolve(options.root);

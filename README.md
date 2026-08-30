@@ -47,6 +47,23 @@ readm3 CHANGELOG.md     # open a file, browse its directory
 readm3 --theme nord     # pick a palette
 ```
 
+### Printing
+
+`--print` renders straight to stdout and exits, so it works in a pipe and as a
+`cat` for markdown:
+
+```bash
+readm3 --print CHANGELOG.md          # rendered, colored, to the terminal
+readm3 --print README.md | less -R   # into a pager
+curl -s https://example.com/x.md | readm3 --print
+readm3 --print notes.md | grep TODO  # no escapes when stdout is a pipe
+```
+
+Color follows the usual rules: on when stdout is a terminal, off when it is not,
+and `NO_COLOR` / `FORCE_COLOR` are honored. `--color always|never|auto` overrides
+that either way. With `--print`, `--width` sets the render width rather than the
+sidebar.
+
 The browser only shows markdown. Directories with nothing beneath them are
 pruned, `node_modules` and friends are never walked, and README sorts first.
 
@@ -79,9 +96,13 @@ survives.
 ## Options
 
 ```
+-p, --print          render to stdout and exit; reads stdin when given no path
+                     or "-"
+    --color <when>   always, never, or auto (default)
 -t, --theme <name>   dark, dracula, nord, tokyo-night, gruvbox, matrix,
                      monochrome, high-contrast, light
--w, --width <n>      sidebar width in columns (default: 28% of the terminal)
+-w, --width <n>      sidebar width in columns, or the render width with --print
+                     (default: 28% of the terminal, its full width printing)
 -a, --all            include dot-directories and dotfiles
 -M, --no-mouse       disable mouse tracking
 -v, --version
@@ -94,7 +115,7 @@ The renderer and the file tree are pure and need no terminal, so they can be
 reused on their own:
 
 ```ts
-import { renderMarkdown, toText, scan, files } from "@profullstack/readm3";
+import { renderMarkdown, toText, renderAnsi, scan, files } from "@profullstack/readm3";
 
 const lines = renderMarkdown("# Hello\n\nSome **text**.", 60);
 console.log(toText(lines));
@@ -105,7 +126,8 @@ for (const file of files(scan("./docs"))) console.log(file.path);
 
 `renderMarkdown` returns lines of spans carrying a semantic `role` — `h1`,
 `code`, `link`, `quote` and so on — rather than colors, so the same document can
-be re-themed without re-parsing.
+be re-themed without re-parsing. `renderAnsi(source, width, theme, depth)` is
+what `--print` uses to turn those spans into an escaped string.
 
 ## Runtimes
 
@@ -117,7 +139,7 @@ Windows Terminal.
 ```bash
 bun install
 bun src/cli.ts .     # run it against its own repo
-bun test test/       # 49 tests, no TTY needed
+bun test test/       # 68 tests, no TTY needed
 npm test             # the same tests on node
 bun run typecheck
 bun run build

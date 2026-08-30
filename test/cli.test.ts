@@ -60,3 +60,25 @@ test("the reported version matches the package", async () => {
   };
   assert.equal(VERSION, pkg.version, "bump VERSION in src/cli.ts alongside package.json");
 });
+
+test("--print and --color are parsed", () => {
+  const args = parseArgs(["--print", "--color", "never"]);
+  assert.equal(args.print, true);
+  assert.equal(args.color, "never");
+  assert.equal(args.open, undefined, "no path means stdin");
+});
+
+test("-p is short for --print and defaults to auto color", () => {
+  assert.equal(parseArgs(["-p"]).print, true);
+  assert.equal(parseArgs(["-p"]).color, "auto");
+});
+
+test('"-" is a path only in print mode', () => {
+  assert.equal(parseArgs(["--print", "-"]).print, true);
+  assert.throws(() => parseArgs(["-"]), /only makes sense with --print/);
+});
+
+test("--print refuses a directory and a bad color", () => {
+  assert.throws(() => parseArgs(["--print", process.cwd()]), /needs a file/);
+  assert.throws(() => parseArgs(["--color", "pink"]), /must be one of/);
+});

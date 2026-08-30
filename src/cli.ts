@@ -5,9 +5,10 @@ import { statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { themeList } from "@profullstack/hqtui";
+import { printDocument, COLOR_MODES, type ColorMode } from "./print.ts";
 import { run, type ViewerOptions } from "./viewer.ts";
 
-export const VERSION = "0.1.1";
+export const VERSION = "0.2.0";
 
 const USAGE = `readm3 — a terminal markdown reader
 
@@ -18,8 +19,14 @@ Usage
                   current directory.
 
 Options
+  -p, --print          Render to stdout and exit, instead of opening the reader.
+                       Reads stdin when no path is given, or the path is "-"
+      --color <when>   always, never, or auto (the default): color when stdout
+                       is a terminal. NO_COLOR and FORCE_COLOR are honored
   -t, --theme <name>   Color theme. One of: ${themeList.map((t) => t.name).join(", ")}
-  -w, --width <n>      Sidebar width in columns. Default: 28% of the terminal
+  -w, --width <n>      Sidebar width in columns, or the render width with
+                       --print. Default: 28% of the terminal, and its full
+                       width when printing
   -a, --all            Include dot-directories and dotfiles
   -M, --no-mouse       Disable mouse tracking
   -v, --version        Print the version
@@ -37,6 +44,9 @@ Keys
 export interface ParsedArgs extends ViewerOptions {
   help: boolean;
   version: boolean;
+  /** Render to stdout instead of opening the reader. */
+  print: boolean;
+  color: ColorMode;
 }
 
 class UsageError extends Error {}
@@ -46,6 +56,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     root: process.cwd(),
     help: false,
     version: false,
+    print: false,
+    color: "auto",
     mouse: true,
     all: false,
   };
@@ -79,6 +91,18 @@ export function parseArgs(argv: string[]): ParsedArgs {
         parsed.sidebar = value;
         break;
       }
+      case "-p":
+      case "--print":
+        parsed.print = true;
+        break;
+      case "--color": {
+        const value = next() as ColorMode;
+        if (!COLOR_MODES.includes(value)) {
+          throw new UsageError(`--color must be one of: ${COLOR_MODES.join(", ")}`);
+        }
+        parsed.color = value;
+        break;
+      }
       case "-a":
       case "--all":
         parsed.all = true;
@@ -95,6 +119,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
   }
 
+  if (target === "-") {
+    if (!parsed.print) throw new UsageError('"-" only makes sense with --print');
+    return parsed;
+  }
+
   if (target !== undefined) {
     const path = resolve(target);
     let isDir: boolean;
@@ -104,6 +133,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
       throw new UsageError(`No such file or directory: ${target}`);
     }
     if (isDir) {
+      if (parsed.print) throw new UsageError("--print needs a file, not a directory");
       parsed.root = path;
     } else {
       parsed.root = dirname(path);
@@ -135,6 +165,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     process.stdout.write(`${VERSION}\n`);
     return;
   }
+  if (args.print) {
+    printDocument({ path: args.open, width: args.sidebar, theme: args.theme, color: args.color });
+    return;
+  }
+
   if (!process.stdout.isTTY) {
     process.stderr.write("readm3: needs a terminal. Try `readm3 --help`.\n");
     process.exitCode = 1;
