@@ -2,8 +2,8 @@
  * The reader: a file browser on the left, the rendered document on the right.
  */
 import { readFileSync, statSync } from "node:fs";
-import { basename, dirname, relative, resolve } from "node:path";
-import { createApp, stringWidth, type App, type Color, type Theme } from "@profullstack/hqtui";
+import { basename, dirname, resolve } from "node:path";
+import { createApp, stringWidth, type Color, type Theme } from "@profullstack/hqtui";
 import { renderMarkdown, type Line, type Span } from "./markdown.ts";
 import {
   filterTree,
@@ -321,7 +321,7 @@ export async function run(options: ViewerOptions): Promise<void> {
     app.invalidate();
   });
 
-  app.render(({ ui, theme, width, height }) => {
+  app.render(({ ui, theme, width }) => {
     if (sidebar === 0) sidebar = clamp(Math.round(width * 0.28), 22, 42);
     const side = clamp(sidebar, 16, Math.max(16, width - 24));
     const openRel = openPath ? pathLabel(root, openPath) : "";
@@ -517,7 +517,6 @@ export async function run(options: ViewerOptions): Promise<void> {
       }
     });
 
-    void height;
   });
 
   await app.start();
