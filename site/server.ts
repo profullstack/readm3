@@ -40,6 +40,14 @@ const server = Bun.serve({
   async fetch(request) {
     const url = new URL(request.url);
 
+    // One canonical host. Railway issues a separate edge target and certificate
+    // for www, so both hosts really do serve; send www to the apex rather than
+    // leaving two origins for the same pages.
+    const host = request.headers.get("host") ?? url.host;
+    if (host.startsWith("www.")) {
+      return Response.redirect(`https://${host.slice(4)}${url.pathname}${url.search}`, 308);
+    }
+
     // One canonical path per page: /docs/ and /docs.html both settle on /docs.
     if (url.pathname.length > 1 && url.pathname.endsWith("/")) {
       return Response.redirect(`${url.origin}${url.pathname.slice(0, -1)}${url.search}`, 308);
