@@ -263,11 +263,20 @@ pre.tree { color: var(--fg); }
 .r-quote { color: var(--secondary); }
 .r-meta { color: var(--muted); }
 .r-th { color: var(--title); }
+.r-spoiler { color: var(--muted); }
+.r-sup { color: var(--accent); }
+.r-footnote { color: var(--info); }
+.r-alert-note { color: var(--info); }
+.r-alert-tip { color: var(--success); }
+.r-alert-important { color: var(--primary); }
+.r-alert-warning { color: var(--warning); }
+.r-alert-caution { color: var(--danger); }
 
 .b { font-weight: 700; }
 .i { font-style: italic; }
 .u { text-decoration: underline; }
 .d { opacity: 0.6; }
+.s { text-decoration: line-through; }
 
 /* ----------------------------------------------------------------- code -- */
 

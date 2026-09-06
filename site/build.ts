@@ -47,6 +47,9 @@ function themeVars(theme: Theme): Record<string, string> {
     "--secondary": cssColor(theme.secondary),
     "--accent": cssColor(theme.accent),
     "--info": cssColor(theme.info),
+    "--success": cssColor(theme.success),
+    "--warning": cssColor(theme.warning),
+    "--danger": cssColor(theme.danger),
     "--border": cssColor(theme.border),
     "--title": cssColor(theme.title),
     "--selection": cssColor(theme.selection),
@@ -81,13 +84,17 @@ function embedJson(value: unknown): string {
   return JSON.stringify(value).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
 }
 
-function spanClass(role: Role | undefined, span: { bold?: boolean; italic?: boolean; underline?: boolean; dim?: boolean }): string {
+function spanClass(
+  role: Role | undefined,
+  span: { bold?: boolean; italic?: boolean; underline?: boolean; dim?: boolean; strike?: boolean },
+): string {
   const parts: string[] = [];
   if (role && role !== "text") parts.push(`r-${role}`);
   if (span.bold) parts.push("b");
   if (span.italic) parts.push("i");
   if (span.underline) parts.push("u");
   if (span.dim) parts.push("d");
+  if (span.strike) parts.push("s");
   return parts.join(" ");
 }
 

@@ -4,7 +4,8 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
-import { parseArgs, VERSION } from "../src/cli.ts";
+import { parseArgs, USAGE, VERSION } from "../src/cli.ts";
+import { FLAVORS } from "../src/flavors.ts";
 
 test("no arguments browse the working directory", () => {
   const args = parseArgs([]);
@@ -81,4 +82,33 @@ test('"-" is a path only in print mode', () => {
 test("--print refuses a directory and a bad color", () => {
   assert.throws(() => parseArgs(["--print", process.cwd()]), /needs a file/);
   assert.throws(() => parseArgs(["--color", "pink"]), /must be one of/);
+});
+
+test("--flavor takes any known dialect", () => {
+  for (const flavor of FLAVORS) {
+    assert.equal(parseArgs(["--flavor", flavor]).flavor, flavor);
+  }
+  assert.equal(parseArgs(["-f", "reddit"]).flavor, "reddit");
+});
+
+test("--flavor defaults to unset, so the renderer picks github", () => {
+  assert.equal(parseArgs([]).flavor, undefined);
+});
+
+test("--flavor refuses a dialect nobody implements", () => {
+  assert.throws(() => parseArgs(["--flavor", "mediawiki"]), /must be one of/);
+  assert.throws(() => parseArgs(["--flavor"]), /needs a value/);
+});
+
+test("--spoilers and --read-only are off unless asked for", () => {
+  const off = parseArgs([]);
+  assert.equal(off.spoilers, false);
+  assert.equal(off.readOnly, false);
+  assert.equal(parseArgs(["--spoilers"]).spoilers, true);
+  assert.equal(parseArgs(["--read-only"]).readOnly, true);
+  assert.equal(parseArgs(["-R"]).readOnly, true);
+});
+
+test("the usage text names every flavor it accepts", () => {
+  for (const flavor of FLAVORS) assert.match(USAGE, new RegExp(flavor));
 });
