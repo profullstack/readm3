@@ -145,6 +145,18 @@ bun run typecheck
 bun run build
 ```
 
+## The website
+
+[readm3.com](https://readm3.com) is built from this repository by `site/build.ts`,
+which renders every document on the page through `renderMarkdown` and takes every
+color from a real HQTUI theme. There is no second implementation to keep in sync:
+change the parser and the site changes with it.
+
+```bash
+bun run site:build   # writes site/dist
+bun run site:start   # serves it on $PORT, default 3000
+```
+
 ## License
 
 MIT.

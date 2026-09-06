@@ -1,0 +1,314 @@
+/*
+ * readm3.com
+ *
+ * Two palettes live here and they are deliberately separate. The page chrome
+ * uses --page-* and never changes. The reader windows use --bg, --fg and the
+ * role slots, which are generated from the real HQTUI themes at build time and
+ * swapped by the theme buttons, exactly as `--theme` swaps them in a terminal.
+ */
+
+:root {
+  --page-bg: #07090d;
+  --page-panel: #0d1117;
+  --page-line: #1c2430;
+  --page-fg: #d7dee8;
+  --page-dim: #8b97a8;
+  --page-accent: #5fd7ff;
+  --page-warm: #ffd75f;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+  --measure: 1120px;
+  color-scheme: dark;
+}
+
+/* THEMES */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--page-bg);
+  color: var(--page-fg);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--page-accent); text-decoration-color: color-mix(in srgb, var(--page-accent) 40%, transparent); }
+a:hover { text-decoration-thickness: 2px; }
+
+code { font-family: var(--mono); font-size: 0.92em; }
+
+.skip {
+  position: absolute;
+  left: -9999px;
+}
+.skip:focus {
+  left: 1rem;
+  top: 1rem;
+  z-index: 10;
+  background: var(--page-panel);
+  padding: 0.5rem 0.9rem;
+  border-radius: 6px;
+}
+
+/* --------------------------------------------------------------- chrome -- */
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 1.25rem 1.5rem;
+}
+
+.brand {
+  font-family: var(--mono);
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--page-fg);
+  text-decoration: none;
+  letter-spacing: -0.01em;
+}
+.brand::before { content: "▍"; color: var(--page-accent); margin-right: 0.35rem; }
+
+.top nav { display: flex; gap: 1.25rem; font-size: 0.93rem; }
+.top nav a { color: var(--page-dim); text-decoration: none; }
+.top nav a:hover { color: var(--page-fg); }
+
+main { max-width: var(--measure); margin: 0 auto; padding: 0 1.5rem 4rem; }
+
+/* ----------------------------------------------------------------- hero -- */
+
+.hero { padding: 3.5rem 0 3rem; max-width: 46rem; }
+.hero-tight { padding-bottom: 1.5rem; }
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--page-accent);
+  margin: 0 0 1rem;
+}
+
+.hero h1 {
+  font-size: clamp(2.1rem, 5.5vw, 3.3rem);
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+  margin: 0 0 1.25rem;
+  font-weight: 650;
+}
+
+.lede { font-size: 1.12rem; color: var(--page-dim); margin: 0 0 2rem; }
+.lede code { color: var(--page-fg); }
+
+.cta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.9rem; }
+
+.install {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: var(--page-panel);
+  border: 1px solid var(--page-line);
+  border-radius: 8px;
+  padding: 0.6rem 0.6rem 0.6rem 1rem;
+}
+.install code { color: var(--page-fg); white-space: nowrap; }
+.install code::before { content: "$ "; color: var(--page-dim); }
+
+.install button,
+.ghost {
+  font: inherit;
+  font-size: 0.88rem;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid var(--page-line);
+  padding: 0.35rem 0.8rem;
+  background: transparent;
+  color: var(--page-dim);
+  text-decoration: none;
+  transition: color 0.12s, border-color 0.12s;
+}
+.install button:hover, .ghost:hover { color: var(--page-fg); border-color: var(--page-dim); }
+.ghost { padding: 0.62rem 1.1rem; }
+
+.sub { color: var(--page-dim); font-size: 0.92rem; margin: 1.25rem 0 0; }
+.sub code { color: var(--page-fg); }
+
+/* -------------------------------------------------------------- section -- */
+
+.section { padding: 3rem 0 0; }
+.section-head { max-width: 44rem; margin-bottom: 1.75rem; }
+.section-head h2 {
+  font-size: clamp(1.5rem, 3vw, 1.95rem);
+  letter-spacing: -0.02em;
+  margin: 0 0 0.75rem;
+  font-weight: 620;
+}
+.section-head p { color: var(--page-dim); margin: 0; }
+.section-head code { color: var(--page-fg); }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: 1px;
+  background: var(--page-line);
+  border: 1px solid var(--page-line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.card { background: var(--page-panel); padding: 1.4rem 1.5rem; }
+.card h3 { margin: 0 0 0.5rem; font-size: 1rem; font-weight: 600; }
+.card p { margin: 0; color: var(--page-dim); font-size: 0.94rem; }
+.card code { color: var(--page-fg); }
+
+/* ---------------------------------------------------------------- chips -- */
+
+.chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1rem; }
+.chip {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--page-dim);
+  background: transparent;
+  border: 1px solid var(--page-line);
+  border-radius: 999px;
+  padding: 0.25rem 0.75rem;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.chip:hover { color: var(--page-fg); }
+.chip.on { color: var(--page-bg); background: var(--page-accent); border-color: var(--page-accent); }
+
+/* --------------------------------------------------------------- window -- */
+
+.window {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.chrome {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.6rem 0.85rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--border); }
+.chrome-title { margin-left: 0.6rem; color: var(--muted); font-size: 0.78rem; }
+
+.panes { display: flex; align-items: stretch; }
+
+.pane { min-width: 0; }
+.pane-tree {
+  width: 15rem;
+  flex: none;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+}
+.pane-doc { flex: 1 1 auto; min-width: 0; }
+
+.pane-title {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.5rem 1rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+.pane-pct { color: var(--accent); }
+
+.scroll { overflow-x: auto; max-height: 34rem; overflow-y: auto; }
+
+pre.doc, pre.tree {
+  margin: 0;
+  padding: 1rem 1.25rem;
+  color: var(--fg);
+  white-space: pre;
+  tab-size: 2;
+}
+pre.tree { color: var(--fg); }
+
+.row { display: block; }
+.row.sel { background: var(--selection); color: var(--selection-text); }
+
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.1rem;
+  padding: 0.5rem 1rem;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+/* The role-to-color map, the same one roles.ts applies in the terminal. */
+.r-h1 { color: var(--title); }
+.r-h2 { color: var(--primary); }
+.r-h3 { color: var(--secondary); }
+.r-code, .r-lang, .r-bullet { color: var(--accent); }
+.r-fence { color: var(--fg); }
+.r-gutter, .r-rule { color: var(--border); }
+.r-link, .r-url { color: var(--info); }
+.r-quote { color: var(--secondary); }
+.r-meta { color: var(--muted); }
+.r-th { color: var(--title); }
+
+.b { font-weight: 700; }
+.i { font-style: italic; }
+.u { text-decoration: underline; }
+.d { opacity: 0.6; }
+
+/* ----------------------------------------------------------------- code -- */
+
+.code {
+  margin: 0;
+  background: var(--page-panel);
+  border: 1px solid var(--page-line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.code figcaption {
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--page-line);
+  color: var(--page-dim);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+}
+.code pre { margin: 0; padding: 1rem 1.25rem; overflow-x: auto; }
+.code code { color: var(--page-fg); font-size: 0.85rem; line-height: 1.7; }
+
+/* ---------------------------------------------------------------- foot -- */
+
+.foot {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 2rem 1.5rem 3rem;
+  border-top: 1px solid var(--page-line);
+  color: var(--page-dim);
+  font-size: 0.88rem;
+}
+.foot-links { display: flex; flex-wrap: wrap; gap: 0.75rem 2rem; justify-content: space-between; }
+.foot aside:not(:empty) { margin-top: 1.5rem; }
+
+/* --------------------------------------------------------------- narrow -- */
+
+@media (max-width: 760px) {
+  .pane-tree { display: none; }
+  .window { font-size: 12px; }
+  .top nav { gap: 0.9rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
