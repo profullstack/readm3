@@ -1,11 +1,29 @@
 /**
- * A small markdown renderer that produces styled lines instead of a DOM.
+ * Markdown to styled lines, instead of to a DOM.
+ *
+ * Parsing is marked's — CommonMark, GFM, and the extensions in `flavors.ts`
+ * for what GitHub and Reddit added on top. What lives here is the half marked
+ * has no opinion about: turning a token tree into fixed-width lines of spans
+ * that a terminal can paint.
  *
  * Spans carry a semantic `role` rather than a color; the viewer maps roles onto
  * the active HQTUI theme. That split keeps this file pure and testable without
  * a terminal, and lets a theme change re-color a document without re-parsing it.
  */
 import { stringWidth } from "@profullstack/hqtui";
+import type { Token, Tokens } from "marked";
+import {
+  DEFAULT_FLAVOR,
+  lex,
+  lexInline,
+  type EmojiToken,
+  type Flavor,
+  type FootnoteDefToken,
+  type FootnoteRefToken,
+  type RedditLinkToken,
+  type SpoilerToken,
+  type SuperscriptToken,
+} from "./flavors.ts";
 
 export type Role =
   | "text"
@@ -22,7 +40,15 @@ export type Role =
   | "bullet"
   | "rule"
   | "meta"
-  | "th";
+  | "th"
+  | "spoiler"
+  | "sup"
+  | "footnote"
+  | "alert-note"
+  | "alert-tip"
+  | "alert-important"
+  | "alert-warning"
+  | "alert-caution";
 
 export interface Span {
   text: string;
@@ -31,6 +57,7 @@ export interface Span {
   italic?: boolean;
   underline?: boolean;
   dim?: boolean;
+  strike?: boolean;
 }
 
 export interface Line {
@@ -39,18 +66,39 @@ export interface Line {
 
 type Style = Omit<Span, "text">;
 
+export interface RenderOptions {
+  /** Which dialect's extras to honor. Defaults to GitHub. */
+  flavor?: Flavor | undefined;
+  /** Show spoiler text rather than blocking it out. */
+  spoilers?: boolean | undefined;
+}
+
+interface Ctx {
+  flavor: Flavor;
+  spoilers: boolean;
+  /** Footnote label to its number, in order of first reference. */
+  numbers: Map<string, number>;
+  /** Footnote label to the block tokens of its definition. */
+  defs: Map<string, Token[]>;
+}
+
 const BULLETS = ["•", "◦", "▪", "·"];
-const HR = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
-const HEADING = /^ {0,3}(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$/;
-const FENCE = /^ {0,3}(```+|~~~+)[ \t]*([\w+#.-]*)/;
-const QUOTE = /^ {0,3}>[ \t]?(.*)$/;
-const LIST = /^([ \t]*)([-*+]|\d{1,9}[.)])([ \t]+)(.*)$/;
-const TASK = /^\[([ xX])\][ \t]+/;
-const SETEXT_H1 = /^ {0,3}=+[ \t]*$/;
-const SETEXT_H2 = /^ {0,3}-+[ \t]*$/;
-const TABLE_ROW = /^[ \t]*\|/;
-const TABLE_RULE = /^[ \t]*\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
-const INDENTED_CODE = /^(?: {4}|\t)(.*)$/;
+
+/**
+ * A hard break inside a paragraph, carried as a sentinel because wrapping
+ * works on one logical line at a time.
+ */
+const BREAK = "\u0000";
+
+const ALERTS: Record<string, { role: Role; label: string; glyph: string }> = {
+  note: { role: "alert-note", label: "Note", glyph: "ℹ" },
+  tip: { role: "alert-tip", label: "Tip", glyph: "✓" },
+  important: { role: "alert-important", label: "Important", glyph: "◆" },
+  warning: { role: "alert-warning", label: "Warning", glyph: "▲" },
+  caution: { role: "alert-caution", label: "Caution", glyph: "✕" },
+};
+
+const ALERT_HEAD = /^\[!(note|tip|important|warning|caution)\][ \t]*(?:\n|$)/i;
 
 function sameStyle(a: Span, b: Span): boolean {
   return (
@@ -58,7 +106,8 @@ function sameStyle(a: Span, b: Span): boolean {
     !a.bold === !b.bold &&
     !a.italic === !b.italic &&
     !a.underline === !b.underline &&
-    !a.dim === !b.dim
+    !a.dim === !b.dim &&
+    !a.strike === !b.strike
   );
 }
 
@@ -89,58 +138,7 @@ export function toText(lines: Line[]): string[] {
   return lines.map(plain);
 }
 
-// --------------------------------------------------------------- inline
-
-function matchLink(src: string): { text: string; href: string; length: number } | null {
-  if (src[0] !== "[") return null;
-  let depth = 0;
-  let i = 0;
-  for (; i < src.length; i++) {
-    const c = src[i];
-    if (c === "\\") {
-      i++;
-      continue;
-    }
-    if (c === "[") depth++;
-    else if (c === "]") {
-      depth--;
-      if (depth === 0) break;
-    }
-  }
-  if (depth !== 0 || i >= src.length) return null;
-  const text = src.slice(1, i);
-  const rest = src.slice(i + 1);
-  const inline = /^\([ \t]*(<[^>]*>|[^()\s]*(?:\([^()]*\)[^()\s]*)*)(?:[ \t]+["'(][^\n]*?["')])?[ \t]*\)/.exec(rest);
-  if (inline) {
-    const href = (inline[1] ?? "").replace(/^<|>$/g, "");
-    return { text, href, length: i + 1 + inline[0].length };
-  }
-  const ref = /^\[([^\]]*)\]/.exec(rest);
-  if (ref) return { text, href: ref[1] ?? "", length: i + 1 + ref[0].length };
-  return null;
-}
-
-/**
- * Emphasis closers must not sit against a space, and `_` must not fire inside a
- * word — otherwise every snake_case identifier in a README turns italic.
- */
-function findClose(src: string, from: number, marker: string): number {
-  let j = from;
-  while (j < src.length) {
-    const k = src.indexOf(marker, j);
-    if (k < 0) return -1;
-    if (k === from || /\s/.test(src[k - 1] ?? "")) {
-      j = k + marker.length;
-      continue;
-    }
-    if (marker[0] === "_" && /[\w]/.test(src[k + marker.length] ?? "")) {
-      j = k + marker.length;
-      continue;
-    }
-    return k;
-  }
-  return -1;
-}
+/* ------------------------------------------------------------------ html --- */
 
 /**
  * Fold the HTML that real READMEs are full of back into markdown.
@@ -172,105 +170,153 @@ function stripTags(src: string): string {
     .replace(/&amp;/g, "&");
 }
 
-export function parseInline(src: string, base: Style = {}): Span[] {
-  return parseSpans(normalizeHtml(src), base);
+/* ---------------------------------------------------------------- inline --- */
+
+const SUPERSCRIPTS: Readonly<Record<string, string>> = {
+  "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+  "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+  "+": "⁺", "-": "⁻", "=": "⁼", "(": "⁽", ")": "⁾",
+  a: "ᵃ", b: "ᵇ", c: "ᶜ", d: "ᵈ", e: "ᵉ", f: "ᶠ",
+  g: "ᵍ", h: "ʰ", i: "ⁱ", j: "ʲ", k: "ᵏ", l: "ˡ",
+  m: "ᵐ", n: "ⁿ", o: "ᵒ", p: "ᵖ", r: "ʳ", s: "ˢ",
+  t: "ᵗ", u: "ᵘ", v: "ᵛ", w: "ʷ", x: "ˣ", y: "ʸ",
+  z: "ᶻ",
+};
+
+/**
+ * Raise text into real superscript glyphs when every character has one.
+ *
+ * Unicode has no superscript `q`, and only some capitals, so a partial mapping
+ * would read as a ransom note. Anything that does not map keeps its caret.
+ */
+function raise(text: string): string | null {
+  let out = "";
+  for (const ch of text) {
+    const up = SUPERSCRIPTS[ch.toLowerCase()];
+    if (up === undefined) return null;
+    out += up;
+  }
+  return out;
 }
 
-function parseSpans(src: string, base: Style = {}): Span[] {
-  const spans: Span[] = [];
-  let buf = "";
-  const flush = (): void => {
-    if (buf) {
-      spans.push({ ...base, text: buf });
-      buf = "";
-    }
-  };
-
-  let i = 0;
-  while (i < src.length) {
-    const c = src[i] as string;
-
-    if (c === "\\" && /[\\`*_{}[\]()#+\-.!~>|]/.test(src[i + 1] ?? "")) {
-      buf += src[i + 1];
-      i += 2;
-      continue;
-    }
-
-    if (c === "`") {
-      const m = /^(`+)([\s\S]*?)\1(?!`)/.exec(src.slice(i));
-      if (m?.[2] !== undefined) {
-        flush();
-        const inner = m[2].trim() === "" ? m[2] : m[2].replace(/^ (.*) $/, "$1");
-        spans.push({ ...base, text: inner, role: "code" });
-        i += m[0].length;
-        continue;
-      }
-    }
-
-    if (c === "!" && src[i + 1] === "[") {
-      const m = matchLink(src.slice(i + 1));
-      if (m) {
-        flush();
-        spans.push({ ...base, text: `🖼 ${m.text || m.href}`, role: "meta" });
-        i += 1 + m.length;
-        continue;
-      }
-    }
-
-    if (c === "[") {
-      const m = matchLink(src.slice(i));
-      if (m) {
-        flush();
-        spans.push(...parseSpans(m.text, { ...base, role: "link", underline: true }));
-        i += m.length;
-        continue;
-      }
-    }
-
-    if (c === "<") {
-      const m = /^<((?:https?|mailto):[^>\s]+)>/.exec(src.slice(i));
-      if (m?.[1]) {
-        flush();
-        spans.push({ ...base, text: m[1], role: "url", underline: true });
-        i += m[0].length;
-        continue;
-      }
-    }
-
-    if (c === "~" && src.startsWith("~~", i)) {
-      const close = src.indexOf("~~", i + 2);
-      if (close > i + 2) {
-        flush();
-        spans.push(...parseSpans(src.slice(i + 2, close), { ...base, dim: true }));
-        i = close + 2;
-        continue;
-      }
-    }
-
-    if ((c === "*" || c === "_") && !(c === "_" && /[\w]/.test(src[i - 1] ?? ""))) {
-      const strong = src.startsWith(c + c, i);
-      const marker = strong ? c + c : c;
-      if (!/\s/.test(src[i + marker.length] ?? " ")) {
-        const close = findClose(src, i + marker.length, marker);
-        if (close > 0) {
-          flush();
-          const inner = src.slice(i + marker.length, close);
-          spans.push(...parseSpans(inner, strong ? { ...base, bold: true } : { ...base, italic: true }));
-          i = close + marker.length;
-          continue;
-        }
-      }
-    }
-
-    buf += c;
-    i++;
+function inlineSpans(tokens: Token[], base: Style, ctx: Ctx): Span[] {
+  // A block whose inline run holds raw HTML is re-lexed with the HTML folded
+  // into markdown. Doing it here rather than over the whole source means fenced
+  // and indented code are never touched: they are not inline runs.
+  if (tokens.some((t) => t.type === "html")) {
+    const raw = tokens.map((t) => t.raw).join("");
+    const cleaned = normalizeHtml(raw);
+    if (cleaned !== raw) tokens = lexInline(cleaned, ctx.flavor);
   }
 
-  flush();
+  const spans: Span[] = [];
+  for (const token of tokens) {
+    switch (token.type) {
+      case "text":
+      case "escape": {
+        const t = token as Tokens.Text;
+        // A `text` token carries its own inline children when it came out of a
+        // list item; anything else is a leaf.
+        if (t.tokens && t.tokens.length > 0) spans.push(...inlineSpans(t.tokens, base, ctx));
+        else spans.push({ ...base, text: decode(t.text) });
+        break;
+      }
+      case "strong":
+        spans.push(...inlineSpans((token as Tokens.Strong).tokens, { ...base, bold: true }, ctx));
+        break;
+      case "em":
+        spans.push(...inlineSpans((token as Tokens.Em).tokens, { ...base, italic: true }, ctx));
+        break;
+      case "del":
+        spans.push(...inlineSpans((token as Tokens.Del).tokens, { ...base, dim: true, strike: true }, ctx));
+        break;
+      case "codespan":
+        spans.push({ ...base, text: decode((token as Tokens.Codespan).text), role: "code" });
+        break;
+      case "br":
+        spans.push({ text: BREAK });
+        break;
+      case "link": {
+        const link = token as Tokens.Link;
+        // A bare URL marked autolinked reads as a URL, not as link text.
+        const role: Role = link.text === link.href ? "url" : "link";
+        spans.push(...inlineSpans(link.tokens, { ...base, role, underline: true }, ctx));
+        break;
+      }
+      case "image": {
+        const img = token as Tokens.Image;
+        spans.push({ ...base, text: `\u{1f5bc} ${img.text || img.href}`, role: "meta" });
+        break;
+      }
+      case "html":
+        // Survives only when normalizing changed nothing, i.e. a bare tag.
+        break;
+      case "emoji":
+        spans.push({ ...base, text: (token as unknown as EmojiToken).text });
+        break;
+      case "spoiler": {
+        const inner = token as unknown as SpoilerToken;
+        if (ctx.spoilers) {
+          spans.push(...inlineSpans(inner.tokens, { ...base, role: "spoiler" }, ctx));
+        } else {
+          // Blocked out rather than colored out, so it stays hidden with
+          // --color never and in a pipe.
+          spans.push({ ...base, text: "█".repeat(Math.max(1, stringWidth(inner.text))), role: "spoiler" });
+        }
+        break;
+      }
+      case "superscript": {
+        const sup = token as unknown as SuperscriptToken;
+        const raised = raise(sup.text);
+        if (raised) spans.push({ ...base, text: raised, role: "sup" });
+        else spans.push({ ...base, text: `^${sup.text}`, role: "sup", dim: true });
+        break;
+      }
+      case "redditLink": {
+        const rl = token as unknown as RedditLinkToken;
+        spans.push({ ...base, text: `${rl.kind}/${rl.name}`, role: "link", underline: true });
+        break;
+      }
+      case "footnoteRef": {
+        const ref = token as unknown as FootnoteRefToken;
+        spans.push({ ...base, text: `[${numberFor(ref.label, ctx)}]`, role: "footnote" });
+        break;
+      }
+      default: {
+        const any = token as { text?: string; raw?: string };
+        if (any.text) spans.push({ ...base, text: decode(any.text) });
+        break;
+      }
+    }
+  }
   return spans.length > 0 ? spans : [{ ...base, text: "" }];
 }
 
-// ---------------------------------------------------------------- wrap
+/** marked escapes for HTML output; a terminal wants the characters back. */
+function decode(text: string): string {
+  return text
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+function numberFor(label: string, ctx: Ctx): number {
+  const seen = ctx.numbers.get(label);
+  if (seen !== undefined) return seen;
+  const next = ctx.numbers.size + 1;
+  ctx.numbers.set(label, next);
+  return next;
+}
+
+/** Inline markdown to spans. Exported because the site and tests both want it. */
+export function parseInline(src: string, base: Style = {}, options: RenderOptions = {}): Span[] {
+  const ctx = context(options);
+  return mergeSpans(inlineSpans(lexInline(normalizeHtml(src), ctx.flavor), base, ctx));
+}
+
+/* ------------------------------------------------------------------ wrap --- */
 
 /** Greedy word wrap that carries each word's styling with it. */
 export function wrapSpans(spans: Span[], width: number, first = 0, hanging = first): Line[] {
@@ -332,32 +378,52 @@ export function wrapSpans(spans: Span[], width: number, first = 0, hanging = fir
   return lines;
 }
 
-// --------------------------------------------------------------- blocks
+/** Wrap a run that may hold hard breaks, which start a line without a blank. */
+function wrapBlock(spans: Span[], width: number, first = 0, hanging = first): Line[] {
+  if (!spans.some((s) => s.text.includes(BREAK))) return wrapSpans(spans, width, first, hanging);
+
+  const segments: Span[][] = [[]];
+  for (const span of spans) {
+    if (!span.text.includes(BREAK)) {
+      (segments[segments.length - 1] as Span[]).push(span);
+      continue;
+    }
+    span.text.split(BREAK).forEach((part, index) => {
+      if (index > 0) segments.push([]);
+      if (part) (segments[segments.length - 1] as Span[]).push({ ...span, text: part });
+    });
+  }
+
+  const out: Line[] = [];
+  segments.forEach((segment, index) => {
+    out.push(...wrapSpans(segment, width, index === 0 ? first : hanging, hanging));
+  });
+  return out;
+}
+
+/* ---------------------------------------------------------------- blocks --- */
 
 function rule(width: number, char: string, style: Style): Line {
   return { spans: [{ ...style, text: char.repeat(Math.max(1, width)) }] };
 }
 
-function splitRow(row: string): string[] {
-  const trimmed = row.trim().replace(/^\|/, "").replace(/\|$/, "");
-  const cells: string[] = [];
-  let buf = "";
-  for (let i = 0; i < trimmed.length; i++) {
-    const c = trimmed[i];
-    if (c === "\\" && trimmed[i + 1] === "|") {
-      buf += "|";
-      i++;
-      continue;
-    }
-    if (c === "|") {
-      cells.push(buf.trim());
-      buf = "";
-      continue;
-    }
-    buf += c;
-  }
-  cells.push(buf.trim());
-  return cells;
+function blankLine(): Line {
+  return { spans: [{ text: "" }] };
+}
+
+/** Drop the blank lines a nested render leaves at either end. */
+function trim(lines: Line[]): Line[] {
+  let start = 0;
+  let end = lines.length;
+  while (start < end && plain(lines[start] as Line).trim() === "") start++;
+  while (end > start && plain(lines[end - 1] as Line).trim() === "") end--;
+  return lines.slice(start, end);
+}
+
+function prefixed(lines: Line[], first: Span[], rest: Span[]): Line[] {
+  return lines.map((line, index) => ({
+    spans: [...(index === 0 ? first : rest).map((s) => ({ ...s })), ...line.spans],
+  }));
 }
 
 function pad(spans: Span[], target: number, align: "left" | "right" | "center"): Span[] {
@@ -372,11 +438,16 @@ function pad(spans: Span[], target: number, align: "left" | "right" | "center"):
   return [...spans, { text: " ".repeat(gap) }];
 }
 
-function renderTable(rows: string[][], aligns: ("left" | "right" | "center")[], width: number): Line[] {
+function renderTable(token: Tokens.Table, width: number, ctx: Ctx): Line[] {
+  const header = token.header.map((cell) => inlineSpans(cell.tokens, { role: "th", bold: true }, ctx));
+  const body = token.rows.map((row) => row.map((cell) => inlineSpans(cell.tokens, {}, ctx)));
+  const rows = [header, ...body];
   const columns = Math.max(...rows.map((r) => r.length));
-  const cells = rows.map((row) => Array.from({ length: columns }, (_, i) => parseInline(row[i] ?? "")));
+  const aligns = token.align.map((a) => a ?? "left") as ("left" | "right" | "center")[];
+
+  const cells = rows.map((row) => Array.from({ length: columns }, (_, i) => row[i] ?? [{ text: "" }]));
   const widths = Array.from({ length: columns }, (_, i) =>
-    Math.max(1, ...cells.map((row) => (row[i] ?? []).reduce((n, s) => n + stringWidth(s.text), 0))),
+    Math.max(1, ...cells.map((row) => (row[i] as Span[]).reduce((n, s) => n + stringWidth(s.text), 0))),
   );
 
   // Shrink the widest columns first until the table fits the pane.
@@ -390,9 +461,9 @@ function renderTable(rows: string[][], aligns: ("left" | "right" | "center")[], 
   }
 
   const out: Line[] = [];
-  rows.forEach((_, r) => {
+  cells.forEach((row, r) => {
     const spans: Span[] = [];
-    (cells[r] as Span[][]).forEach((cell, c) => {
+    row.forEach((cell, c) => {
       if (c > 0) spans.push({ text: " ".repeat(gap) });
       const w = widths[c] as number;
       let used = 0;
@@ -400,10 +471,10 @@ function renderTable(rows: string[][], aligns: ("left" | "right" | "center")[], 
       for (const span of cell) {
         if (used >= w) break;
         const room = w - used;
-        const text = stringWidth(span.text) > room ? span.text.slice(0, Math.max(0, room - 1)) + "…" : span.text;
-        clipped.push(r === 0 ? { ...span, role: span.role ?? "th", bold: true } : span);
+        const text =
+          stringWidth(span.text) > room ? `${span.text.slice(0, Math.max(0, room - 1))}…` : span.text;
+        clipped.push({ ...span, text });
         used += stringWidth(text);
-        clipped[clipped.length - 1] = { ...(clipped[clipped.length - 1] as Span), text };
       }
       spans.push(...pad(clipped, w, aligns[c] ?? "left"));
     });
@@ -420,235 +491,264 @@ function renderTable(rows: string[][], aligns: ("left" | "right" | "center")[], 
   return out;
 }
 
+function renderCode(text: string, lang: string, width: number, framed = true): Line[] {
+  const out: Line[] = [];
+  const head = lang ? `┌─ ${lang} ` : "┌─ ";
+  if (framed) out.push({
+    spans: [
+      { text: "┌─ ", role: "gutter" },
+      ...(lang ? [{ text: `${lang} `, role: "lang" as Role }] : []),
+      { text: "─".repeat(Math.max(0, width - stringWidth(head))), role: "gutter" },
+    ],
+  });
+  for (const raw of text.replace(/\n$/, "").split("\n")) {
+    const line = raw.replace(/\t/g, "  ");
+    out.push({
+      spans: [
+        { text: "│ ", role: "gutter" },
+        { text: stringWidth(line) > width - 2 ? `${line.slice(0, width - 3)}…` : line, role: "fence" },
+      ],
+    });
+  }
+  if (framed) out.push({ spans: [{ text: `└${"─".repeat(Math.max(0, width - 1))}`, role: "gutter" }] });
+  return out;
+}
+
+function renderQuote(token: Tokens.Blockquote, width: number, ctx: Ctx): Line[] {
+  const inner = Math.max(4, width - 2);
+  const alert = ALERT_HEAD.exec(token.text);
+
+  if (alert) {
+    const kind = ALERTS[(alert[1] as string).toLowerCase()] as (typeof ALERTS)[string];
+    const body = token.text.slice(alert[0].length);
+    const lines = trim(renderTokens(lex(body, ctx.flavor), inner, ctx, 0));
+    const head: Line = {
+      spans: [{ text: `${kind.glyph} ${kind.label}`, role: kind.role, bold: true }],
+    };
+    return prefixed([head, ...lines], [{ text: "▌ ", role: kind.role }], [
+      { text: "▌ ", role: kind.role },
+    ]);
+  }
+
+  const lines = trim(renderTokens(token.tokens, inner, ctx, 0));
+  return prefixed(
+    lines.map((line) => ({ spans: line.spans.map((s) => ({ dim: true, ...s })) })),
+    [{ text: "▌ ", role: "quote" }],
+    [{ text: "▌ ", role: "quote" }],
+  );
+}
+
+function renderList(token: Tokens.List, width: number, ctx: Ctx, depth: number): Line[] {
+  const out: Line[] = [];
+  const start = typeof token.start === "number" && Number.isFinite(token.start) ? token.start : 1;
+
+  token.items.forEach((item, index) => {
+    const glyph = item.task
+      ? item.checked
+        ? "☑"
+        : "☐"
+      : token.ordered
+        ? `${start + index}.`
+        : (BULLETS[depth % BULLETS.length] as string);
+    const lead = stringWidth(glyph) + 1;
+    const inner = Math.max(8, width - lead);
+
+    // The checkbox is a marker, not content: it is already in the glyph.
+    const children = item.tokens.filter((t) => t.type !== "checkbox");
+    const style: Style = item.task && item.checked ? { dim: true } : {};
+    const lines = trim(renderTokens(children, inner, ctx, depth + 1, style, !token.loose));
+
+    out.push(
+      ...prefixed(
+        lines.length > 0 ? lines : [blankLine()],
+        [{ text: `${glyph} `, role: "bullet", bold: token.ordered }],
+        [{ text: " ".repeat(lead) }],
+      ),
+    );
+    if (token.loose && index < token.items.length - 1) out.push(blankLine());
+  });
+
+  return out;
+}
+
+function renderHeading(token: Tokens.Heading, width: number, ctx: Ctx): Line[] {
+  const role: Role = token.depth === 1 ? "h1" : token.depth === 2 ? "h2" : "h3";
+  const prefix: Span[] = token.depth >= 3 ? [{ text: "▸ ", role, dim: true }] : [];
+  const spans = [...prefix, ...inlineSpans(token.tokens, { role, bold: true }, ctx)];
+  const out = wrapBlock(spans, width);
+  const text = out.map(plain).join(" ");
+  if (token.depth === 1) out.push(rule(width, "━", { role, dim: true }));
+  else if (token.depth === 2) out.push(rule(Math.min(width, stringWidth(text) + 2), "─", { role, dim: true }));
+  return out;
+}
+
+/**
+ * A run of block tokens to lines, with one blank line between blocks.
+ *
+ * `depth` only selects the bullet glyph; indentation comes from the caller
+ * prefixing what it gets back, so a nested list, a code block and a table
+ * inside a list item all line up the same way.
+ */
+function renderTokens(
+  tokens: Token[],
+  width: number,
+  ctx: Ctx,
+  depth: number,
+  base: Style = {},
+  tight = false,
+): Line[] {
+  const out: Line[] = [];
+  const w = Math.max(4, width);
+
+  const push = (lines: Line[]): void => {
+    if (lines.length === 0) return;
+    if (out.length > 0 && !tight) out.push(blankLine());
+    out.push(...lines);
+  };
+
+  for (const token of tokens) {
+    switch (token.type) {
+      case "space":
+      case "def":
+      case "footnoteDef":
+        break;
+      case "heading":
+        push(renderHeading(token as Tokens.Heading, w, ctx));
+        break;
+      case "paragraph": {
+        const spans = inlineSpans((token as Tokens.Paragraph).tokens, base, ctx);
+        if (spans.every((s) => s.text.trim() === "")) break;
+        push(wrapBlock(spans, w));
+        break;
+      }
+      case "text": {
+        const t = token as Tokens.Text;
+        const spans = t.tokens ? inlineSpans(t.tokens, base, ctx) : [{ ...base, text: decode(t.text) }];
+        if (spans.every((s) => s.text.trim() === "")) break;
+        push(wrapBlock(spans, w));
+        break;
+      }
+      case "code": {
+        const code = token as Tokens.Code;
+        // Indented code has no info string and no fence to echo, so it keeps a
+        // bare gutter; only a real fence is framed.
+        push(renderCode(code.text, code.lang ?? "", w, code.codeBlockStyle !== "indented"));
+        break;
+      }
+      case "blockquote":
+        push(renderQuote(token as Tokens.Blockquote, w, ctx));
+        break;
+      case "list":
+        push(renderList(token as Tokens.List, w, ctx, depth));
+        break;
+      case "table":
+        push(renderTable(token as Tokens.Table, w, ctx));
+        break;
+      case "hr":
+        push([rule(w, "─", { role: "rule" })]);
+        break;
+      case "html": {
+        // A block of raw HTML: fold it to markdown and render what is left.
+        const cleaned = normalizeHtml((token as Tokens.HTML).raw).trim();
+        if (!cleaned) break;
+        push(trim(renderTokens(lex(cleaned, ctx.flavor), w, ctx, depth, base)));
+        break;
+      }
+      default: {
+        const any = token as { text?: string };
+        if (any.text?.trim()) push(wrapBlock([{ ...base, text: decode(any.text) }], w));
+        break;
+      }
+    }
+  }
+
+  return out;
+}
+
+/** The numbered notes, rendered under a rule at the foot of the document. */
+function renderFootnotes(width: number, ctx: Ctx): Line[] {
+  if (ctx.defs.size === 0) return [];
+
+  // Referenced notes first, in the order they were cited; then any that were
+  // defined and never used, which is worth seeing rather than dropping.
+  const referenced = [...ctx.numbers.entries()]
+    .sort((a, b) => a[1] - b[1])
+    .filter(([label]) => ctx.defs.has(label));
+  const orphans = [...ctx.defs.keys()].filter((label) => !ctx.numbers.has(label));
+
+  const entries: [string, string][] = [
+    ...referenced.map(([label, n]) => [label, `${n}.`] as [string, string]),
+    ...orphans.map((label) => [label, "•"] as [string, string]),
+  ];
+  if (entries.length === 0) return [];
+
+  const out: Line[] = [blankLine(), rule(width, "─", { role: "rule" }), blankLine()];
+  entries.forEach(([label, marker], index) => {
+    if (index > 0) out.push(blankLine());
+    const lead = stringWidth(marker) + 1;
+    const lines = trim(renderTokens(ctx.defs.get(label) as Token[], Math.max(8, width - lead), ctx, 0));
+    out.push(
+      ...prefixed(lines.length > 0 ? lines : [blankLine()], [{ text: `${marker} `, role: "footnote" }], [
+        { text: " ".repeat(lead) },
+      ]),
+    );
+  });
+  return out;
+}
+
+function collectDefs(tokens: Token[], ctx: Ctx): void {
+  for (const token of tokens) {
+    if (token.type === "footnoteDef") {
+      const def = token as unknown as FootnoteDefToken;
+      if (!ctx.defs.has(def.label)) ctx.defs.set(def.label, def.tokens);
+    }
+  }
+}
+
+function context(options: RenderOptions): Ctx {
+  return {
+    flavor: options.flavor ?? DEFAULT_FLAVOR,
+    spoilers: options.spoilers ?? false,
+    numbers: new Map(),
+    defs: new Map(),
+  };
+}
+
 /**
  * Render markdown to styled lines already wrapped to `width`.
  *
  * `width` is the pane's interior, so a resize re-renders rather than reflows —
  * cheap, and it keeps tables and code gutters honest.
  */
-export function renderMarkdown(source: string, width: number): Line[] {
+export function renderMarkdown(source: string, width: number, options: RenderOptions = {}): Line[] {
   const w = Math.max(20, Math.floor(width));
+  const ctx = context(options);
   const src = source.replace(/\r\n?/g, "\n").replace(/<!--[\s\S]*?-->/g, "");
-  const raw = src.split("\n");
-  const out: Line[] = [];
-  const blank = (): void => {
-    if (out.length > 0 && plain(out[out.length - 1] as Line).trim() !== "") out.push({ spans: [{ text: "" }] });
-  };
 
-  let i = 0;
+  const out: Line[] = [];
+  let body = src;
 
   // YAML front matter, shown rather than hidden: it is usually the metadata a
   // reader opened the file for.
-  if (raw[0] === "---") {
-    const end = raw.findIndex((l, n) => n > 0 && (l === "---" || l === "..."));
+  const lines = src.split("\n");
+  if (lines[0] === "---") {
+    const end = lines.findIndex((l, n) => n > 0 && (l === "---" || l === "..."));
     if (end > 0) {
-      for (const line of raw.slice(1, end)) {
+      for (const line of lines.slice(1, end)) {
         out.push({ spans: [{ text: "▏ ", role: "gutter" }, { text: line, role: "meta", dim: true }] });
       }
-      out.push({ spans: [{ text: "" }] });
-      i = end + 1;
+      out.push(blankLine());
+      body = lines.slice(end + 1).join("\n");
     }
   }
 
-  let paragraph: string[] = [];
-  const flushParagraph = (): void => {
-    if (paragraph.length === 0) return;
-    const text = paragraph.join(" ").trim();
-    paragraph = [];
-    if (!text) return;
-    const spans = parseInline(text);
-    // A paragraph that was only an HTML wrapper leaves nothing to show.
-    if (spans.every((span) => span.text.trim() === "")) return;
-    out.push(...wrapSpans(spans, w));
-  };
+  const tokens = lex(body, ctx.flavor);
+  collectDefs(tokens, ctx);
+  const rendered = renderTokens(tokens, w, ctx, 0);
+  if (out.length > 0 && rendered.length > 0) out.push(blankLine());
+  out.push(...rendered);
+  out.push(...renderFootnotes(w, ctx));
 
-  const isBlockStart = (line: string): boolean =>
-    line.trim() === "" ||
-    HR.test(line) ||
-    HEADING.test(line) ||
-    FENCE.test(line) ||
-    QUOTE.test(line) ||
-    LIST.test(line) ||
-    TABLE_ROW.test(line);
-
-  for (; i < raw.length; i++) {
-    const line = raw[i] as string;
-
-    if (line.trim() === "") {
-      flushParagraph();
-      blank();
-      continue;
-    }
-
-    // Setext headings close the paragraph they underline.
-    if (paragraph.length > 0 && (SETEXT_H1.test(line) || SETEXT_H2.test(line))) {
-      const text = paragraph.join(" ").trim();
-      paragraph = [];
-      const h1 = SETEXT_H1.test(line);
-      blank();
-      out.push(...wrapSpans(parseInline(text, { role: h1 ? "h1" : "h2", bold: true }), w));
-      out.push(rule(h1 ? w : Math.min(w, stringWidth(text)), h1 ? "━" : "─", { role: h1 ? "h1" : "h2", dim: true }));
-      out.push({ spans: [{ text: "" }] });
-      continue;
-    }
-
-    const fence = FENCE.exec(line);
-    if (fence) {
-      flushParagraph();
-      const marker = (fence[1] as string)[0] as string;
-      const lang = fence[2] ?? "";
-      const body: string[] = [];
-      i++;
-      for (; i < raw.length; i++) {
-        const l = raw[i] as string;
-        if (new RegExp(`^ {0,3}${marker === "`" ? "```" : "~~~"}+[ \t]*$`).test(l)) break;
-        body.push(l);
-      }
-      blank();
-      const head = lang ? `┌─ ${lang} ` : "┌─ ";
-      out.push({
-        spans: [
-          { text: "┌─ ", role: "gutter" },
-          ...(lang ? [{ text: `${lang} `, role: "lang" as Role }] : []),
-          { text: "─".repeat(Math.max(0, w - stringWidth(head))), role: "gutter" },
-        ],
-      });
-      for (const l of body) {
-        const text = l.replace(/\t/g, "  ");
-        out.push({
-          spans: [
-            { text: "│ ", role: "gutter" },
-            { text: stringWidth(text) > w - 2 ? text.slice(0, w - 3) + "…" : text, role: "fence" },
-          ],
-        });
-      }
-      out.push({ spans: [{ text: "└" + "─".repeat(Math.max(0, w - 1)), role: "gutter" }] });
-      out.push({ spans: [{ text: "" }] });
-      continue;
-    }
-
-    const heading = HEADING.exec(line);
-    if (heading) {
-      flushParagraph();
-      const level = (heading[1] as string).length;
-      const text = heading[2] as string;
-      const role: Role = level === 1 ? "h1" : level === 2 ? "h2" : "h3";
-      blank();
-      const prefix: Span[] = level >= 3 ? [{ text: "▸ ", role, dim: true }] : [];
-      out.push(...wrapSpans([...prefix, ...parseInline(text, { role, bold: true })], w));
-      if (level === 1) out.push(rule(w, "━", { role, dim: true }));
-      else if (level === 2) out.push(rule(Math.min(w, stringWidth(text) + 2), "─", { role, dim: true }));
-      out.push({ spans: [{ text: "" }] });
-      continue;
-    }
-
-    if (HR.test(line)) {
-      flushParagraph();
-      blank();
-      out.push(rule(w, "─", { role: "rule" }));
-      out.push({ spans: [{ text: "" }] });
-      continue;
-    }
-
-    if (QUOTE.test(line)) {
-      flushParagraph();
-      const body: string[] = [];
-      for (; i < raw.length; i++) {
-        const m = QUOTE.exec(raw[i] as string);
-        if (m) body.push(m[1] ?? "");
-        else if ((raw[i] as string).trim() !== "" && body.length > 0) body.push(raw[i] as string);
-        else break;
-      }
-      i--;
-      blank();
-      for (const inner of renderMarkdown(body.join("\n"), w - 2)) {
-        out.push({ spans: [{ text: "▌ ", role: "quote" }, ...inner.spans.map((s) => ({ dim: true, ...s }))] });
-      }
-      out.push({ spans: [{ text: "" }] });
-      continue;
-    }
-
-    const list = LIST.exec(line);
-    if (list) {
-      flushParagraph();
-      const lead = (list[1] as string).replace(/\t/g, "  ");
-      const depth = Math.min(3, Math.floor(lead.length / 2));
-      const marker = list[2] as string;
-      let rest = list[4] as string;
-
-      // Lazy continuation: fold following plain lines into this item.
-      const parts = [rest];
-      while (i + 1 < raw.length && !isBlockStart(raw[i + 1] as string)) {
-        parts.push((raw[i + 1] as string).trim());
-        i++;
-      }
-      rest = parts.join(" ");
-
-      const task = TASK.exec(rest);
-      let checked = false;
-      if (task) {
-        checked = (task[1] as string).toLowerCase() === "x";
-        rest = rest.slice(task[0].length);
-      }
-
-      const ordered = /\d/.test(marker);
-      const glyph = task ? (checked ? "☑" : "☐") : ordered ? marker : (BULLETS[depth] as string);
-      const indent = depth * 2;
-      const bullet: Span = { text: `${glyph} `, role: "bullet", bold: ordered };
-      const body = parseInline(rest, checked ? { dim: true } : {});
-      const lines = wrapSpans([bullet, ...body], w, indent, indent + stringWidth(glyph) + 1);
-      out.push(...lines);
-      continue;
-    }
-
-    if (TABLE_ROW.test(line) && TABLE_RULE.test(raw[i + 1] ?? "")) {
-      flushParagraph();
-      const header = splitRow(line);
-      const aligns = splitRow(raw[i + 1] as string).map((cell) => {
-        const left = cell.startsWith(":");
-        const right = cell.endsWith(":");
-        return left && right ? "center" : right ? "right" : "left";
-      }) as ("left" | "right" | "center")[];
-      const rows = [header];
-      i += 2;
-      for (; i < raw.length && TABLE_ROW.test(raw[i] as string); i++) rows.push(splitRow(raw[i] as string));
-      i--;
-      blank();
-      out.push(...renderTable(rows, aligns, w));
-      out.push({ spans: [{ text: "" }] });
-      continue;
-    }
-
-    // Indented code, but only where a fresh block can start.
-    const indented = INDENTED_CODE.exec(line);
-    if (indented && paragraph.length === 0) {
-      const body: string[] = [];
-      for (; i < raw.length; i++) {
-        const l = raw[i] as string;
-        const m = INDENTED_CODE.exec(l);
-        if (m) body.push(m[1] as string);
-        else if (l.trim() === "") body.push("");
-        else break;
-      }
-      i--;
-      while (body.length > 0 && (body[body.length - 1] as string).trim() === "") body.pop();
-      blank();
-      for (const l of body) {
-        out.push({
-          spans: [
-            { text: "│ ", role: "gutter" },
-            { text: stringWidth(l) > w - 2 ? l.slice(0, w - 3) + "…" : l, role: "fence" },
-          ],
-        });
-      }
-      out.push({ spans: [{ text: "" }] });
-      continue;
-    }
-
-    paragraph.push(line.trim());
-  }
-
-  flushParagraph();
   while (out.length > 0 && plain(out[out.length - 1] as Line).trim() === "") out.pop();
   return out.map((line) => ({ spans: mergeSpans(line.spans) }));
 }

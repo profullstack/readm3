@@ -15,7 +15,7 @@ import {
   type ColorDepth,
   type Theme,
 } from "@profullstack/hqtui";
-import { renderMarkdown, type Span } from "./markdown.ts";
+import { renderMarkdown, type RenderOptions, type Span } from "./markdown.ts";
 import { colorOf } from "./roles.ts";
 
 export type ColorMode = "auto" | "always" | "never";
@@ -26,7 +26,7 @@ const ESC = String.fromCharCode(27);
 /** Used when stdout has no width to report. */
 const DEFAULT_WIDTH = 80;
 
-export interface PrintOptions {
+export interface PrintOptions extends RenderOptions {
   /** File to render. Omitted, or "-", reads stdin. */
   path?: string | undefined;
   width?: number | undefined;
@@ -59,14 +59,21 @@ export function styleSpan(span: Span, theme: Theme, depth: ColorDepth): string {
   if (span.dim) params.push("2");
   if (span.italic) params.push("3");
   if (span.underline) params.push("4");
+  if (span.strike) params.push("9");
   params.push(...colorParams(colorOf(span, theme), depth));
   if (params.length === 0) return span.text;
   return `${ESC}[${params.join(";")}m${span.text}${ESC}[0m`;
 }
 
 /** A whole document as text, colored to `depth`. */
-export function renderAnsi(source: string, width: number, theme: Theme, depth: ColorDepth): string {
-  return renderMarkdown(source, width)
+export function renderAnsi(
+  source: string,
+  width: number,
+  theme: Theme,
+  depth: ColorDepth,
+  options: RenderOptions = {},
+): string {
+  return renderMarkdown(source, width, options)
     .map((line) =>
       line.spans
         .map((span) => styleSpan(span, theme, depth))
@@ -103,6 +110,9 @@ export function resolveWidth(explicit?: number): number {
 export function printDocument(options: PrintOptions = {}): void {
   const source = options.path && options.path !== "-" ? readFileSync(options.path, "utf8") : readStdin();
   const theme = resolveTheme(options.theme);
-  const text = renderAnsi(source, resolveWidth(options.width), theme, resolveDepth(options.color));
+  const text = renderAnsi(source, resolveWidth(options.width), theme, resolveDepth(options.color), {
+    flavor: options.flavor,
+    spoilers: options.spoilers,
+  });
   process.stdout.write(text === "" ? "" : `${text}\n`);
 }

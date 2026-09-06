@@ -33,6 +33,23 @@ export function colorOf(span: Span, theme: Theme): Color {
       return theme.muted;
     case "th":
       return theme.title;
+    case "spoiler":
+      // Blocked out or revealed, a spoiler stays quiet; the blocks do the work.
+      return theme.muted;
+    case "sup":
+      return theme.accent;
+    case "footnote":
+      return theme.info;
+    case "alert-note":
+      return theme.info;
+    case "alert-tip":
+      return theme.success;
+    case "alert-important":
+      return theme.primary;
+    case "alert-warning":
+      return theme.warning;
+    case "alert-caution":
+      return theme.danger;
     default:
       return theme.foreground;
   }
