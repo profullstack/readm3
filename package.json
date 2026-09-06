@@ -30,6 +30,8 @@
   "sideEffects": false,
   "scripts": {
     "start": "bun src/cli.ts",
+    "site:build": "bun site/build.ts",
+    "site:start": "bun site/server.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --experimental-strip-types --test test/*.test.ts",

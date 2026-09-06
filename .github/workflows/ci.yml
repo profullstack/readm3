@@ -25,6 +25,8 @@ jobs:
         run: bun test test/
       - name: Build
         run: bun run build
+      - name: Build the site
+        run: bun run site:build
 
   node:
     name: node ${{ matrix.node }}
