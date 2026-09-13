@@ -6,6 +6,7 @@ body.admin-app { overflow: auto; height: auto; min-height: 100dvh; }
 .auth-card { max-width: 420px; margin: 5vh auto; padding: 30px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
 .auth-card h1 { font-size: 27px; margin: 0 0 10px; line-height: 1.2; }
 .auth-card p { color: var(--muted); }
+.auth-card a.primary-action { display:inline-block; margin-top:12px; padding:10px 14px; border:1px solid var(--primary); border-radius:5px; color:var(--bg); text-decoration:none; }
 .auth-card form, .cloud-form { display: grid; gap: 16px; margin-top: 22px; }
 .auth-card label, .cloud-form label { display: grid; gap: 6px; }
 .auth-card input, .cloud-form input, .cloud-form select { width: 100%; padding: 10px; }

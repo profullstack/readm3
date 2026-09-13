@@ -72,7 +72,7 @@ const input = (name: string, label: string, value = "", type = "text") =>
   `<label>${escape(label)}<input name="${name}" type="${type}" value="${escape(value)}" required maxlength="200"></label>`;
 function auth() {
   content.innerHTML =
-    '<section class="auth-card"><p class="eyebrow">A home for your Markdown</p><h1>Your next draft starts here.</h1><p>Sign in with your email to create private documents, invite collaborators, and keep every version.</p><a class="primary-action" href="/account?next=%2Fadmin">Continue with email →</a></section>';
+    `<section class="auth-card"><p class="eyebrow">A home for your Markdown</p><h1>Your next draft starts here.</h1><p>Sign in with your email to create private documents, invite collaborators, and keep every version.</p><a class="primary-action" href="/account?next=${encodeURIComponent(location.pathname + location.search)}">Continue with email →</a></section>`;
 }
 async function signedIn() {
   const stored = new URLSearchParams(
@@ -101,11 +101,12 @@ async function signedIn() {
   document.getElementById("logout")!.hidden = false;
   document.getElementById("logout")!.onclick = () =>
     run(async () => {
-      await fetch("/api/auth/logout", {
+      const response = await fetch("/api/auth/logout", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}",
       });
+      if (!response.ok) throw new Error("Could not sign out. Please try again.");
       location.href = "/admin";
     });
   await refresh();

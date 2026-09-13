@@ -340,8 +340,8 @@ storage, and `READM3_URL` to the public HTTPS origin. The Docker image uses
 for access to the mounted volume. Use one service replica for SQLite and configure
 volume backups in the hosting platform.
 
-Set `READM3_ADMIN_BOOTSTRAP_SECRET` to a random secret, then open
-`/admin#claim=YOUR_SECRET` and sign in as the intended super administrator. This is a
+Set `READM3_ADMIN_BOOTSTRAP_SECRET` to a random secret. Sign in at `/account` as
+the intended super administrator, then open `/admin#claim=YOUR_SECRET`. This is a
 one-time claim stored in the database. Never publish this URL; remove the environment
 secret after claiming. Email sign-in never grants administrator access by itself.
 
