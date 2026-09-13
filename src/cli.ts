@@ -10,7 +10,7 @@ import { printDocument, COLOR_MODES, type ColorMode } from "./print.ts";
 import { run, type ViewerOptions } from "./viewer.ts";
 import { isCloudCommand, cloudMain, CLOUD_USAGE } from "./cloud-cli.ts";
 
-export const VERSION = "0.4.0";
+export const VERSION = "0.5.0";
 
 /** The help text, exported so a test can hold it to the flags it documents. */
 export const USAGE = `readm3 — a terminal markdown reader and editor
@@ -182,6 +182,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
 }
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
+  const { accountCommand } = await import("./sync-cli.ts");
+  if (await accountCommand(argv)) return;
   if (isCloudCommand(argv[0])) { await cloudMain(argv); return; }
   let args: ParsedArgs;
   try {
@@ -196,7 +198,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   }
 
   if (args.help) {
-    process.stdout.write(USAGE);
+    const { ACCOUNT_USAGE } = await import("./sync-cli.ts");
+    process.stdout.write(USAGE + "\n" + ACCOUNT_USAGE);
     return;
   }
   if (args.version) {
@@ -204,6 +207,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     return;
   }
   if (args.print) {
+    const { localSettings } = await import("./settings-sync.ts");
+    const settings = localSettings();
+    args.theme ??= settings.theme;
+    args.flavor ??= settings.flavor;
     printDocument({
       path: args.open,
       width: args.sidebar,
@@ -221,6 +228,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     return;
   }
 
+  const { localSettings } = await import("./settings-sync.ts");
+  const settings = localSettings();
+  args.theme ??= settings.theme;
+  args.flavor ??= settings.flavor;
   await run(args);
 }
 

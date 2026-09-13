@@ -56,7 +56,7 @@ jobs:
       - name: Node CLI and MCP against document API
         env:
           READM3_TEST_NODE: "1"
-        run: bun test server/test/surfaces.test.ts
+        run: bun test server/test/surfaces.test.ts server/test/sync.test.ts
 
   browser:
     name: web reader and offline PWA

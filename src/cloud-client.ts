@@ -1,20 +1,16 @@
 import {
   readFileSync,
-  writeFileSync,
-  mkdirSync,
-  chmodSync,
   existsSync,
   unlinkSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { apiUrl, configDir, writeConfig } from "./account.ts";
 export interface CloudConfig {
   url: string;
+  api?: string;
   token?: string;
 }
-const configDir = () =>
-  join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "readm3");
-export function cloudConfig(): CloudConfig {
+export function cloudConfig(tokenOverride?: string): CloudConfig {
   let saved: Partial<CloudConfig> = {};
   try {
     saved = JSON.parse(readFileSync(join(configDir(), "cloud.json"), "utf8"));
@@ -26,20 +22,14 @@ export function cloudConfig(): CloudConfig {
     saved.url ||
     "https://readm3.com"
   ).replace(/\/$/, "");
-  const parsed = new URL(url);
-  if (
-    !["http:", "https:"].includes(parsed.protocol) ||
-    parsed.username ||
-    parsed.password
-  )
-    throw new Error("READM3_URL must be an HTTP(S) origin.");
-  return { url: parsed.origin, token: process.env.READM3_TOKEN || saved.token };
+  const api = apiUrl(process.env.READM3_API_URL || (process.env.READM3_URL ? `${url}/api/v1` : saved.api || `${url}/api/v1`));
+  const parsed = new URL(api);
+  if (saved.token && !tokenOverride && !process.env.READM3_TOKEN && (saved.api || saved.url) && api !== apiUrl(saved.api || `${saved.url}/api/v1`))
+    throw new Error("The server changed. Sign in to this server first.");
+  return { url: parsed.origin, api, token: tokenOverride || process.env.READM3_TOKEN || saved.token };
 }
 export function saveCloudConfig(config: CloudConfig) {
-  mkdirSync(configDir(), { recursive: true, mode: 0o700 });
-  const path = join(configDir(), "cloud.json");
-  writeFileSync(path, JSON.stringify(config) + "\n", { mode: 0o600 });
-  chmodSync(path, 0o600);
+  writeConfig("cloud.json", config);
 }
 export function clearCloudConfig() {
   const path = join(configDir(), "cloud.json");
@@ -51,7 +41,7 @@ export async function cloudRequest<T = unknown>(
   body?: unknown,
   config = cloudConfig(),
 ): Promise<T> {
-  const response = await fetch(`${config.url}/api/v1/${path}`, {
+  const response = await fetch(`${config.api || `${config.url}/api/v1`}/${path}`, {
     method,
     headers: {
       ...(config.token ? { authorization: `Bearer ${config.token}` } : {}),

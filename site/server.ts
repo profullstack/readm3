@@ -11,6 +11,7 @@ import { Accounts } from "../server/accounts.ts";
 import { accountMailer } from "../server/account-mail.ts";
 import { Store } from "../server/store.ts";
 import { createApi } from "../server/api.ts";
+import { createSyncApi } from "../server/sync-api.ts";
 
 const dist = join(dirname(fileURLToPath(import.meta.url)), "dist");
 const port = Number(process.env.PORT ?? 3000);
@@ -50,10 +51,11 @@ export function serveSite(options: { accounts?: Accounts; port?: number; hostnam
   );
   const store = new Store(accounts.db);
   const api = createApi(store, accounts.origin);
+  const syncApi = createSyncApi(store, accounts);
   return Bun.serve({
     port: listenPort,
     hostname: options.hostname ?? "0.0.0.0",
-    maxRequestBodySize: 1100 * 1024,
+    maxRequestBodySize: 40 * 1024 * 1024,
     async fetch(request, server) {
       const url = new URL(request.url);
 
@@ -71,6 +73,8 @@ export function serveSite(options: { accounts?: Accounts; port?: number; hostnam
         : server.requestIP(request)?.address || "unknown";
       const accountResponse = await accounts.handle(request, ip);
       if (accountResponse) return accountResponse;
+      const syncResponse = await syncApi(request);
+      if (syncResponse) return syncResponse;
       const documentResponse = await api(request, ip);
       if (documentResponse) return documentResponse;
 
