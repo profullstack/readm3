@@ -116,6 +116,9 @@ test("share dialog creates default read-only links and explicit edit links; edit
     await page
       .getByRole("button", { name: "Create share link", exact: true })
       .click();
+    await expect(
+      page.getByRole("textbox", { name: "Copy link", exact: true }),
+    ).not.toHaveValue(viewUrl);
     const editUrl = await page
       .getByRole("textbox", { name: "Copy link", exact: true })
       .inputValue();
