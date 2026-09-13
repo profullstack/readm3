@@ -354,6 +354,80 @@ bun run test:server  # auth, roles, version history, persistence, CLI and MCP
 bun run test:site    # local/offline reader plus browser sharing and admin workflows
 ```
 
+## Workspace and settings sync
+
+Sign in with verified email at `/account`, then create a personal API token in `/admin`. The PWA's **Sync** button saves or loads
+your local Markdown workspace and reader preferences on that same account. Shared
+documents continue to use their own document permissions and version history.
+Local files are uploaded only when you choose **Save to account**, `readm3 save`,
+or a sharing action. Sync requires a connection; the local reader still works offline.
+
+The CLI, document commands, and MCP use one credential file, `cloud.json`, under
+`$XDG_CONFIG_HOME/readm3` (normally `~/.config/readm3`). It is written with mode
+0600. Login verifies the account; logout removes the local credential. Revoke a token
+in `/admin` to invalidate remote copies. Tokens can also be created and revoked from the account page.
+
+```sh
+readm3 login --token-stdin               # paste a token, then Ctrl+D
+readm3 whoami
+readm3 settings --theme nord --flavor github
+readm3 save ./notes                      # explicitly import and save Markdown
+readm3 sync status
+readm3 sync revisions
+readm3 load --dry-run                    # inspect the incoming changes
+readm3 load ./downloaded-notes           # load and export into a new directory
+readm3 load --force                      # replace local conflicts, with backups
+readm3 logout
+```
+
+For self-hosting, set `READM3_URL` to the server origin, or set `READM3_API_URL` to
+its API base such as `http://127.0.0.1:3000/api/v1`. `READM3_TOKEN` supplies a token
+without writing it to disk. `READM3_CONFIG_DIR` selects an isolated client directory.
+HTTPS is required except on localhost. A saved token is never sent to a different
+server merely because an environment variable changed.
+
+Sync uses `@profullstack/synconfig`, the same package used by moshcode. Only
+`settings.json` (theme and flavor) and `workspace.json` (the explicitly imported
+workspace) are allowed. Credentials, local revision markers, and backups are excluded.
+Running `save` without a path saves those local files; it does not scan the current
+directory. Running `load` without an output directory updates those files, and loaded
+preferences apply to subsequent terminal reader invocations.
+
+Each account keeps ten revisions. Saves carry the last loaded revision and reject
+concurrent changes; a new device starts at revision 0. Loads refuse to replace
+conflicting local edits, including on a device that has never synced. `--force`
+explicitly overrides a conflict. Replaced local files receive numbered `.bak-NNN`
+backups. Browser replacements receive backups in IndexedDB, accessible through
+**Sync → Local backups** for download or restoration. Clearing browser site data
+also removes those local backups. Sync supports the browser's workspace limits:
+1,000 Markdown files, 4 MB per file, and 20 MB of source in total.
+
+The authenticated API exposes:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/v1/me` | Current account; `user: null` when signed out |
+| `GET /api/v1/settings` | Latest snapshot, digest, and revision; 404 when empty |
+| `PUT /api/v1/settings` | Save `{ snapshot, ifRevision }`; 409 on a conflict |
+| `GET /api/v1/settings/revisions` | The last ten revision summaries |
+
+`/api/v1/synconfig` is an alias for the settings endpoints. A snapshot is
+`{ version: 1, host, app, files: { "settings.json": { content: "{...}" } } }`.
+`workspace.json` uses `{ name, active, documents: [{ path, source }] }` inside its
+JSON content string. Send `ifRevision: 0` for a first save, the revision last loaded
+for subsequent saves, or `null` for an explicitly forced save. API callers use
+`Authorization: Bearer TOKEN`; browser callers use the same account's HTTP-only
+session cookie and same-origin requests. Account responses are never cached offline.
+
+Start MCP with `readm3 mcp`. Alongside the document and organization tools, it exposes
+`settings_get`, `settings_save`, and `settings_revisions`. `settings_save` requires
+a nonnegative `ifRevision` and uses the same validation and conflict checks as the API.
+
+Run `bun run test:server` for account/sync integration checks and `bun run test:site`
+for browser checks. The server needs Bun and a persistent `READM3_DB` SQLite path;
+in the container this defaults to `/data/readm3.sqlite`, so mount persistent storage
+at `/data`. Set `READM3_URL` to the public origin for browser origin checks.
+
 ## License
 
 MIT.

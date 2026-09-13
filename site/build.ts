@@ -517,7 +517,7 @@ for (const size of [192, 512]) cpSync(join(here, `assets/icon-${size}.png`), joi
 write("viewer.webmanifest", JSON.stringify({
   id: "/viewer", name: "readm3 — Markdown editor", short_name: "readm3",
   description: "Your Markdown, in a quiet reading window. Read and edit offline.",
-  start_url: "/viewer", scope: "/viewer", display: "standalone",
+  start_url: "/viewer", scope: "/", display: "standalone",
   background_color: "#05070a", theme_color: "#05070a", lang: "en",
   icons: [192, 512].map((size) => ({ src: `/viewer-assets/icon-${size}.png`, sizes: `${size}x${size}`, type: "image/png", purpose: "any" })),
 }));

@@ -1,7 +1,9 @@
 import { test, expect, type BrowserContext, type Page } from "@playwright/test";
+const testOrigin = process.env.READM3_TEST_URL || `http://127.0.0.1:${process.env.READM3_TEST_PORT || 4318}`;
+const testMailbox = `http://127.0.0.1:${Number(new URL(testOrigin).port) + 1}`;
 const suffix = () => Math.random().toString(36).slice(2, 10);
 async function register(context: BrowserContext, name = "writer_" + suffix()) {
-  const origin = "http://127.0.0.1:4318";
+  const origin = testOrigin;
   const email = name + "@example.com";
   const sent = await context.request.post("/api/auth/email", {
     headers: { origin },
@@ -9,7 +11,7 @@ async function register(context: BrowserContext, name = "writer_" + suffix()) {
   });
   expect(sent.ok(), await sent.text()).toBe(true);
   const mail = await (
-    await context.request.get(`http://127.0.0.1:4319/test/mail?email=${email}`)
+    await context.request.get(`${testMailbox}/test/mail?email=${email}`)
   ).json();
   const token = new URLSearchParams(new URL(mail[0].url).hash.slice(1)).get(
     "verify",
@@ -31,7 +33,7 @@ async function action(
       origin: new URL(
         context.pages()[0]?.url().startsWith("http")
           ? context.pages()[0]!.url()
-          : process.env.READM3_TEST_URL || "http://127.0.0.1:4318",
+          : process.env.READM3_TEST_URL || testOrigin,
       ).origin,
     },
     data: { operation, args },
@@ -62,7 +64,7 @@ test("verified email signup returns to the workspace and saves a private documen
     page.getByRole("heading", { name: "Check your inbox." }),
   ).toBeVisible();
   const mail = await (
-    await request.get(`http://127.0.0.1:4319/test/mail?email=${email}`)
+    await request.get(`${testMailbox}/test/mail?email=${email}`)
   ).json();
   await page.goto(mail[0].url);
   await page.getByRole("button", { name: "Verify email & sign in" }).click();
@@ -102,7 +104,7 @@ test("share dialog creates default read-only links and explicit edit links; edit
     .getByRole("textbox", { name: "Copy link", exact: true })
     .inputValue();
   const guest = await browser.newContext({
-    baseURL: process.env.READM3_TEST_URL || "http://127.0.0.1:4318",
+    baseURL: process.env.READM3_TEST_URL || testOrigin,
   });
   try {
     const guestPage = await guest.newPage();
@@ -185,7 +187,7 @@ test("revoked links stop working and cloud documents never enter the offline wor
     role: "view",
   });
   const guest = await browser.newContext({
-    baseURL: process.env.READM3_TEST_URL || "http://127.0.0.1:4318",
+    baseURL: process.env.READM3_TEST_URL || testOrigin,
   });
   try {
     const guestPage = await guest.newPage();
@@ -237,7 +239,7 @@ test("super-admin setup grants the account administration of another user's priv
     !!process.env.READM3_TEST_URL,
     "The live super-admin claim must never be consumed by a test.",
   );
-  const other = await browser.newContext({ baseURL: "http://127.0.0.1:4318" });
+  const other = await browser.newContext({ baseURL: testOrigin });
   try {
     const doc = await create(other);
     await register(context, "superadmin_" + suffix());
@@ -397,7 +399,7 @@ test("team members update in place and organization members get read-only contro
   await dialog.getByRole("button", { name: "Close dialog" }).click();
 
   const memberContext = await browser.newContext({
-    baseURL: "http://127.0.0.1:4318",
+    baseURL: testOrigin,
   });
   try {
     await register(memberContext);

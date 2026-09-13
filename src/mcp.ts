@@ -8,6 +8,12 @@ import { cloudAction, cloudRequest, sharedLocation } from "./cloud-client.ts";
 const string = { type: "string" };
 const role = { type: "string", enum: ["view", "edit"] };
 const definitions: [string, string, Record<string, unknown>, string[]][] = [
+  ["settings_get", "Read the verified account's latest settings and Markdown workspace snapshot, including its revision.", {}, []],
+  ["settings_save", "Save settings.json and workspace.json. Use the revision from settings_get, or 0 for a first save. Stale saves are rejected.", {
+    snapshot: { type: "object", properties: { version: { type: "integer", const: 1 }, files: { type: "object", description: "Only settings.json and workspace.json, each containing a JSON string in its content property." } }, required: ["version", "files"] },
+    ifRevision: { type: "integer", minimum: 0 },
+  }, ["snapshot", "ifRevision"]],
+  ["settings_revisions", "List the verified account's last ten sync revisions.", {}, []],
   ["account_me", "Show the authenticated readm3 user.", {}, []],
   ["organizations_list", "List organizations you belong to.", {}, []],
   [
@@ -253,7 +259,7 @@ const definitions: [string, string, Record<string, unknown>, string[]][] = [
 ];
 export async function runMcp() {
   const server = new Server(
-    { name: "readm3", version: "0.4.0" },
+    { name: "readm3", version: "0.5.0" },
     { capabilities: { tools: {} } },
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -267,7 +273,7 @@ export async function runMcp() {
         additionalProperties: false,
       },
       annotations: {
-        readOnlyHint: /_(list|get|me|users)$/.test(name),
+        readOnlyHint: /_(list|get|me|users|revisions)$/.test(name),
         destructiveHint: /_(delete|remove|revoke|transfer)$/.test(name),
         openWorldHint: true,
       },
@@ -280,7 +286,10 @@ export async function runMcp() {
       if (!definitions.some(([operation]) => operation === name))
         throw new Error("Unknown tool.");
       let result: unknown;
-      if (name.startsWith("shared_")) {
+      if (name.startsWith("settings_")) {
+        if (name === "settings_save" && (!Number.isSafeInteger(args.ifRevision) || Number(args.ifRevision) < 0 || !args.snapshot)) throw new Error("snapshot and a nonnegative ifRevision are required.");
+        result = await cloudRequest(name === "settings_revisions" ? "settings/revisions" : "settings", name === "settings_save" ? "PUT" : "GET", name === "settings_save" ? { snapshot: args.snapshot, ifRevision: args.ifRevision } : undefined);
+      } else if (name.startsWith("shared_")) {
         const { token, config } = sharedLocation(String(args.url));
         result = await cloudRequest(
           `shared/${token}`,

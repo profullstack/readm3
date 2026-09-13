@@ -91,7 +91,7 @@ export async function cloudMain(argv: string[]) {
       );
     const token = readFileSync(0, "utf8").trim();
     if (!token) throw new Error("No token supplied.");
-    const config = { ...cloudConfig(), token };
+    const config = cloudConfig(token);
     const user = await cloudAction("account_me", {}, config);
     saveCloudConfig(config);
     output({ signedIn: true, user });

@@ -1,5 +1,6 @@
 import { action, request, type CloudDocument } from "./cloud.ts";
 import { publish, sharing, history as versionHistory } from "./sharing.ts";
+import { showSync } from "./sync.ts";
 import { renderMarkdown } from "../src/markdown.ts";
 import type { Flavor } from "../src/flavors.ts";
 import { toHtml } from "./html.ts";
@@ -26,6 +27,7 @@ const cloudId = new URLSearchParams(location.search).get("doc");
 let cloudSaving = false;
 
 function cloudControls() {
+  element("sync-workspace").hidden = !!cloudDocument;
   element("cloud-save").hidden = !cloudDocument?.canEdit;
   element("history").hidden = !cloudDocument?.canManage;
   element("share").hidden = !!cloudDocument && !cloudDocument.canManage;
@@ -304,6 +306,26 @@ function loadPreferences() {
 }
 
 function bindEvents() {
+  element("sync-workspace").onclick = () => void showSync({
+    read: () => workspace,
+    settings: () => ({ theme: theme.value, flavor: flavor.value as Flavor }),
+    async apply(incoming, settings) {
+      clearTimeout(saveTimer);
+      if (incoming) {
+        await persist(incoming);
+        workspace = incoming;
+        filter.value = "";
+        collapsed.clear();
+      }
+      if (settings?.theme && [...theme.options].some((option) => option.value === settings.theme)) theme.value = settings.theme;
+      if (settings?.flavor) flavor.value = settings.flavor;
+      storePreference("theme", theme.value);
+      storePreference("flavor", flavor.value);
+      document.documentElement.dataset.theme = theme.value;
+      openDocument(workspace.active, false);
+      await save();
+    },
+  });
   element("cloud-save").onclick = () => void saveCloud();
   element("share").onclick = () => {
     if (pendingSave && cloudDocument) { notice("Save your changes before changing sharing settings."); return; }
