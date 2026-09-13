@@ -271,3 +271,229 @@ test("homepage sells editing and launches a new local draft", async ({
   await expect(page.locator("#editor")).toBeVisible();
   await expect(page.locator("#document-name")).toHaveText("Untitled.md");
 });
+
+test("workspace menus keep team creation, renaming, search, and confirmed deletion reachable", async ({
+  page,
+  context,
+}) => {
+  await register(context);
+  const [org] = await action(context, "organizations_list");
+  await action(context, "organizations_update", {
+    orgId: org.id,
+    name: "Profullstack, Inc.",
+  });
+  await page.goto("/admin");
+  const orgOptions = page.getByLabel("Organization options", { exact: true });
+  await orgOptions.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("button", { name: "Delete organization", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(orgOptions).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "Delete organization", exact: true }),
+  ).not.toBeVisible();
+  await orgOptions.click();
+  await page.getByRole("heading", { name: "Your workspace" }).click();
+  await expect(
+    page.getByRole("button", { name: "Delete organization", exact: true }),
+  ).not.toBeVisible();
+
+  await page.getByRole("button", { name: "Teams", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Bring your people together" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Teams", exact: true }),
+  ).toBeFocused();
+  await page.getByRole("button", { name: "+ New team", exact: true }).click();
+  await expect(page.getByLabel("Team name", { exact: true })).toBeFocused();
+  await page.getByLabel("Team name", { exact: true }).fill("contractors");
+  await page.getByRole("button", { name: "Create team", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "contractors", exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("Find a team", { exact: true }).fill("missing");
+  await expect(
+    page.getByRole("heading", { name: "No teams match your search" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Clear search" }).click();
+  await expect(
+    page.getByRole("heading", { name: "contractors", exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("contractors options", { exact: true }).click();
+  await page.getByRole("button", { name: "Rename team", exact: true }).click();
+  await page.getByLabel("Team name", { exact: true }).fill("Partners");
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Partners", exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("Partners options", { exact: true }).click();
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.getByRole("button", { name: "Delete team", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Partners", exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("Partners options", { exact: true }).click();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Delete team", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Bring your people together" }),
+  ).toBeVisible();
+  expect(await action(context, "teams_list", { orgId: org.id })).toEqual([]);
+});
+
+test("team members update in place and organization members get read-only controls", async ({
+  page,
+  context,
+  browser,
+}) => {
+  const owner = await register(context);
+  const [org] = await action(context, "organizations_list");
+  const team = await action(context, "teams_create", {
+    orgId: org.id,
+    name: "contractors",
+  });
+  await page.goto("/admin");
+  await page.getByRole("button", { name: "Teams", exact: true }).click();
+  await page
+    .locator(".team-row")
+    .getByRole("button", { name: "Members", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "contractors members",
+    exact: true,
+  });
+  await expect(dialog).toContainText("No members yet.");
+  await dialog
+    .getByRole("button", { name: "Add to team", exact: true })
+    .click();
+  await expect(dialog.locator(".team-member-row")).toContainText(
+    owner.displayName,
+  );
+  await expect(dialog).toContainText(
+    "Everyone in this organization is on this team.",
+  );
+  await expect(
+    dialog.getByRole("button", { name: "Add to team", exact: true }),
+  ).toHaveCount(0);
+  await dialog
+    .getByRole("button", {
+      name: `Remove ${owner.displayName} from team`,
+      exact: true,
+    })
+    .click();
+  await expect(dialog).toContainText("No members yet.");
+  await dialog
+    .getByRole("button", { name: "Add to team", exact: true })
+    .click();
+  await expect(dialog.locator(".team-member-row")).toHaveCount(1);
+  expect(
+    (await action(context, "team_members_list", { teamId: team.id })).map(
+      (person: { id: string }) => person.id,
+    ),
+  ).toEqual([owner.id]);
+  await dialog.getByRole("button", { name: "Close dialog" }).click();
+
+  const memberContext = await browser.newContext({
+    baseURL: "http://127.0.0.1:4318",
+  });
+  try {
+    await register(memberContext);
+    const invite = await action(context, "invitations_create", {
+      orgId: org.id,
+      role: "member",
+    });
+    const token = new URLSearchParams(new URL(invite.url).hash.slice(1)).get(
+      "invite",
+    );
+    await action(memberContext, "invitations_accept", { token });
+    const memberPage = await memberContext.newPage();
+    await memberPage.goto("/admin");
+    await memberPage
+      .getByRole("button", { name: "Members", exact: true })
+      .click();
+    await memberPage
+      .getByLabel("Organization", { exact: true })
+      .selectOption(org.id);
+    await expect(memberPage.locator('[data-tab="documents"]')).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await memberPage
+      .getByRole("button", { name: "Teams", exact: true })
+      .click();
+    await expect(
+      memberPage.getByRole("button", { name: "+ New team", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      memberPage.getByLabel("contractors options", { exact: true }),
+    ).toHaveCount(0);
+    await memberPage
+      .locator(".team-row")
+      .getByRole("button", { name: "Members", exact: true })
+      .click();
+    const readOnly = memberPage.getByRole("dialog", {
+      name: "contractors members",
+      exact: true,
+    });
+    await expect(readOnly.locator(".team-member-row")).toContainText(
+      owner.displayName,
+    );
+    await expect(
+      readOnly.getByRole("button", { name: /Remove|Add to team/ }),
+    ).toHaveCount(0);
+    await expect(memberPage.locator("#admin-status")).toBeEmpty();
+  } finally {
+    await memberContext.close();
+  }
+});
+
+test("workspace remains scrollable on narrow screens with long team and organization names", async ({
+  page,
+  context,
+}) => {
+  await register(context);
+  const [org] = await action(context, "organizations_list");
+  await action(context, "organizations_update", {
+    orgId: org.id,
+    name: "Profullstack, Inc. — a very long organization name",
+  });
+  for (let index = 0; index < 8; index++)
+    await action(context, "teams_create", {
+      orgId: org.id,
+      name: `Team ${index} — ${"collaborators".repeat(8)}`,
+    });
+  await page.setViewportSize({ width: 320, height: 640 });
+  await page.goto("/admin");
+  await page.getByRole("button", { name: "Teams", exact: true }).click();
+  await expect(page.locator(".team-row")).toHaveCount(8);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  const last = page.locator(".team-row").last();
+  await last.scrollIntoViewIfNeeded();
+  await last.locator("summary").click();
+  await expect(
+    last.getByRole("button", { name: "Rename team", exact: true }),
+  ).toBeInViewport();
+  const bounds = await last.locator(".action-menu-items").boundingBox();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(320);
+  await page.keyboard.press("Escape");
+  await last.getByRole("button", { name: "Members", exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText("No members yet.");
+  expect(
+    await page
+      .getByRole("dialog")
+      .evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+  await page.getByRole("button", { name: "Close dialog" }).click();
+  await page.getByRole("button", { name: "API tokens", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "API tokens", exact: true }),
+  ).toBeVisible();
+});
