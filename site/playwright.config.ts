@@ -14,7 +14,7 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: process.env.READM3_TEST_URL ? undefined : {
-    command: "bun run site:build && PORT=4318 bun site/server.ts",
+    command: "bun run site:build && PORT=4318 READM3_DB=:memory: READM3_ADMIN_BOOTSTRAP_SECRET=browser-test-admin-secret bun site/server.ts",
     cwd: fileURLToPath(new URL("..", import.meta.url)),
     url: "http://127.0.0.1:4318/viewer",
     reuseExistingServer: false,

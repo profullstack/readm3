@@ -5,3 +5,5 @@ site/dist
 test-results
 playwright-report
 .env
+data
+*.sqlite*

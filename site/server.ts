@@ -1,16 +1,22 @@
 /**
  * Serves site/dist.
  *
- * The site is fully static, so this is a file server and nothing more. It binds
+ * Serves the public site plus authenticated document and organization APIs. It binds
  * the port Railway injects, answers `/` for the healthcheck, and keeps HTML
  * uncacheable so a deploy is visible immediately rather than after a TTL.
  */
 import { existsSync, statSync } from "node:fs";
 import { dirname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Store } from "../server/store.ts";
+import { createApi } from "../server/api.ts";
+import { clientAddress, createApiProxy } from "../server/proxy.ts";
 
 const dist = join(dirname(fileURLToPath(import.meta.url)), "dist");
 const port = Number(process.env.PORT ?? 3000);
+const api = process.env.READM3_API_UPSTREAM
+  ? createApiProxy(process.env.READM3_API_UPSTREAM, process.env.READM3_PROXY_SECRET || "")
+  : createApi(new Store(process.env.READM3_DB || join(dirname(dist), "..", "data", "readm3.sqlite")), process.env.READM3_URL);
 
 if (!existsSync(join(dist, "index.html"))) {
   console.error(`no build at ${dist}; run "bun run site:build" first`);
@@ -41,6 +47,7 @@ function cacheFor(path: string): string {
 const server = Bun.serve({
   port,
   hostname: "0.0.0.0",
+  maxRequestBodySize: 1100 * 1024,
   async fetch(request) {
     const url = new URL(request.url);
 
@@ -57,7 +64,11 @@ const server = Bun.serve({
       return Response.redirect(`${url.origin}${url.pathname.slice(0, -1)}${url.search}`, 308);
     }
 
-    const file = resolve(url.pathname);
+    const edgeAddress = request.headers.get("x-forwarded-for")?.split(",").at(-1)?.trim() || server.requestIP(request)?.address || "unknown";
+    const response = await api(request, clientAddress(request, edgeAddress, process.env.READM3_PROXY_SECRET));
+    if (response) return response;
+    const sharedPage = /^\/s\/[A-Za-z0-9_-]{43}$/.test(url.pathname);
+    const file = resolve(sharedPage ? "/viewer" : url.pathname);
     if (!file) {
       return new Response("Not found", { status: 404, headers: { "content-type": "text/plain" } });
     }
@@ -66,7 +77,8 @@ const server = Bun.serve({
       headers: {
         "cache-control": cacheFor(file),
         "x-content-type-options": "nosniff",
-        "referrer-policy": "strict-origin-when-cross-origin",
+        "referrer-policy": sharedPage || url.pathname === "/viewer" || url.pathname === "/admin" ? "no-referrer" : "strict-origin-when-cross-origin",
+        ...(sharedPage ? { "cache-control": "no-store", "x-robots-tag": "noindex, nofollow" } : {}),
       },
     });
   },

@@ -23,6 +23,8 @@ jobs:
         run: bun run typecheck
       - name: Test
         run: bun run test:bun
+      - name: Shared document API and interfaces
+        run: bun run test:server
       - name: Build
         run: bun run build
       - name: Build the site
@@ -51,6 +53,10 @@ jobs:
           bun run build
           node bin/readm3.mjs --version
           node bin/readm3.mjs --help > /dev/null
+      - name: Node CLI and MCP against document API
+        env:
+          READM3_TEST_NODE: "1"
+        run: bun test server/test/surfaces.test.ts
 
   browser:
     name: web reader and offline PWA

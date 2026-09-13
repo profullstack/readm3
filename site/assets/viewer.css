@@ -20,7 +20,7 @@ html, body.reader-app { height: 100%; overflow: hidden; }
 .open-actions { display: flex; gap: 8px; padding: 0 18px; }
 .open-actions button { flex: 1; }
 .reader-app .primary-action { color: var(--bg); background: var(--primary); border-color: var(--primary); font-weight: 600; }
-.reader-app .primary-action:hover { filter: brightness(1.1); }
+.reader-app .primary-action:hover { background: var(--primary); border-color: var(--primary); filter: brightness(1.1); }
 .extra-actions { display: flex; gap: 4px; padding: 9px 16px 15px; }
 .extra-actions button { border-color: transparent; color: var(--muted); font-size: 12px; padding: 4px 8px; }
 .filter-label { display: flex; align-items: center; gap: 8px; margin: 0 18px 21px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 5px; color: var(--muted); background: var(--bg); }
@@ -88,3 +88,6 @@ html, body.reader-app { height: 100%; overflow: hidden; }
   .document-footer { padding: 8px 14px; } .app-status { padding: 8px 12px max(8px, env(safe-area-inset-bottom)); font-size: 9px; }
   .app-status kbd { margin-left: 4px; } .reader-app dialog { padding: 20px; } .shortcut-list { gap: 10px 14px; font-size: 11px; }
 }
+
+.header-actions a { color: var(--primary); font-size: 12px; text-decoration: none; }
+@media (max-width: 900px) { .document-toolbar { flex-wrap: wrap; } .document-actions { flex-wrap: wrap; justify-content: flex-end; margin-left: auto; } }

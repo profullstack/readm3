@@ -1,3 +1,5 @@
+import { action, request, type CloudDocument } from "./cloud.ts";
+import { publish, sharing, history as versionHistory } from "./sharing.ts";
 import { renderMarkdown } from "../src/markdown.ts";
 import type { Flavor } from "../src/flavors.ts";
 import { toHtml } from "./html.ts";
@@ -18,6 +20,51 @@ const helpDialog = element<HTMLDialogElement>("help-dialog");
 const urlDialog = element<HTMLDialogElement>("url-dialog");
 const encoder = new TextEncoder();
 let workspace: Workspace;
+let cloudDocument: CloudDocument | null = null;
+const shareToken = location.pathname.match(/^\/s\/([A-Za-z0-9_-]{43})$/)?.[1];
+const cloudId = new URLSearchParams(location.search).get("doc");
+let cloudSaving = false;
+
+function cloudControls() {
+  element("cloud-save").hidden = !cloudDocument?.canEdit;
+  element("history").hidden = !cloudDocument?.canManage;
+  element("share").hidden = !!cloudDocument && !cloudDocument.canManage;
+  element<HTMLButtonElement>("edit-mode").disabled = !!cloudDocument && !cloudDocument.canEdit;
+  if (cloudDocument) {
+    element("file-pane").querySelectorAll<HTMLElement>(".open-actions,.extra-actions,.filter-label,.local-note").forEach(el => el.hidden = true);
+    saveStatus.textContent = cloudDocument.pinned ? "Viewing a saved version" : cloudDocument.canEdit ? "Saved online · opens in read mode" : "View only";
+  }
+}
+
+function adoptCloud(doc: CloudDocument) {
+  cloudDocument = doc;
+  workspace = { name: "Shared Markdown", active: doc.title, documents: [{ path: doc.title, source: doc.version.source }] };
+  pendingSave = false;
+  saveFailed = false;
+  openDocument(doc.title);
+  cloudControls();
+}
+
+async function saveCloud() {
+  if (!cloudDocument?.canEdit || !pendingSave || cloudSaving) return;
+  cloudSaving = true;
+  const button = element<HTMLButtonElement>("cloud-save");
+  button.disabled = true;
+  const savingRevision = revision;
+  try {
+    const body = { source: current().source, baseVersion: cloudDocument.currentVersion };
+    const saved = shareToken ? await request<CloudDocument>(`shared/${shareToken}`, "PATCH", body)
+      : await action<CloudDocument>("documents_update", { documentId: cloudDocument.id, ...body });
+    cloudDocument = saved;
+    if (revision === savingRevision) { pendingSave = false; saveFailed = false; saveStatus.textContent = "Version saved online"; }
+    else saveStatus.textContent = "Unsaved changes · save a new version";
+  } catch (error) {
+    saveFailed = true;
+    const message = error instanceof Error ? error.message : "Could not save this version.";
+    saveStatus.textContent = "Not saved · your draft is still open";
+    notice(message);
+  } finally { cloudSaving = false; button.disabled = false; }
+}
 let editing = false;
 let spoilers = false;
 let pendingSave = false;
@@ -38,6 +85,7 @@ function notice(message: string) {
 function current(): Document { return workspace.documents.find((doc) => doc.path === workspace.active)!; }
 
 async function save() {
+  if (cloudDocument) { await saveCloud(); return; }
   clearTimeout(saveTimer);
   const savingRevision = revision;
   pendingSave = true;
@@ -57,6 +105,7 @@ async function save() {
 function changed() {
   revision++;
   pendingSave = true;
+  if (cloudDocument) { saveStatus.textContent = "Unsaved changes · save a new version"; return; }
   saveStatus.textContent = "Saving on this device…";
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => void save(), 300);
@@ -147,6 +196,7 @@ function renderDocument() {
 }
 
 function setMode(edit: boolean, focus = true) {
+  if (edit && cloudDocument && !cloudDocument.canEdit) { notice("You have view-only access to this document."); return; }
   editing = edit;
   editor.hidden = !edit;
   reader.hidden = edit;
@@ -177,7 +227,7 @@ function openDocument(path: string, focus = true) {
   reader.scrollTop = 0;
   progress();
   setFilesOpen(false);
-  changed();
+  if (!cloudDocument) changed();
 }
 
 function addDocuments(incoming: Document[], name?: string) {
@@ -239,7 +289,7 @@ function download() {
   anchor.download = current().path.split("/").at(-1)!;
   anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-  void save();
+  if (!cloudDocument) void save();
 }
 
 function storePreference(key: string, value: string) { try { localStorage.setItem(`readm3:${key}`, value); } catch { /* The reader still works without preferences. */ } }
@@ -254,6 +304,19 @@ function loadPreferences() {
 }
 
 function bindEvents() {
+  element("cloud-save").onclick = () => void saveCloud();
+  element("share").onclick = () => {
+    if (pendingSave && cloudDocument) { notice("Save your changes before changing sharing settings."); return; }
+    const task = cloudDocument ? sharing(cloudDocument, adoptCloud) : publish(current().path, current().source, doc => {
+      history.pushState(null, "", `/viewer?doc=${doc.id}`); adoptCloud(doc);
+    });
+    void task.catch(error => notice(error instanceof Error ? error.message : "Could not open sharing."));
+  };
+  element("history").onclick = () => {
+    if (!cloudDocument) return;
+    if (pendingSave) { notice("Save or download your draft before restoring a version."); return; }
+    void versionHistory(cloudDocument, adoptCloud).catch(error => notice(error instanceof Error ? error.message : "Could not load history."));
+  };
   element("open-files").onclick = () => filesInput.click();
   element("open-folder").onclick = () => folderInput.click();
   filesInput.onchange = () => void importFiles([...filesInput.files ?? []]);
@@ -279,25 +342,25 @@ function bindEvents() {
   window.addEventListener("beforeunload", (event) => {
     if (pendingSave || saveFailed) { event.preventDefault(); event.returnValue = ""; }
   });
-  document.addEventListener("visibilitychange", () => { if (document.hidden && pendingSave) void save(); });
+  document.addEventListener("visibilitychange", () => { if (document.hidden && pendingSave && !cloudDocument) void save(); });
   let dragDepth = 0;
   document.addEventListener("dragenter", (event) => {
-    if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); dragDepth++; document.body.classList.add("dragging"); }
+    if (!cloudDocument && event.dataTransfer?.types.includes("Files")) { event.preventDefault(); dragDepth++; document.body.classList.add("dragging"); }
   });
-  document.addEventListener("dragover", (event) => { if (event.dataTransfer?.types.includes("Files")) event.preventDefault(); });
+  document.addEventListener("dragover", (event) => { if (!cloudDocument && event.dataTransfer?.types.includes("Files")) event.preventDefault(); });
   document.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove("dragging"); } });
   document.addEventListener("drop", (event) => {
     event.preventDefault(); dragDepth = 0; document.body.classList.remove("dragging");
-    if (event.dataTransfer) void importFiles([...event.dataTransfer.files]);
+    if (!cloudDocument && event.dataTransfer) void importFiles([...event.dataTransfer.files]);
   });
   new ResizeObserver(() => renderDocument()).observe(reader);
 }
 
 function onKey(event: KeyboardEvent) {
-  if (helpDialog.open || urlDialog.open || event.isComposing) return;
+  if (document.querySelector("dialog[open]") || event.isComposing) return;
   const target = event.target as HTMLElement;
   const typing = target.matches("input, textarea, select, [contenteditable]");
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); download(); return; }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); if (cloudDocument) void saveCloud(); else download(); return; }
   if (event.altKey || event.ctrlKey || event.metaKey) return;
   if (event.key === "Escape") {
     if (editing) setMode(false);
@@ -407,6 +470,23 @@ async function setupPwa() {
 
 async function start() {
   loadPreferences();
+  if (shareToken || cloudId) {
+    try {
+      const doc = shareToken ? await request<CloudDocument>(`shared/${shareToken}`) : await request<CloudDocument>(`documents/${encodeURIComponent(cloudId!)}`);
+      adoptCloud(doc);
+      bindEvents();
+      if (doc.canEdit && new URLSearchParams(location.search).get("edit") === "1") setMode(true);
+      element("connection").textContent = "Shared workspace · online";
+      return;
+    } catch (error) {
+      element("document-name").textContent = "Document unavailable";
+      content.textContent = `${error instanceof Error ? error.message : "Could not open this document."}\n\nSign in from Workspaces if this file is private. Shared documents need an internet connection.`;
+      saveStatus.textContent = "No document loaded";
+      element("file-pane").hidden = true;
+      document.querySelectorAll<HTMLButtonElement>(".document-actions button").forEach(button => button.disabled = true);
+      return;
+    }
+  }
   try { workspace = (await restore())!; } catch { /* A fresh in-memory workspace still works. */ }
   if (!workspace?.documents?.length || !workspace.documents.some((doc) => doc.path === workspace.active)) {
     const seed = await fetch("__SEED_URL__");
@@ -417,6 +497,7 @@ async function start() {
   openDocument(workspace.active, false);
   bindEvents();
   await save();
+  if (new URLSearchParams(location.search).has("new")) { element("new-file").click(); history.replaceState(null, "", "/viewer"); }
   void setupPwa();
 }
 
