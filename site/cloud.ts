@@ -8,6 +8,7 @@ export interface CloudDocument {
   id: string;
   ownerId: string;
   ownerUsername?: string;
+  ownerDisplayName?: string;
   orgId: string;
   teamId: string | null;
   access: string;

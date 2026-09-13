@@ -91,3 +91,4 @@ html, body.reader-app { height: 100%; overflow: hidden; }
 
 .header-actions a { color: var(--primary); font-size: 12px; text-decoration: none; }
 @media (max-width: 900px) { .document-toolbar { flex-wrap: wrap; } .document-actions { flex-wrap: wrap; justify-content: flex-end; margin-left: auto; } }
+.account-link { color: var(--fg); font-size: 12px; text-decoration: none; padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; }

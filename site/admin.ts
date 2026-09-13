@@ -70,49 +70,9 @@ function formDialog(
 }
 const input = (name: string, label: string, value = "", type = "text") =>
   `<label>${escape(label)}<input name="${name}" type="${type}" value="${escape(value)}" required maxlength="200"></label>`;
-function auth(mode = "login") {
-  const signup = mode === "register",
-    recover = mode === "recover";
-  content.innerHTML = `<section class="auth-card"><p class="eyebrow">A home for your Markdown</p><h1>${signup ? "Create your workspace." : recover ? "Recover your account." : "Welcome back."}</h1><p>${signup ? "Write, share, and keep every version. Your files start private." : recover ? "Use the recovery code you saved when you created your account." : "Sign in to edit your documents and manage sharing."}</p><form>${input("username", "Username")}${signup ? input("displayName", "Display name") : ""}${recover ? input("recoveryCode", "Recovery code") : ""}<label>${recover ? "New password" : "Password"}<input type="password" name="password" minlength="12" maxlength="256" autocomplete="${signup || recover ? "new-password" : "current-password"}" required></label><button class="primary-action">${signup ? "Create account" : recover ? "Reset password" : "Sign in"}</button></form><div class="auth-links"><button id="auth-switch">${signup ? "Already have an account?" : "Create an account"}</button>${!recover ? '<button id="recover">Recover account</button>' : ""}</div></section>`;
-  content.querySelector<HTMLInputElement>('[name="username"]')!.autocomplete =
-    "username";
-  document.getElementById("auth-switch")!.onclick = () =>
-    auth(signup ? "login" : "register");
-  document
-    .getElementById("recover")
-    ?.addEventListener("click", () => auth("recover"));
-  content.querySelector("form")!.onsubmit = (e) => {
-    e.preventDefault();
-    run(async () => {
-      const form = e.target as HTMLFormElement;
-      const submit = form.querySelector("button")!;
-      submit.disabled = true;
-      try {
-        const result = await request<{
-          user: CloudUser;
-          recoveryCode?: string;
-        }>(`auth/${mode}`, "POST", Object.fromEntries(new FormData(form)));
-        user = result.user;
-        if (result.recoveryCode) {
-          const box = modal("Save your recovery code");
-          box.body.innerHTML =
-            "<p>This code resets your password. Keep it somewhere safe; it is shown only once. There is no email recovery.</p>";
-          outputLink(box.body, result.recoveryCode, "Copy recovery code");
-          button(
-            "I saved my recovery code",
-            async () => {
-              box.close();
-              await signedIn();
-            },
-            box.body,
-            "primary-action",
-          );
-        } else await signedIn();
-      } finally {
-        submit.disabled = false;
-      }
-    });
-  };
+function auth() {
+  content.innerHTML =
+    '<section class="auth-card"><p class="eyebrow">A home for your Markdown</p><h1>Your next draft starts here.</h1><p>Sign in with your email to create private documents, invite collaborators, and keep every version.</p><a class="primary-action" href="/account?next=%2Fadmin">Continue with email →</a></section>';
 }
 async function signedIn() {
   const stored = new URLSearchParams(
@@ -141,7 +101,11 @@ async function signedIn() {
   document.getElementById("logout")!.hidden = false;
   document.getElementById("logout")!.onclick = () =>
     run(async () => {
-      await request("auth/logout", "POST", {});
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
       location.href = "/admin";
     });
   await refresh();
@@ -243,7 +207,7 @@ async function documents(panel: HTMLElement) {
     rows.replaceChildren();
     for (const doc of docs) {
       const row = document.createElement("tr");
-      row.innerHTML = `<td><a href="/viewer?doc=${doc.id}">${escape(doc.title)}</a><span class="subtle">${escape(doc.id)}</span></td><td>@${escape(doc.ownerUsername || "")}</td><td><span class="badge">${doc.canManage ? "Owner access" : doc.canEdit ? "Can edit" : "Can view"}</span></td><td>${escape(new Date(doc.updatedAt).toLocaleDateString())}</td><td></td>`;
+      row.innerHTML = `<td><a href="/viewer?doc=${doc.id}">${escape(doc.title)}</a><span class="subtle">${escape(doc.id)}</span></td><td>${escape(doc.ownerDisplayName || doc.ownerUsername || "")}</td><td><span class="badge">${doc.canManage ? "Owner access" : doc.canEdit ? "Can edit" : "Can view"}</span></td><td>${escape(new Date(doc.updatedAt).toLocaleDateString())}</td><td></td>`;
       if (doc.canManage) {
         const controls = row.lastElementChild as HTMLElement;
         button(

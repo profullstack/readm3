@@ -28,7 +28,7 @@ from the same dialog to stop future reads and saves through it.
 A link can follow the latest save or pin a particular version. Pinned versions
 are view-only. The API also supports link expiration.
 
-For named collaborators, add their username and choose view or edit permission.
+For named collaborators, add their verified email or username and choose view or edit permission.
 For groups, select the whole organization or one team, then choose its access.
 Files start private. Downloaded or already viewed copies cannot be recalled.
 
@@ -54,16 +54,13 @@ An organization must retain an owner. Teams or organizations containing
 documents cannot be deleted until those documents have been removed or moved.
 Removing membership removes group access, but a user's own files remain theirs.
 
-## Accounts and recovery
+## Your account
 
-Sign in with a username and password. New accounts receive a recovery code once;
-keep it somewhere safe. It resets the password and revokes existing sessions and
-API tokens. A successful recovery issues a replacement recovery code. There is
-no email recovery.
+Sign in at [/account](/account) with your email. Confirm the single-use link in
+your inbox to verify your address and open your workspace. The same verified
+account owns your documents and authorizes CLI/API/MCP tokens. Use account settings
+to sign out one device or all devices; signing out all devices revokes API tokens too.
 
-The site operator receives a private, one-use administrator setup link. After
-they sign in, it grants that account super-admin access. Public registration
-never automatically creates an administrator.
 
 ## Local and online documents
 
@@ -106,15 +103,12 @@ Personal tokens expire after 90 days and can be revoked in the dashboard.
 Base URL: `https://readm3.com/api/v1`.
 
 Use `Authorization: Bearer PERSONAL_TOKEN`. Send JSON request bodies.
-Browser sessions use HttpOnly cookies and same-origin requests.
+Browser sessions use HttpOnly cookies and same-origin requests. Sign-in and sign-out
+use `/account` and the email account endpoints under `/api/auth/*`.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
 | GET | /me | Current browser or token identity |
-| POST | /auth/register | Username, password, optional displayName |
-| POST | /auth/login | Username and password |
-| POST | /auth/logout | Revoke the current session |
-| POST | /auth/recover | Username, recoveryCode, new password |
 | GET | /documents | List readable documents |
 | POST | /documents | Create: orgId, title, source; optional teamId/access |
 | GET | /documents/:id | Current source and version metadata |

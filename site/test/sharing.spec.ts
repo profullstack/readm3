@@ -1,10 +1,24 @@
 import { test, expect, type BrowserContext, type Page } from "@playwright/test";
 const suffix = () => Math.random().toString(36).slice(2, 10);
 async function register(context: BrowserContext, name = "writer_" + suffix()) {
-  const response = await context.request.post("/api/v1/auth/register", {
-    data: { username: name, password: "an excellent test password" },
+  const origin = "http://127.0.0.1:4318";
+  const email = name + "@example.com";
+  const sent = await context.request.post("/api/auth/email", {
+    headers: { origin },
+    data: { email },
   });
-  expect(response.status()).toBe(201);
+  expect(sent.ok(), await sent.text()).toBe(true);
+  const mail = await (
+    await context.request.get(`http://127.0.0.1:4319/test/mail?email=${email}`)
+  ).json();
+  const token = new URLSearchParams(new URL(mail[0].url).hash.slice(1)).get(
+    "verify",
+  );
+  const response = await context.request.post("/api/auth/verify", {
+    headers: { origin },
+    data: { token },
+  });
+  expect(response.ok(), await response.text()).toBe(true);
   return (await response.json()).user;
 }
 async function action(
@@ -35,25 +49,24 @@ async function create(context: BrowserContext) {
   });
 }
 
-test("signs up, shows a recovery code, creates a private document, and saves a version", async ({
+test("verified email signup returns to the workspace and saves a private document", async ({
   page,
+  request,
 }) => {
   await page.goto("/admin");
-  await page
-    .getByRole("button", { name: "Create an account", exact: true })
-    .click();
-  await page.getByLabel("Username", { exact: true }).fill("writer_" + suffix());
-  await page.getByLabel("Display name").fill("Document Writer");
-  await page
-    .getByLabel("Password", { exact: true })
-    .fill("an excellent test password");
-  await page
-    .getByRole("button", { name: "Create account", exact: true })
-    .click();
+  await page.getByRole("link", { name: "Continue with email" }).click();
+  const email = "writer_" + suffix() + "@example.com";
+  await page.getByLabel("Email address").fill(email);
+  await page.getByRole("button", { name: "Continue with email" }).click();
   await expect(
-    page.getByRole("heading", { name: "Save your recovery code" }),
+    page.getByRole("heading", { name: "Check your inbox." }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "I saved my recovery code" }).click();
+  const mail = await (
+    await request.get(`http://127.0.0.1:4319/test/mail?email=${email}`)
+  ).json();
+  await page.goto(mail[0].url);
+  await page.getByRole("button", { name: "Verify email & sign in" }).click();
+  await expect(page).toHaveURL(/\/admin$/);
   await page
     .getByRole("button", { name: "+ New document", exact: true })
     .click();

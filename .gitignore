@@ -3,6 +3,10 @@ dist/
 *.tsbuildinfo
 .DS_Store
 .env
+.env.*
+!.env.example
+data/
+*.sqlite*
 playwright-report/
 test-results/
 data/

@@ -244,7 +244,7 @@ readm3 mcp                            # stdio MCP, same account permissions
 
 The REST API is at `/api/v1`, with all operations also available through
 `POST /api/v1/actions` and `readm3 cloud OPERATION --args JSON`.
-Full permissions, recovery, CLI, API, and MCP documentation: https://readm3.com/sharing.
+Full permissions, accounts, CLI, API, and MCP documentation: https://readm3.com/sharing.
 
 ## Web reader
 
@@ -268,6 +268,53 @@ Imports are limited to 4 MB per file, 20 MB per workspace, and 1,000 files.
 
 ## The website
 
+### Accounts
+
+Open https://readm3.com/account to create an email-verified account or sign in.
+The email link expires after 15 minutes and works once. A confirmation button
+prevents email scanners from consuming links. Accounts are created only after
+verification; returning users sign in to the same identity. Account settings
+include display name, sign out, and sign out on all devices.
+
+The server stores accounts, hashed sessions, verification challenges, and rate
+limits in SQLite. Set `READM3_DB` to a persistent volume path (production uses
+`/data/readm3.sqlite`), `READM3_URL` to the canonical public origin,
+`READM3_MAIL_FROM` to a verified sender, and `RESEND_API_KEY` to an email-sending key.
+Missing or failed mail delivery returns an error; verification links are never
+printed to logs. Production cookies are Secure, HttpOnly, SameSite=Lax, and
+host-scoped. The account page and APIs are excluded from offline caches.
+
+On Railway, attach a volume at `/data`, keep a single replica, and set
+`RAILWAY_RUN_UID=0` for the root-owned volume. Back up the volume before changing
+the account schema. The local reader remains usable without an account.
+
+```bash
+bun run test:accounts  # account security tests and browser signup flow
+```
+
+The account service is `server/accounts.ts`. It can accept an existing Bun SQLite
+`Database` so workspace APIs share the same `users` and `sessions` tables.
+`account_emails` holds the verified identity associated with each user ID.
+Use `Accounts.authenticate(token)` or `Accounts.requireAccount(request)` when
+authorizing organization, team, role, or API-token operations: these methods
+reject sessions whose user has no verified email. Browser sessions use
+`__Host-readm3_session` over HTTPS and `readm3_session` on localhost.
+Do not enable a separate unverified registration or password-recovery path.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/auth/email` | Send a sign-in link for an email address |
+| `POST /api/auth/preview` | Show the email associated with an unconsumed link |
+| `POST /api/auth/verify` | Consume the link and set a browser session |
+| `GET /api/auth/session` | Return the verified account, or `null` |
+| `POST /api/auth/profile` | Update the current account's display name |
+| `POST /api/auth/logout` | Revoke the current session |
+| `POST /api/auth/logout-all` | Revoke all sessions belonging to the account |
+
+POST requests require JSON and an `Origin` matching `READM3_URL`.
+
+### Building and serving
+
 [readm3.com](https://readm3.com) is built from this repository by `site/build.ts`,
 which renders every document on the page through `renderMarkdown` and takes every
 color from a real HQTUI theme. There is no second implementation to keep in sync:
@@ -290,21 +337,15 @@ reloading. The web viewer does not load the marketing site’s third-party scrip
 The web server uses Bun and SQLite. Set `READM3_DB` to a database file on persistent
 storage, and `READM3_URL` to the public HTTPS origin. The Docker image uses
 `/data/readm3.sqlite`; mount a volume at `/data`. On Railway set `RAILWAY_RUN_UID=0`
-for access to the mounted volume. Configure volume backups in the hosting platform.
-
-For separate frontend and storage services, set `READM3_API_UPSTREAM` on the
-frontend to the storage service's HTTPS origin, and set the same random
-`READM3_PROXY_SECRET` on both services. The frontend forwards `/api/v1/*` without
-opening a local database. Keep `READM3_URL` on the storage service set to the public
-frontend origin so cookies and sharing links use the right host. The storage
-service needs a persistent `/data` volume and a single replica.
+for access to the mounted volume. Use one service replica for SQLite and configure
+volume backups in the hosting platform.
 
 Set `READM3_ADMIN_BOOTSTRAP_SECRET` to a random secret, then open
 `/admin#claim=YOUR_SECRET` and sign in as the intended super administrator. This is a
 one-time claim stored in the database. Never publish this URL; remove the environment
-secret after claiming. Registration never grants administrator access by itself.
+secret after claiming. Email sign-in never grants administrator access by itself.
 
-Passwords use Argon2id, sessions are HttpOnly cookies, and API tokens and share
+Accounts use verified email sign-in and HttpOnly cookies. API tokens and share
 capabilities are stored as SHA-256 hashes. Shared documents are not cached in the
 PWA or saved in the browser's local workspace, so revocation applies to future access.
 

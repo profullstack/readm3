@@ -180,10 +180,10 @@ function shell(options: { title: string; description: string; path: string; main
   <nav>
     <a href="/viewer">Editor</a>
     <a href="/admin">Workspaces</a>
+    <a href="/account">Account</a>
     <a href="/docs">Docs</a>
     <a href="/sharing">Sharing & API</a>
     <a href="${REPO}">GitHub</a>
-    <a href="${NPM}">npm</a>
   </nav>
 </header>
 <main id="main">
@@ -494,6 +494,12 @@ const bundled = await Bun.build({ entrypoints: [join(here, "viewer.ts")], target
 if (!bundled.success) throw new AggregateError(bundled.logs, "Viewer build failed");
 const script = asset("viewer.js", (await bundled.outputs[0].text()).replace("__SEED_URL__", seed));
 const viewerCss = asset("viewer.css", readFileSync(join(here, "assets/viewer.css"), "utf8"));
+const accountBundle = await Bun.build({ entrypoints: [join(here, "account.ts")], target: "browser", minify: true });
+if (!accountBundle.success) throw new AggregateError(accountBundle.logs, "Account build failed");
+const accountScript = asset("account.js", await accountBundle.outputs[0].text());
+const accountCss = asset("account.css", readFileSync(join(here, "assets/account.css"), "utf8"));
+write("account/index.html", readFileSync(join(here, "assets/account.html"), "utf8")
+  .replace("__ACCOUNT_SCRIPT__", accountScript).replace("__ACCOUNT_STYLES__", accountCss));
 const sharedCss = asset("styles.css", css);
 const adminCss = asset("admin.css", readFileSync(join(here, "assets/admin.css"), "utf8"));
 const adminBundle = await Bun.build({ entrypoints: [join(here, "admin.ts")], target: "browser", minify: true });

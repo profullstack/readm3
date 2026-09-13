@@ -3,6 +3,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { Store } from "../store.ts";
 import { createApi } from "../api.ts";
+import { verifiedAccount } from "./fixtures.ts";
 import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const runtime = process.env.READM3_TEST_NODE ? "node" : "bun";
@@ -24,18 +25,7 @@ test("CLI and stdio MCP operate on the same documents and enforce the same edit 
   const url = `http://127.0.0.1:${server.port}`;
   let client: Client | undefined;
   try {
-    const registration = await fetch(`${url}/api/v1/auth/register`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "surface_owner",
-        password: "a very long test password",
-      }),
-    });
-    expect(registration.status).toBe(201);
-    const token = registration.headers
-      .get("set-cookie")!
-      .match(/readm3_session=([^;]+)/)![1];
+    const { token } = await verifiedAccount(store, "surface_owner");
     async function cli(...args: string[]) {
       const process = Bun.spawn([Bun.which(runtime)!, entry, ...args], {
         cwd: root,

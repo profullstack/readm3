@@ -328,7 +328,7 @@ export function operate(
       if (args.orgId) values.push(orgId());
       if (args.search) values.push(text(args.search, "Search"));
       const docs = store.all<Doc>(
-        `SELECT d.*,u.username AS ownerUsername FROM documents d JOIN users u ON u.id=d.ownerId WHERE ${accessible}${args.orgId ? " AND d.orgId=?" : ""}${args.search ? " AND instr(lower(d.title),lower(?))>0" : ""} ORDER BY d.updatedAt DESC,d.id DESC LIMIT ? OFFSET ?`,
+        `SELECT d.*,u.username AS ownerUsername,u.displayName AS ownerDisplayName FROM documents d JOIN users u ON u.id=d.ownerId WHERE ${accessible}${args.orgId ? " AND d.orgId=?" : ""}${args.search ? " AND instr(lower(d.title),lower(?))>0" : ""} ORDER BY d.updatedAt DESC,d.id DESC LIMIT ? OFFSET ?`,
         ...values,
         ...page(args),
       );
@@ -352,8 +352,9 @@ export function operate(
     case "documents_transfer": {
       const doc = owner();
       const next = store.get<User>(
-        "SELECT id,username,displayName,admin,createdAt FROM users WHERE username=?",
-        text(args.username, "Username").toLowerCase(),
+        "SELECT u.id,u.username,u.displayName,u.admin,u.createdAt FROM users u JOIN account_emails e ON e.userId=u.id WHERE u.username=? OR e.email=?",
+        text(args.username, "Email or username").toLowerCase(),
+        text(args.username, "Email or username").toLowerCase(),
       );
       if (!next) throw new HttpError(404, "User not found.");
       store.run("UPDATE documents SET ownerId=? WHERE id=?", next.id, doc.id);
@@ -390,8 +391,9 @@ export function operate(
     case "permissions_set": {
       const doc = owner();
       const target = store.get<{ id: string }>(
-        "SELECT id FROM users WHERE username=?",
-        text(args.username, "Username").toLowerCase(),
+        "SELECT u.id FROM users u JOIN account_emails e ON e.userId=u.id WHERE u.username=? OR e.email=?",
+        text(args.username, "Email or username").toLowerCase(),
+        text(args.username, "Email or username").toLowerCase(),
       );
       if (!target) throw new HttpError(404, "User not found.");
       if (target.id === doc.ownerId)

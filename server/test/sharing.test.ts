@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store, checksum, id } from "../store.ts";
 import { createApi } from "../api.ts";
+import { verifiedAccount } from "./fixtures.ts";
 
 function fixture(path = ":memory:") {
   const store = new Store(path);
@@ -37,23 +38,17 @@ function fixture(path = ":memory:") {
   async function account(
     name = "user" + id().replace(/-/g, "_").toLowerCase(),
   ) {
-    const created = await call("auth/register", "POST", {
-      username: name,
-      password: "correct horse battery staple",
-    });
-    expect(created.status).toBe(201);
-    const token = created.response.headers
-      .get("set-cookie")!
-      .match(/readm3_session=([^;]+)/)![1];
+    const created = await verifiedAccount(store, name);
+    const token = created.token;
     const action = (operation: string, args: Record<string, unknown> = {}) =>
       call("actions", "POST", { operation, args }, token);
     const org = (await action("organizations_list")).data[0];
     return {
-      user: created.data.user,
+      user: created.user,
       token,
       action,
       org,
-      recoveryCode: created.data.recoveryCode,
+      accounts: created.accounts,
     };
   }
   return { store, call, account };
@@ -148,7 +143,7 @@ test("view/edit links enforce capability boundaries, never grant ownership, and 
     ).toBe(409);
     expect(
       (await owner.action("versions_list", { documentId: doc.id })).data,
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     await owner.action("shares_revoke", {
       documentId: doc.id,
       shareId: edit.id,
@@ -483,7 +478,7 @@ test("the one-time super-admin claim is secret gated and grants access across al
   }
 });
 
-test("sessions and personal tokens revoke, recovery rotates secrets, and cross-origin writes fail", async () => {
+test("verified accounts and tokens share revocation, and unverified authentication is rejected", async () => {
   const f = fixture();
   try {
     const user = await f.account();
@@ -514,31 +509,33 @@ test("sessions and personal tokens revoke, recovery rotates secrets, and cross-o
         )
       ).status,
     ).toBe(401);
-    const recovery = await f.call("auth/recover", "POST", {
-      username: user.user.username,
-      recoveryCode: user.recoveryCode,
-      password: "another long password",
-    });
-    expect(recovery.status).toBe(200);
-    expect(recovery.data.recoveryCode).not.toBe(user.recoveryCode);
+    const logout = (await user.accounts.handle(
+      new Request("http://localhost/api/auth/logout-all", {
+        method: "POST",
+        headers: {
+          origin: "http://localhost",
+          "content-type": "application/json",
+          cookie: `readm3_session=${user.token}`,
+        },
+        body: "{}",
+      }),
+    ))!;
+    expect(logout.status).toBe(200);
     expect((await user.action("account_me")).status).toBe(401);
     expect(
       (
-        await f.call("auth/recover", "POST", {
-          username: user.user.username,
-          recoveryCode: user.recoveryCode,
-          password: "another long password",
+        await f.call("auth/register", "POST", {
+          username: "unverified",
+          password: "long password",
         })
       ).status,
-    ).toBe(401);
+    ).toBe(410);
+    expect((await f.call("auth/recover", "POST", {})).status).toBe(410);
+    f.store.run("DELETE FROM account_emails WHERE userId=?", user.user.id);
+    const unverifiedToken = f.store.session(user.user).token;
     expect(
-      (
-        await f.call("auth/login", "POST", {
-          username: user.user.username,
-          password: "another long password",
-        })
-      ).status,
-    ).toBe(200);
+      (await f.call("me", "GET", undefined, unverifiedToken)).data.user,
+    ).toBeNull();
   } finally {
     f.store.close();
   }

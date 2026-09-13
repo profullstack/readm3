@@ -38,7 +38,8 @@
     "test:bun": "bun test ./test",
     "prepublishOnly": "npm run build",
     "test:site": "playwright test -c site/playwright.config.ts",
-    "test:server": "bun test ./server/test"
+    "test:server": "bun test ./server/test",
+    "test:accounts": "bun test ./server/test && playwright test -c site/accounts.playwright.config.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

@@ -57,9 +57,11 @@ export function source(value: unknown): string {
 
 export class Store {
   db: Database;
-  constructor(path: string) {
-    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-    this.db = new Database(path, { create: true });
+  constructor(path: string | Database) {
+    if (typeof path === "string") {
+      if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+      this.db = new Database(path, { create: true });
+    } else this.db = path;
     this.db
       .exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, displayName TEXT NOT NULL, passwordHash TEXT NOT NULL, recoveryHash TEXT NOT NULL, admin INTEGER NOT NULL DEFAULT 0, createdAt TEXT NOT NULL);
@@ -73,6 +75,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS versions (id TEXT PRIMARY KEY, documentId TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE, source TEXT NOT NULL, title TEXT NOT NULL, checksum TEXT NOT NULL, authorId TEXT REFERENCES users(id), parentId TEXT, createdAt TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS shares (id TEXT PRIMARY KEY, documentId TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE, tokenHash TEXT UNIQUE NOT NULL, versionId TEXT REFERENCES versions(id) ON DELETE CASCADE, role TEXT NOT NULL DEFAULT 'view', label TEXT NOT NULL, expiresAt TEXT, createdAt TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS permissions (documentId TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE, userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, role TEXT NOT NULL CHECK(role IN ('view','edit')), PRIMARY KEY(documentId,userId));
+      CREATE TABLE IF NOT EXISTS account_emails (userId TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, email TEXT UNIQUE NOT NULL COLLATE NOCASE, emailVerifiedAt TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS documents_org ON documents(orgId);
       CREATE INDEX IF NOT EXISTS documents_owner ON documents(ownerId);
@@ -100,11 +103,36 @@ export class Store {
   }
   authenticate(token: string): User | null {
     const session = this.get<{ userId: string }>(
-      "SELECT userId FROM sessions WHERE tokenHash=? AND expiresAt>?",
+      "SELECT s.userId FROM sessions s JOIN account_emails e ON e.userId=s.userId WHERE s.tokenHash=? AND s.expiresAt>?",
       checksum(token),
       now(),
     );
     return session ? this.user(session.userId) : null;
+  }
+  ensureWorkspace(user: User) {
+    if (
+      this.get("SELECT key FROM settings WHERE key=?", `workspace:${user.id}`)
+    )
+      return;
+    this.db.transaction(() => {
+      if (
+        !this.get("SELECT orgId FROM members WHERE userId=? LIMIT 1", user.id)
+      ) {
+        const orgId = id();
+        this.run(
+          "INSERT INTO organizations VALUES (?,?,?)",
+          orgId,
+          `${user.displayName}'s workspace`,
+          now(),
+        );
+        this.run("INSERT INTO members VALUES (?,?,?)", orgId, user.id, "owner");
+      }
+      this.run(
+        "INSERT OR IGNORE INTO settings VALUES (?,?)",
+        `workspace:${user.id}`,
+        now(),
+      );
+    })();
   }
   session(user: User, kind = "browser", label = "Browser session") {
     const token = secret();

@@ -1,13 +1,4 @@
-import {
-  Store,
-  HttpError,
-  checksum,
-  id,
-  now,
-  secret,
-  text,
-  type User,
-} from "./store.ts";
+import { Store, HttpError, checksum, now, text } from "./store.ts";
 import { operate } from "./operations.ts";
 
 const MAX_BODY = 1100 * 1024;
@@ -71,36 +62,21 @@ function limit(key: string, max = 30) {
   if (++bucket.count > max)
     throw new HttpError(429, "Too many requests. Try again in a minute.");
 }
-function password(value: unknown) {
-  if (typeof value !== "string" || value.length < 12 || value.length > 256)
-    throw new HttpError(400, "Use a password between 12 and 256 characters.");
-  return value;
-}
-function username(value: unknown) {
-  const name = text(value, "Username", 40).toLowerCase();
-  if (!/^[a-z0-9][a-z0-9_-]{2,39}$/.test(name))
-    throw new HttpError(
-      400,
-      "Use 3–40 letters, numbers, underscores, or hyphens for your username.",
-    );
-  return name;
-}
-function token(request: Request) {
+function token(request: Request, origin: string) {
   const authorization = request.headers.get("authorization");
   if (authorization?.startsWith("Bearer ")) return authorization.slice(7);
+  const name = origin.startsWith("https:")
+    ? "__Host-readm3_session"
+    : "readm3_session";
   return (
     request.headers
       .get("cookie")
       ?.split(";")
-      .map((x) => x.trim())
-      .find((x) => x.startsWith("readm3_session="))
-      ?.slice(15) ?? ""
+      .map((s) => s.trim())
+      .find((s) => s.startsWith(name + "="))
+      ?.slice(name.length + 1) || ""
   );
 }
-function cookie(value: string, origin: string, maxAge = 2592000) {
-  return `readm3_session=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${origin.startsWith("https:") ? "; Secure" : ""}`;
-}
-
 export function createApi(store: Store, configuredOrigin?: string) {
   return async (request: Request, ip = "local"): Promise<Response | null> => {
     const url = new URL(request.url);
@@ -112,134 +88,13 @@ export function createApi(store: Store, configuredOrigin?: string) {
       const sentOrigin = request.headers.get("origin");
       if (sentOrigin && sentOrigin !== origin)
         throw new HttpError(403, "Cross-origin API requests are not allowed.");
-      const credential = token(request);
-      let user = credential ? store.authenticate(credential) : null;
+      const credential = token(request, origin);
+      const user = credential ? store.authenticate(credential) : null;
+      if (user) store.ensureWorkspace(user);
       const path = url.pathname.slice(8);
       if (path === "me" && request.method === "GET") return json({ user });
-      if (path.startsWith("auth/") && request.method === "POST") {
-        limit(`auth:${ip}`);
-        const args = await body(request);
-        if (path === "auth/logout") {
-          if (credential)
-            store.run(
-              "DELETE FROM sessions WHERE tokenHash=?",
-              checksum(credential),
-            );
-          return json({ ok: true }, 200, {
-            "set-cookie": cookie("", origin, 0),
-          });
-        }
-        if (path === "auth/register") {
-          const name = username(args.username);
-          const pass = password(args.password);
-          const displayName = text(
-            args.displayName ?? name,
-            "Display name",
-            80,
-          );
-          if (store.get("SELECT id FROM users WHERE username=?", name))
-            throw new HttpError(409, "That username is already taken.");
-          const recoveryCode = secret();
-          const userId = id();
-          const stamp = now();
-          const hash = await Bun.password.hash(pass, {
-            algorithm: "argon2id",
-            memoryCost: 19456,
-            timeCost: 2,
-          });
-          try {
-            store.db.transaction(() => {
-              store.run(
-                "INSERT INTO users VALUES (?,?,?,?,?,?,?)",
-                userId,
-                name,
-                displayName,
-                hash,
-                checksum(recoveryCode),
-                0,
-                stamp,
-              );
-              const orgId = id();
-              store.run(
-                "INSERT INTO organizations VALUES (?,?,?)",
-                orgId,
-                `${displayName}'s workspace`,
-                stamp,
-              );
-              store.run(
-                "INSERT INTO members VALUES (?,?,?)",
-                orgId,
-                userId,
-                "owner",
-              );
-            })();
-          } catch (error) {
-            if (String(error).includes("UNIQUE"))
-              throw new HttpError(409, "That username is already taken.");
-            throw error;
-          }
-          user = store.user(userId);
-          const session = store.session(user);
-          return json({ user, recoveryCode }, 201, {
-            "set-cookie": cookie(session.token, origin),
-          });
-        }
-        if (path === "auth/login") {
-          const name = username(args.username);
-          const pass =
-            typeof args.password === "string" && args.password.length <= 256
-              ? args.password
-              : "";
-          limit(`login:${name}`, 12);
-          const account = store.get<{ id: string; passwordHash: string }>(
-            "SELECT id,passwordHash FROM users WHERE username=?",
-            name,
-          );
-          if (
-            !account ||
-            !(await Bun.password.verify(pass, account.passwordHash))
-          )
-            throw new HttpError(401, "Incorrect username or password.");
-          user = store.user(account.id);
-          const session = store.session(user);
-          return json({ user }, 200, {
-            "set-cookie": cookie(session.token, origin),
-          });
-        }
-        if (path === "auth/recover") {
-          const name = username(args.username);
-          limit(`recovery:${name}`, 6);
-          const code = text(args.recoveryCode, "Recovery code", 100);
-          const account = store.get<{ id: string }>(
-            "SELECT id FROM users WHERE username=? AND recoveryHash=?",
-            name,
-            checksum(code),
-          );
-          if (!account)
-            throw new HttpError(401, "Incorrect username or recovery code.");
-          const hash = await Bun.password.hash(password(args.password), {
-            algorithm: "argon2id",
-            memoryCost: 19456,
-            timeCost: 2,
-          });
-          const recoveryCode = secret();
-          store.db.transaction(() => {
-            store.run(
-              "UPDATE users SET passwordHash=?,recoveryHash=? WHERE id=?",
-              hash,
-              checksum(recoveryCode),
-              account.id,
-            );
-            store.run("DELETE FROM sessions WHERE userId=?", account.id);
-          })();
-          user = store.user(account.id);
-          const session = store.session(user);
-          return json({ user, recoveryCode }, 200, {
-            "set-cookie": cookie(session.token, origin),
-          });
-        }
-        throw new HttpError(404, "Authentication action not found.");
-      }
+      if (path.startsWith("auth/"))
+        throw new HttpError(410, "Sign in with a verified email at /account.");
       const shared = path.match(/^shared\/([A-Za-z0-9_-]{43})$/);
       if (shared) {
         const link = store.get<{
@@ -331,7 +186,12 @@ export function createApi(store: Store, configuredOrigin?: string) {
               store,
               user,
               "documents_list",
-              { orgId: url.searchParams.get("orgId") || undefined },
+              {
+                orgId: url.searchParams.get("orgId") || undefined,
+                search: url.searchParams.get("search") || undefined,
+                limit: url.searchParams.get("limit") ?? undefined,
+                offset: url.searchParams.get("offset") ?? undefined,
+              },
               origin,
             ),
           );

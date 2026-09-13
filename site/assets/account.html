@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090c10">
+  <meta name="robots" content="noindex">
+  <meta name="referrer" content="no-referrer">
+  <title>Your account — readm3</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="__ACCOUNT_STYLES__">
+  <script type="module" src="__ACCOUNT_SCRIPT__"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to account</a>
+  <header><a class="brand" href="/">▍readm3</a><a href="/admin">Workspaces</a><a href="/viewer">Open reader <span aria-hidden="true">↗</span></a></header>
+  <main id="main">
+    <section class="intro" aria-labelledby="intro-title">
+      <p class="eyebrow">YOUR READM3 ACCOUNT</p>
+      <h1 id="intro-title">Your docs.<br>Your people.<br><span>Your space.</span></h1>
+      <p class="intro-copy">A verified identity for the things you write and the people you share them with.</p>
+      <div class="terminal" aria-hidden="true"><div class="terminal-bar"><i></i><i></i><i></i><span>you / README.md</span></div><pre><span class="dim">#</span> A place to start
+
+<span class="green">✓</span> Your email, verified
+<span class="green">✓</span> Your own account
+<span class="green">✓</span> Ready to connect</pre></div>
+      <p class="local-note">Just reading? <a href="/viewer">Open the reader</a>.<br>Your local files stay on this device.</p>
+    </section>
+    <section class="account-card" aria-label="Account">
+      <div id="loading" role="status">Opening your account…</div>
+      <div id="sign-in" hidden>
+        <span class="card-mark" aria-hidden="true">@</span>
+        <h2>Make yourself at home.</h2>
+        <p>Sign in or create an account with your email. We’ll send you a link to verify it.</p>
+        <form id="email-form">
+          <label for="email">Email address</label>
+          <input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" maxlength="254" required>
+          <button id="send-link" class="primary">Continue with email <span aria-hidden="true">→</span></button>
+        </form>
+        <p class="fine-print">No password to remember. Every sign-in link is private, expires in 15 minutes, and works once.</p>
+      </div>
+      <div id="check-email" hidden>
+        <span class="card-mark" aria-hidden="true">↗</span>
+        <h2>Check your inbox.</h2>
+        <p>We sent a sign-in link to <strong id="sent-email"></strong>. Open it to verify your email and continue.</p>
+        <p>Can’t find it? Check your spam folder, or request another link.</p>
+        <button id="resend" class="primary" disabled>Send another link</button>
+        <button id="different-email" class="text-button">Use a different email</button>
+      </div>
+      <div id="verify-email" hidden>
+        <span class="card-mark" aria-hidden="true">✓</span>
+        <h2>You’re one click away.</h2>
+        <p>Continue to verify <strong id="verify-address"></strong> and sign in to its readm3 account.</p>
+        <button id="confirm-verify" class="primary">Verify email &amp; sign in</button>
+        <button id="cancel-verify" class="text-button">Use a different email</button>
+      </div>
+      <div id="profile" hidden>
+        <div class="profile-heading"><span class="card-mark" aria-hidden="true">✓</span><span class="verified">Email verified</span></div>
+        <h2>Your account.</h2>
+        <p id="account-email" class="account-email"></p>
+        <form id="profile-form">
+          <label for="display-name">Display name</label>
+          <input id="display-name" name="displayName" autocomplete="nickname" maxlength="80" required>
+          <button class="secondary">Save name</button>
+        </form>
+        <a href="/viewer" class="primary reader-link">Open your reader <span aria-hidden="true">→</span></a>
+        <p class="fine-print">Your account is ready for shared workspaces. Files opened in the local reader stay on this device.</p>
+        <div class="session-actions"><button id="logout" class="text-button">Sign out</button><button id="logout-all" class="text-button">Sign out all devices</button></div>
+      </div>
+      <p id="status" role="status" hidden></p>
+      <p id="error" role="alert" hidden></p>
+      <noscript>JavaScript is needed to sign in. You can still <a href="/docs">read the docs</a>.</noscript>
+    </section>
+  </main>
+  <footer><span>readm3 / a little room for your words.</span><a href="/docs">Documentation</a></footer>
+</body>
+</html>
