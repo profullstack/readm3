@@ -66,6 +66,7 @@ export function modal(title: string): {
 } {
   const dialog = document.createElement("dialog");
   dialog.className = "cloud-dialog";
+  dialog.setAttribute("aria-label", title);
   const header = document.createElement("div");
   header.className = "dialog-header";
   const heading = document.createElement("h2");
