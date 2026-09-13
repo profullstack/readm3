@@ -75,3 +75,18 @@ jobs:
         with:
           name: browser-failure-traces
           path: test-results/
+
+  container:
+    name: production Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --tag readm3-ci .
+      - name: Start the production server and check account sync
+        run: |
+          docker run --detach --name readm3-ci -e READM3_DB=:memory: -p 127.0.0.1:8080:3000 readm3-ci
+          trap 'docker logs readm3-ci; docker rm --force readm3-ci' EXIT
+          curl --fail --retry 20 --retry-connrefused --retry-delay 1 http://127.0.0.1:8080/viewer --output /tmp/readm3-viewer.html
+          grep -q 'sync-workspace' /tmp/readm3-viewer.html
+          test "$(curl --silent --show-error http://127.0.0.1:8080/api/v1/settings --output /tmp/readm3-settings.json --write-out '%{http_code}')" = 401
+          python3 -c 'import json; assert json.load(open("/tmp/readm3-settings.json"))["ok"] is False'
