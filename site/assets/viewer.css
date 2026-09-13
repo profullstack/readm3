@@ -88,3 +88,4 @@ html, body.reader-app { height: 100%; overflow: hidden; }
   .document-footer { padding: 8px 14px; } .app-status { padding: 8px 12px max(8px, env(safe-area-inset-bottom)); font-size: 9px; }
   .app-status kbd { margin-left: 4px; } .reader-app dialog { padding: 20px; } .shortcut-list { gap: 10px 14px; font-size: 11px; }
 }
+.account-link { color: var(--fg); font-size: 12px; text-decoration: none; padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; }

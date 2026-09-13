@@ -3,6 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./test",
+  testIgnore: "accounts.spec.ts",
   fullyParallel: true,
   workers: 3,
   timeout: 30_000,

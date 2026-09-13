@@ -243,6 +243,53 @@ Imports are limited to 4 MB per file, 20 MB per workspace, and 1,000 files.
 
 ## The website
 
+### Accounts
+
+Open https://readm3.com/account to create an email-verified account or sign in.
+The email link expires after 15 minutes and works once. A confirmation button
+prevents email scanners from consuming links. Accounts are created only after
+verification; returning users sign in to the same identity. Account settings
+include display name, sign out, and sign out on all devices.
+
+The server stores accounts, hashed sessions, verification challenges, and rate
+limits in SQLite. Set `READM3_DB` to a persistent volume path (production uses
+`/data/readm3.sqlite`), `READM3_URL` to the canonical public origin,
+`READM3_MAIL_FROM` to a verified sender, and `RESEND_API_KEY` to an email-sending key.
+Missing or failed mail delivery returns an error; verification links are never
+printed to logs. Production cookies are Secure, HttpOnly, SameSite=Lax, and
+host-scoped. The account page and APIs are excluded from offline caches.
+
+On Railway, attach a volume at `/data`, keep a single replica, and set
+`RAILWAY_RUN_UID=0` for the root-owned volume. Back up the volume before changing
+the account schema. The local reader remains usable without an account.
+
+```bash
+bun run test:accounts  # account security tests and browser signup flow
+```
+
+The account service is `server/accounts.ts`. It can accept an existing Bun SQLite
+`Database` so workspace APIs share the same `users` and `sessions` tables.
+`account_emails` holds the verified identity associated with each user ID.
+Use `Accounts.authenticate(token)` or `Accounts.requireAccount(request)` when
+authorizing organization, team, role, or API-token operations: these methods
+reject sessions whose user has no verified email. Browser sessions use
+`__Host-readm3_session` over HTTPS and `readm3_session` on localhost.
+Do not enable a separate unverified registration or password-recovery path.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/auth/email` | Send a sign-in link for an email address |
+| `POST /api/auth/preview` | Show the email associated with an unconsumed link |
+| `POST /api/auth/verify` | Consume the link and set a browser session |
+| `GET /api/auth/session` | Return the verified account, or `null` |
+| `POST /api/auth/profile` | Update the current account's display name |
+| `POST /api/auth/logout` | Revoke the current session |
+| `POST /api/auth/logout-all` | Revoke all sessions belonging to the account |
+
+POST requests require JSON and an `Origin` matching `READM3_URL`.
+
+### Building and serving
+
 [readm3.com](https://readm3.com) is built from this repository by `site/build.ts`,
 which renders every document on the page through `renderMarkdown` and takes every
 color from a real HQTUI theme. There is no second implementation to keep in sync:

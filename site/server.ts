@@ -1,13 +1,14 @@
 /**
  * Serves site/dist.
  *
- * The site is fully static, so this is a file server and nothing more. It binds
- * the port Railway injects, answers `/` for the healthcheck, and keeps HTML
- * uncacheable so a deploy is visible immediately rather than after a TTL.
+ * Public pages stay static. Account APIs use verified email identities and
+ * sessions persisted on the mounted database volume.
  */
 import { existsSync, statSync } from "node:fs";
 import { dirname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Accounts } from "../server/accounts.ts";
+import { accountMailer } from "../server/account-mail.ts";
 
 const dist = join(dirname(fileURLToPath(import.meta.url)), "dist");
 const port = Number(process.env.PORT ?? 3000);
@@ -38,38 +39,59 @@ function cacheFor(path: string): string {
   return "public, max-age=300";
 }
 
-const server = Bun.serve({
-  port,
-  hostname: "0.0.0.0",
-  async fetch(request) {
-    const url = new URL(request.url);
+export function serveSite(options: { accounts?: Accounts; port?: number; hostname?: string } = {}) {
+  const listenPort = options.port ?? port;
+  const accounts = options.accounts ?? new Accounts(
+    process.env.READM3_DB || join(dirname(dist), "..", "data", "readm3.sqlite"),
+    process.env.READM3_URL || (process.env.NODE_ENV === "production" ? "https://readm3.com" : `http://127.0.0.1:${listenPort}`),
+    accountMailer(),
+  );
+  return Bun.serve({
+    port: listenPort,
+    hostname: options.hostname ?? "0.0.0.0",
+    maxRequestBodySize: 4096,
+    async fetch(request, server) {
+      const url = new URL(request.url);
 
-    // One canonical host. Railway issues a separate edge target and certificate
-    // for www, so both hosts really do serve; send www to the apex rather than
-    // leaving two origins for the same pages.
-    const host = request.headers.get("host") ?? url.host;
-    if (host.startsWith("www.")) {
-      return Response.redirect(`https://${host.slice(4)}${url.pathname}${url.search}`, 308);
-    }
+      // One canonical host. Railway issues a separate edge target and certificate
+      // for www, so both hosts really do serve; send www to the apex rather than
+      // leaving two origins for the same pages.
+      const host = request.headers.get("host") ?? url.host;
+      if (host.startsWith("www.")) {
+        return Response.redirect(`https://${host.slice(4)}${url.pathname}${url.search}`, 308);
+      }
 
-    // One canonical path per page: /docs/ and /docs.html both settle on /docs.
-    if (url.pathname.length > 1 && url.pathname.endsWith("/")) {
-      return Response.redirect(`${url.origin}${url.pathname.slice(0, -1)}${url.search}`, 308);
-    }
+      // Railway overwrites X-Real-IP at the edge; never trust client-supplied X-Forwarded-For.
+      const ip = process.env.RAILWAY_ENVIRONMENT_ID
+        ? request.headers.get("x-real-ip") || server.requestIP(request)?.address || "unknown"
+        : server.requestIP(request)?.address || "unknown";
+      const accountResponse = await accounts.handle(request, ip);
+      if (accountResponse) return accountResponse;
 
-    const file = resolve(url.pathname);
-    if (!file) {
-      return new Response("Not found", { status: 404, headers: { "content-type": "text/plain" } });
-    }
+      // One canonical path per page: /docs/ and /docs.html both settle on /docs.
+      if (url.pathname.length > 1 && url.pathname.endsWith("/")) {
+        return Response.redirect(`${url.origin}${url.pathname.slice(0, -1)}${url.search}`, 308);
+      }
 
-    return new Response(Bun.file(file), {
-      headers: {
-        "cache-control": cacheFor(file),
-        "x-content-type-options": "nosniff",
-        "referrer-policy": "strict-origin-when-cross-origin",
-      },
-    });
-  },
-});
+      const file = resolve(url.pathname);
+      if (!file) {
+        return new Response("Not found", { status: 404, headers: { "content-type": "text/plain" } });
+      }
 
-console.log(`readm3.com on :${server.port}`);
+      const accountPage = file === join(dist, "account", "index.html");
+      return new Response(Bun.file(file), {
+        headers: {
+          "cache-control": accountPage ? "no-store" : cacheFor(file),
+          "x-content-type-options": "nosniff",
+          "referrer-policy": accountPage ? "no-referrer" : "strict-origin-when-cross-origin",
+          ...(accountPage ? {
+            "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+            "x-frame-options": "DENY",
+          } : {}),
+        },
+      });
+    },
+  });
+}
+
+if (import.meta.main) console.log(`readm3.com on :${serveSite().port}`);

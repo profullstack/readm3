@@ -1,4 +1,4 @@
-# readm3.com — the static marketing site, built by the package's own renderer.
+# readm3.com — public reader and email-verified accounts.
 FROM oven/bun:1.4 AS base
 WORKDIR /app
 
@@ -16,8 +16,12 @@ RUN bun run site:build
 FROM base AS runner
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV READM3_DB=/data/readm3.sqlite
+ENV READM3_URL=https://readm3.com
 COPY --from=builder --chown=bun:bun /app/site/dist ./site/dist
 COPY --from=builder --chown=bun:bun /app/site/server.ts ./site/server.ts
+COPY --from=builder --chown=bun:bun /app/server ./server
+RUN mkdir -p /data && chown bun:bun /data
 
 USER bun
 EXPOSE 3000
