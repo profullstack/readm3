@@ -6,7 +6,7 @@
  * uncacheable so a deploy is visible immediately rather than after a TTL.
  */
 import { existsSync, statSync } from "node:fs";
-import { dirname, join, normalize } from "node:path";
+import { dirname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const dist = join(dirname(fileURLToPath(import.meta.url)), "dist");
@@ -19,9 +19,11 @@ if (!existsSync(join(dist, "index.html"))) {
 
 /** A request path to a file inside dist, or null if it escapes or is missing. */
 function resolve(pathname: string): string | null {
-  const clean = normalize(decodeURIComponent(pathname)).replace(/^(\.\.[/\\])+/, "");
+  let decoded: string;
+  try { decoded = decodeURIComponent(pathname); } catch { return null; }
+  const clean = normalize(decoded).replace(/^(\.\.[/\\])+/, "");
   const candidate = join(dist, clean);
-  if (!candidate.startsWith(dist)) return null;
+  if (candidate !== dist && !candidate.startsWith(dist + sep)) return null;
 
   for (const target of [candidate, join(candidate, "index.html"), `${candidate}.html`]) {
     if (existsSync(target) && statSync(target).isFile()) return target;
@@ -30,6 +32,8 @@ function resolve(pathname: string): string | null {
 }
 
 function cacheFor(path: string): string {
+  if (path.endsWith("viewer-sw.js") || path.endsWith(".webmanifest")) return "no-cache";
+  if (/\/viewer-assets\/[^/]+-[a-f0-9]{12}\./.test(path)) return "public, max-age=31536000, immutable";
   if (path.endsWith(".html")) return "public, max-age=0, must-revalidate";
   return "public, max-age=300";
 }

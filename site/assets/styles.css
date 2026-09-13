@@ -321,3 +321,6 @@ pre.tree { color: var(--fg); }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+.web-cta { background: var(--page-accent); color: var(--page-bg); border-color: var(--page-accent); font-weight: 600; }
+.web-cta:hover { color: var(--page-bg); filter: brightness(1.1); }

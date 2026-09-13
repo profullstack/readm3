@@ -22,7 +22,7 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
       - name: Test
-        run: bun test test/
+        run: bun run test:bun
       - name: Build
         run: bun run build
       - name: Build the site
@@ -51,3 +51,15 @@ jobs:
           bun run build
           node bin/readm3.mjs --version
           node bin/readm3.mjs --help > /dev/null
+
+  browser:
+    name: web reader and offline PWA
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun x playwright install --with-deps chromium
+      - run: bun run test:site
