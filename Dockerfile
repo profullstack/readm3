@@ -21,8 +21,6 @@ ENV READM3_URL=https://readm3.com
 COPY --from=builder --chown=bun:bun /app/site/dist ./site/dist
 COPY --from=builder --chown=bun:bun /app/site/server.ts ./site/server.ts
 COPY --from=builder --chown=bun:bun /app/server ./server
-COPY --from=builder --chown=bun:bun /app/src ./src
-COPY --from=builder --chown=bun:bun /app/node_modules ./node_modules
 RUN mkdir -p /data && chown bun:bun /data
 
 USER bun
