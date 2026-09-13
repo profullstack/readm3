@@ -11,7 +11,9 @@ import { mkdirSync, writeFileSync, readFileSync, cpSync, existsSync, rmSync } fr
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { themeList, resolveTheme, type Theme } from "@profullstack/hqtui";
-import { renderMarkdown, type Line, type Role } from "../src/markdown.ts";
+import { renderMarkdown } from "../src/markdown.ts";
+import { escape, toHtml } from "./html.ts";
+import { createHash } from "node:crypto";
 import { flatten, type Entry } from "../src/tree.ts";
 import { VERSION } from "../src/cli.ts";
 
@@ -71,46 +73,9 @@ function themeBlocks(): string {
 
 /* ---------------------------------------------------------------- html --- */
 
-function escape(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
 /** JSON that is safe to sit inside a script element. */
 function embedJson(value: unknown): string {
   return JSON.stringify(value).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
-}
-
-function spanClass(
-  role: Role | undefined,
-  span: { bold?: boolean; italic?: boolean; underline?: boolean; dim?: boolean; strike?: boolean },
-): string {
-  const parts: string[] = [];
-  if (role && role !== "text") parts.push(`r-${role}`);
-  if (span.bold) parts.push("b");
-  if (span.italic) parts.push("i");
-  if (span.underline) parts.push("u");
-  if (span.dim) parts.push("d");
-  if (span.strike) parts.push("s");
-  return parts.join(" ");
-}
-
-/** Rendered lines to a <pre> body, one span element per styled run. */
-function toHtml(lines: Line[]): string {
-  return lines
-    .map((line) =>
-      line.spans
-        .map((span) => {
-          const cls = spanClass(span.role, span);
-          const text = escape(span.text);
-          return cls ? `<span class="${cls}">${text}</span>` : text;
-        })
-        .join(""),
-    )
-    .join("\n");
 }
 
 function render(source: string, width: number): string {
@@ -213,6 +178,7 @@ function shell(options: { title: string; description: string; path: string; main
 <header class="top">
   <a class="brand" href="/">readm3</a>
   <nav>
+    <a href="/viewer">Web reader</a>
     <a href="/docs">Docs</a>
     <a href="${REPO}">GitHub</a>
     <a href="${NPM}">npm</a>
@@ -259,10 +225,11 @@ function home(): string {
   the rendered document on the right, and gets out of the way. It runs on Bun and Node, it
   draws in truecolor, and it restores your terminal no matter how the process dies.</p>
   <div class="cta">
+    <a class="ghost web-cta" href="/viewer">Open web reader ↗</a>
     <div class="install"><code id="install">${escape(INSTALL)}</code><button type="button" id="copy" data-copy="${escape(INSTALL)}">Copy</button></div>
     <a class="ghost" href="/docs">Read the docs</a>
   </div>
-  <p class="sub">Or run it without installing: <code>bunx @profullstack/readm3</code></p>
+  <p class="sub">Read and edit in your browser, install as an app, or run the terminal reader without installing: <code>bunx @profullstack/readm3</code></p>
 </section>`;
 
   const demoSection = `<section class="section">
@@ -402,6 +369,7 @@ Sitemap: ${SITE}/sitemap.xml
 const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>${SITE}/</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>1.0</priority></url>
+  <url><loc>${SITE}/viewer</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
   <url><loc>${SITE}/docs</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
 </urlset>
 `;
@@ -442,6 +410,7 @@ terminal.
 
 ## Links
 
+- Web reader: ${SITE}/viewer (installable, offline Markdown reader and editor)
 - Site: ${SITE}
 - Source: ${REPO}
 - Package: ${NPM}
@@ -481,5 +450,46 @@ write("sitemap.xml", sitemap);
 write("llms.txt", llms);
 write("favicon.svg", favicon);
 cpSync(join(here, "assets", "app.js"), join(out, "app.js"));
+
+// Browser assets are content-addressed so existing workers and open tabs stay
+// coherent across deploys. Local document contents never enter this cache.
+function asset(name: string, body: string): string {
+  const hash = createHash("sha256").update(body).digest("hex").slice(0, 12);
+  const dot = name.lastIndexOf(".");
+  const path = `viewer-assets/${name.slice(0, dot)}-${hash}${name.slice(dot)}`;
+  write(path, body);
+  return `/${path}`;
+}
+const seed = asset("documents.json", JSON.stringify({
+  name: "readm3 / getting started",
+  active: "Welcome.md",
+  documents: [
+    { path: "Welcome.md", source: readFileSync(join(here, "content/welcome.md"), "utf8") },
+    { path: "README.md", source: readFileSync(join(root, "README.md"), "utf8") },
+    { path: "examples/demo.md", source: readFileSync(join(here, "content/demo.md"), "utf8") },
+  ],
+}));
+const bundled = await Bun.build({ entrypoints: [join(here, "viewer.ts")], target: "browser", minify: true });
+if (!bundled.success) throw new AggregateError(bundled.logs, "Viewer build failed");
+const script = asset("viewer.js", (await bundled.outputs[0].text()).replace("__SEED_URL__", seed));
+const viewerCss = asset("viewer.css", readFileSync(join(here, "assets/viewer.css"), "utf8"));
+const sharedCss = asset("styles.css", css);
+const viewerHtml = readFileSync(join(here, "assets/viewer.html"), "utf8")
+  .replace("__STYLES__", sharedCss).replace("__VIEWER_STYLES__", viewerCss)
+  .replace("__VIEWER_SCRIPT__", script)
+  .replace("__THEMES__", themeList.map((entry) => `<option value="${escape(entry.name)}">${escape(entry.name)}</option>`).join(""));
+write("viewer/index.html", viewerHtml);
+for (const size of [192, 512]) cpSync(join(here, `assets/icon-${size}.png`), join(out, `viewer-assets/icon-${size}.png`));
+write("viewer.webmanifest", JSON.stringify({
+  id: "/viewer", name: "readm3 — Markdown reader", short_name: "readm3",
+  description: "Your Markdown, in a quiet reading window. Read and edit offline.",
+  start_url: "/viewer", scope: "/viewer", display: "standalone",
+  background_color: "#05070a", theme_color: "#05070a", lang: "en",
+  icons: [192, 512].map((size) => ({ src: `/viewer-assets/icon-${size}.png`, sizes: `${size}x${size}`, type: "image/png", purpose: "any" })),
+}));
+const precache = ["/viewer", script, viewerCss, sharedCss, seed, "/viewer.webmanifest", "/favicon.svg", "/viewer-assets/icon-192.png", "/viewer-assets/icon-512.png"];
+const cacheVersion = createHash("sha256").update(viewerHtml + precache.join("|")).digest("hex").slice(0, 16);
+write("viewer-sw.js", readFileSync(join(here, "assets/viewer-sw.js"), "utf8")
+  .replace("__CACHE_NAME__", `readm3-viewer-${cacheVersion}`).replace("__PRECACHE__", JSON.stringify(precache)));
 
 console.log(`built readm3.com v${VERSION} into ${out} (${themeList.length} themes)`);

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#05070a">
+  <meta name="description" content="Read Markdown in your browser with readm3. Open a folder, browse your files, and read or edit offline. The same renderer and themes as the terminal app.">
+  <title>readm3 — web reader</title>
+  <link rel="canonical" href="https://readm3.com/viewer">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/viewer-assets/icon-192.png">
+  <link rel="manifest" href="/viewer.webmanifest">
+  <link rel="stylesheet" href="__STYLES__">
+  <link rel="stylesheet" href="__VIEWER_STYLES__">
+  <script type="module" src="__VIEWER_SCRIPT__"></script>
+</head>
+<body class="reader-app">
+  <a class="skip" href="#reader">Skip to document</a>
+  <header class="app-header">
+    <a class="brand" href="/">readm3<span class="app-label"> / web reader</span></a>
+    <div class="header-actions">
+      <span id="connection" class="connection">Browser workspace</span>
+      <button id="update" hidden>Update available</button>
+      <button id="install-app" hidden>Install app</button>
+      <button id="help" aria-label="Keyboard shortcuts and help">? <span class="wide-label">Help</span></button>
+    </div>
+  </header>
+  <main class="workspace" id="main">
+    <aside class="file-pane" id="file-pane" aria-label="File browser">
+      <div class="section-label"><span>EXPLORER</span><span id="file-count"></span></div>
+      <div class="open-actions">
+        <button id="open-folder" class="primary-action">Open folder</button>
+        <button id="open-files">Open files</button>
+      </div>
+      <div class="extra-actions"><button id="open-url">Open URL</button><button id="new-file">+ New note</button></div>
+      <input id="files-input" type="file" accept=".md,.markdown,.mdown,.mkd,.mdx,text/markdown,text/plain" multiple hidden>
+      <input id="folder-input" type="file" webkitdirectory multiple hidden>
+      <label class="filter-label" for="filter"><span aria-hidden="true">/</span><input id="filter" type="search" placeholder="Filter files…" autocomplete="off" aria-label="Filter files"><kbd>/</kbd></label>
+      <div class="folder-label" id="workspace-name">readm3 / getting started</div>
+      <nav id="file-list" aria-label="Markdown files"></nav>
+      <div class="local-note"><span class="local-dot" aria-hidden="true"></span><span>Files stay on this device.<br>Drop Markdown files anywhere.</span></div>
+    </aside>
+    <section class="document-pane" aria-label="Document">
+      <div class="document-toolbar">
+        <button id="toggle-files" aria-controls="file-pane" aria-expanded="false" aria-label="Toggle file browser">☰</button>
+        <div class="file-heading"><span class="file-mark" aria-hidden="true">M↓</span><h1 id="document-name">Loading workspace…</h1></div>
+        <div class="document-actions">
+          <div class="mode-switch" role="group" aria-label="Document mode"><button id="read-mode" aria-pressed="true">Read</button><button id="edit-mode" aria-pressed="false">Edit</button></div>
+          <button id="download" title="Download Markdown (Ctrl or ⌘ S)">Download</button>
+        </div>
+      </div>
+      <div class="reader-options">
+        <span id="document-info">Markdown</span>
+        <div class="reader-selects">
+          <label>Flavor <select id="flavor"><option value="github">GitHub</option><option value="commonmark">CommonMark</option><option value="reddit">Reddit</option><option value="all">All</option></select></label>
+          <label>Theme <select id="theme">__THEMES__</select></label>
+          <button id="spoilers" aria-pressed="false" title="Reveal spoilers (s)">Spoilers</button>
+        </div>
+      </div>
+      <div id="reader" tabindex="0" role="region" aria-label="Rendered Markdown"><pre id="document-content" class="doc"></pre></div>
+      <textarea id="editor" aria-label="Markdown source" spellcheck="false" hidden></textarea>
+      <div class="document-footer"><span id="save-status" role="status">Opening workspace…</span><span id="reading-progress">0%</span></div>
+    </section>
+  </main>
+  <footer class="app-status"><span><kbd>↑↓</kbd> move <kbd>↵</kbd> open <kbd>/</kbd> find <kbd>e</kbd> edit <kbd>esc</kbd> read <kbd>?</kbd> keys</span><span>Same renderer. A new window.</span></footer>
+  <div id="notice" role="status" hidden></div>
+  <dialog id="help-dialog" aria-labelledby="help-title">
+    <form method="dialog"><div class="dialog-header"><h2 id="help-title">Make yourself at home.</h2><button aria-label="Close help">×</button></div>
+    <p>The readm3 terminal reader, in your browser. Open a folder or a few Markdown files to get started.</p>
+    <dl class="shortcut-list"><dt>↑ / ↓ or j / k</dt><dd>Move through files or scroll the reader</dd><dt>← / →</dt><dd>Collapse or expand a folder</dd><dt>Enter</dt><dd>Open the focused file</dd><dt>/</dt><dd>Filter files</dd><dt>Tab</dt><dd>Move between controls and panes</dd><dt>e / i · Escape</dt><dd>Edit source · return to reading</dd><dt>Ctrl / ⌘ S</dt><dd>Download the current Markdown file</dd><dt>g / G · Space / b</dt><dd>Top / bottom · page down / up</dd><dt>s · ?</dt><dd>Reveal spoilers · open help</dd></dl>
+    <p>Files and edits are saved in this browser for offline use. Download a copy to keep it outside the browser; clearing site data removes the workspace. Opening a file does not change the original on disk.</p>
+    <p>Install from your browser’s install menu, or on iPhone and iPad use Share → Add to Home Screen. After your first visit, the reader works offline. URLs need an internet connection and a host that allows browser access.</p>
+    <button class="primary-action">Got it</button></form>
+  </dialog>
+  <dialog id="url-dialog" aria-labelledby="url-title">
+    <form id="url-form"><div class="dialog-header"><h2 id="url-title">Open a Markdown URL</h2><button type="button" id="close-url" aria-label="Close URL dialog">×</button></div>
+    <p>Paste a raw Markdown URL or a GitHub file link. The file is fetched directly from its host and added to your workspace.</p>
+    <label for="url-input">Document URL</label><input id="url-input" type="url" placeholder="https://raw.githubusercontent.com/…/README.md" required>
+    <p id="url-error" role="alert"></p><button id="load-url" class="primary-action">Open document</button></form>
+  </dialog>
+  <noscript><div class="no-script">The web reader needs JavaScript to open and render files. You can still <a href="/docs">read the docs</a> or use the terminal app.</div></noscript>
+</body>
+</html>

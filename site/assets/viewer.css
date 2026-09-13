@@ -1,0 +1,90 @@
+html, body.reader-app { height: 100%; overflow: hidden; }
+.reader-app { display: flex; flex-direction: column; height: 100dvh; background: var(--bg); color: var(--fg); font-size: 13px; line-height: 1.5; }
+.reader-app [hidden] { display: none !important; }
+.reader-app button, .reader-app input, .reader-app select, .reader-app textarea { font: inherit; color: var(--fg); }
+.reader-app button { cursor: pointer; border: 1px solid var(--border); border-radius: 5px; padding: 6px 11px; background: var(--surface); white-space: nowrap; }
+.reader-app button:hover { border-color: var(--muted); background: color-mix(in srgb, var(--fg) 7%, var(--surface)); }
+.reader-app button:disabled { opacity: .5; cursor: wait; }
+.reader-app :focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.reader-app input, .reader-app select { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 6px; min-width: 0; }
+.reader-app .brand { color: var(--fg); font-size: 17px; }
+.reader-app .brand::before { color: var(--primary); }
+.app-label { font-size: 12px; color: var(--muted); font-weight: 400; }
+.app-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 70px; padding: 14px 26px; border-bottom: 1px solid var(--border); }
+.header-actions { display: flex; gap: 12px; align-items: center; }
+.connection { color: var(--muted); font: 11px var(--mono); }
+.connection::before, .local-dot { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--success); margin-right: 7px; }
+.reader-app .workspace { max-width: none; margin: 0; padding: 0; display: flex; flex: 1; min-height: 0; width: 100%; }
+.file-pane { display: flex; flex-direction: column; flex: 0 0 270px; min-width: 0; background: var(--surface); border-right: 1px solid var(--border); }
+.section-label { display: flex; justify-content: space-between; padding: 24px 20px 16px; font: 10px var(--mono); letter-spacing: .12em; color: var(--muted); }
+.open-actions { display: flex; gap: 8px; padding: 0 18px; }
+.open-actions button { flex: 1; }
+.reader-app .primary-action { color: var(--bg); background: var(--primary); border-color: var(--primary); font-weight: 600; }
+.reader-app .primary-action:hover { filter: brightness(1.1); }
+.extra-actions { display: flex; gap: 4px; padding: 9px 16px 15px; }
+.extra-actions button { border-color: transparent; color: var(--muted); font-size: 12px; padding: 4px 8px; }
+.filter-label { display: flex; align-items: center; gap: 8px; margin: 0 18px 21px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 5px; color: var(--muted); background: var(--bg); }
+.filter-label input { width: 100%; border: 0; padding: 0; outline-offset: 5px; background: transparent; font-size: 12px; }
+.filter-label kbd { color: var(--muted); padding: 0 5px; border: 1px solid var(--border); border-radius: 3px; font-size: 10px; }
+.folder-label { padding: 0 20px 10px; color: var(--muted); font: 11px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#file-list { flex: 1; overflow: auto; padding: 0 8px 16px; }
+.reader-app .file-row { display: flex; align-items: center; gap: 9px; width: 100%; border: 1px solid transparent; border-radius: 4px; background: transparent; text-align: left; padding: 7px 10px; font: 12px/1.5 var(--mono); }
+.file-row .row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-row .file-icon { width: 18px; flex: none; color: var(--muted); font-size: 10px; }
+.reader-app .file-row[aria-current="page"] { color: var(--selection-text); background: var(--selection); }
+.file-row[aria-current="page"] .file-icon { color: inherit; }
+.reader-app .file-row.folder-row { color: var(--primary); }
+.empty-files { padding: 10px; color: var(--muted); }
+.local-note { display: flex; gap: 2px; padding: 16px 20px 20px; color: var(--muted); border-top: 1px solid var(--border); font-size: 11px; line-height: 1.8; }
+.local-dot { flex: none; margin-top: 7px; }
+.document-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.document-toolbar { min-height: 65px; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 24px; border-bottom: 1px solid var(--border); }
+.file-heading { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.file-mark { color: var(--primary); border: 1px solid var(--border); border-radius: 4px; padding: 2px 5px; font: 11px var(--mono); }
+#document-name { font: 12px var(--mono); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.document-actions { display: flex; align-items: center; gap: 12px; }
+.mode-switch { display: flex; border: 1px solid var(--border); border-radius: 5px; padding: 2px; }
+.reader-app .mode-switch button { border: 0; padding: 4px 11px; background: transparent; color: var(--muted); }
+.reader-app .mode-switch [aria-pressed="true"] { background: var(--surface); color: var(--fg); }
+.reader-options { display: flex; align-items: center; justify-content: space-between; padding: 11px 25px; gap: 10px; color: var(--muted); font-size: 11px; }
+.reader-selects { display: flex; gap: 14px; align-items: center; }
+.reader-selects label { display: flex; align-items: center; gap: 7px; }
+.reader-selects select { padding: 3px 5px; font-size: 11px; max-width: 132px; }
+.reader-app #spoilers { padding: 3px 7px; font-size: 11px; color: var(--muted); }
+.reader-app #spoilers[aria-pressed="true"] { color: var(--primary); border-color: var(--primary); }
+#reader { flex: 1; min-height: 0; overflow: auto; padding: 27px clamp(20px, 4vw, 64px) 50px; outline-offset: -3px; }
+#document-content { width: fit-content; max-width: none; margin: 0; padding: 0; font: 14px/1.85 var(--mono); color: var(--fg); white-space: pre; tab-size: 2; }
+#editor { flex: 1; width: 100%; min-height: 0; resize: none; padding: 27px clamp(20px, 4vw, 64px) 50px; background: var(--bg); border: 0; border-radius: 0; font: 14px/1.85 var(--mono); tab-size: 2; outline-offset: -3px; }
+.document-footer { display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid var(--border); padding: 9px 25px; color: var(--muted); font: 10px/1.5 var(--mono); }
+.app-status { display: flex; justify-content: space-between; gap: 16px; padding: 9px 20px max(9px, env(safe-area-inset-bottom)); border-top: 1px solid var(--border); background: var(--surface); color: var(--muted); font: 10px/1.5 var(--mono); }
+.app-status kbd { color: var(--fg); margin-left: 10px; font: inherit; }
+.app-status kbd:first-child { margin-left: 0; }
+#toggle-files { display: none; }
+#notice { position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%); padding: 12px 20px; max-width: min(90vw, 600px); border: 1px solid var(--primary); border-radius: 7px; background: var(--surface); box-shadow: 0 8px 32px #0005; z-index: 5; }
+.reader-app dialog { width: min(570px, calc(100% - 32px)); max-height: 85dvh; border: 1px solid var(--border); border-radius: 12px; padding: 28px; color: var(--fg); background: var(--surface); }
+.reader-app dialog::backdrop { background: #000a; backdrop-filter: blur(3px); }
+.dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.dialog-header h2 { margin: 0; font-size: 20px; font-weight: 550; }
+.reader-app dialog p { color: var(--muted); line-height: 1.8; }
+.shortcut-list { display: grid; grid-template-columns: auto 1fr; gap: 9px 24px; margin: 24px 0; font-size: 12px; }
+.shortcut-list dt { color: var(--primary); font-family: var(--mono); }
+.shortcut-list dd { margin: 0; }
+#url-input { width: 100%; margin-top: 8px; padding: 10px; }
+#url-error { color: var(--danger); }
+.no-script { position: fixed; inset: 25%; padding: 32px; background: var(--surface); border: 1px solid var(--border); }
+.reader-app.dragging::after { content: "Drop your Markdown files here"; position: fixed; inset: 12px; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 95%, transparent); border: 2px dashed var(--primary); border-radius: 12px; color: var(--primary); font: 20px var(--mono); pointer-events: none; z-index: 10; }
+[data-theme="light"] { color-scheme: light; }
+@media (min-width: 1600px) { #reader, #editor { padding-left: 90px; } }
+@media (max-width: 900px) { .file-pane { flex-basis: 230px; } .connection, .app-status > span:last-child, #document-info { display: none; } .reader-options { justify-content: flex-end; } .app-header { padding: 12px 18px; } }
+@media (max-width: 680px) {
+  .app-header { min-height: 58px; padding: 10px 14px; } .app-label, .wide-label { display: none; } .header-actions { gap: 6px; }
+  #toggle-files { display: block; border: 0; padding: 4px 7px; background: transparent; }
+  .file-pane { display: none; position: fixed; top: 58px; bottom: 34px; left: 0; width: min(290px, 85vw); z-index: 3; box-shadow: 20px 0 50px #0005; }
+  .files-open .file-pane { display: flex; }
+  .document-toolbar { padding: 10px; gap: 8px; min-height: 57px; } .file-heading { flex: 1; gap: 6px; } .file-mark { display: none; }
+  .document-actions { gap: 6px; } .reader-app .document-actions button { padding: 5px 7px; font-size: 11px; }
+  .reader-options { padding: 10px 12px; } .reader-selects { width: 100%; justify-content: space-between; gap: 6px; flex-wrap: wrap; } .reader-selects label { gap: 4px; }
+  #reader, #editor { padding: 20px 16px 40px; } #document-content, #editor { font-size: 12px; line-height: 1.8; }
+  .document-footer { padding: 8px 14px; } .app-status { padding: 8px 12px max(8px, env(safe-area-inset-bottom)); font-size: 9px; }
+  .app-status kbd { margin-left: 4px; } .reader-app dialog { padding: 20px; } .shortcut-list { gap: 10px 14px; font-size: 11px; }
+}

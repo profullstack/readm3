@@ -215,11 +215,31 @@ Windows Terminal.
 ```bash
 bun install
 bun src/cli.ts .     # run it against its own repo
-bun test test/       # 68 tests, no TTY needed
+bun test ./test       # 68 tests, no TTY needed
 npm test             # the same tests on node
 bun run typecheck
 bun run build
 ```
+
+## Web reader
+
+Open https://readm3.com/viewer for the same two-pane Markdown reader in your browser.
+Open local files or a folder, drop Markdown files into the window, open a raw URL or
+GitHub file link, or start a new note. The explorer filters files, prunes hidden and
+build directories, and sorts README first. All nine themes and Markdown flavors use
+the same renderer as the terminal.
+
+Press `/` to filter, `e` to edit, `Escape` to return to reading, and `?` for shortcuts.
+`Ctrl+S` / `⌘S` downloads the current Markdown. Files and edits are saved in IndexedDB
+on this device; originals on disk are never overwritten. Reopening a file adds a copy
+so an existing draft is preserved. Clearing browser site data removes the workspace.
+
+Install through your browser’s app menu, or Share → Add to Home Screen on iOS.
+After the first visit, the application and saved workspace work offline. Remote URLs
+need a connection and a host that permits browser access (CORS); files are fetched
+directly with no credentials or server proxy. Local files are never uploaded.
+
+Imports are limited to 4 MB per file, 20 MB per workspace, and 1,000 files.
 
 ## The website
 
@@ -231,7 +251,14 @@ change the parser and the site changes with it.
 ```bash
 bun run site:build   # writes site/dist
 bun run site:start   # serves it on $PORT, default 3000
+bun x playwright install chromium  # once, for browser checks
+bun run test:site    # imports, editing, persistence, offline PWA, and mobile layout
 ```
+
+The site build bundles `site/viewer.ts` for browsers, generates content-addressed
+assets, and precaches the viewer shell through a service worker scoped to `/viewer`.
+Updates wait until the reader chooses **Update available**; drafts are saved before
+reloading. The web viewer does not load the marketing site’s third-party scripts.
 
 ## License
 
