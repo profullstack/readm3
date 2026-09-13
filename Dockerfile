@@ -1,4 +1,4 @@
-# readm3.com — public reader and email-verified accounts.
+# readm3.com — Markdown editor, public site, and document API.
 FROM oven/bun:1.4 AS base
 WORKDIR /app
 

@@ -1,7 +1,7 @@
 {
   "name": "@profullstack/readm3",
-  "version": "0.3.0",
-  "description": "A terminal markdown reader and editor: file browser on the left, rendered markdown on the right. CommonMark, GitHub and Reddit flavors. Bun and Node, built on HQTUI.",
+  "version": "0.4.0",
+  "description": "Markdown editing and sharing for people and teams. Web/PWA, CLI, API and MCP with version history, view/edit links, and a terminal reader.",
   "type": "module",
   "license": "MIT",
   "author": "Profullstack, Inc.",
@@ -38,9 +38,11 @@
     "test:bun": "bun test ./test",
     "prepublishOnly": "npm run build",
     "test:site": "playwright test -c site/playwright.config.ts",
+    "test:server": "bun test ./server/test",
     "test:accounts": "bun test ./server/test && playwright test -c site/accounts.playwright.config.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@profullstack/hqtui": "^0.5.0",
     "marked": "^18.0.11"
   },

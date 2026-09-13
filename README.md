@@ -1,6 +1,6 @@
 # readm3
 
-A terminal markdown reader and editor. File browser on the left, the rendered
+Markdown editing and sharing for people and teams, with a terminal reader and editor. File browser on the left, the rendered
 document on the right, and nothing else in the way. Press `e` to edit the file
 you are looking at, `esc` to see it rendered again.
 
@@ -113,8 +113,8 @@ and add a paragraph, not a replacement for your editor. `$EDITOR` is still
 
 ## What it renders
 
-Parsing is [marked](https://github.com/markedjs/marked) — CommonMark and GFM,
-zero dependencies of its own — so readm3 has two dependencies in total.
+Parsing is [marked](https://github.com/markedjs/marked) — CommonMark and GFM.
+The terminal UI uses HQTUI; the cloud tools use the official MCP SDK.
 
 Headings, **bold**, *italic*, `inline code`, links, reference links, bare URLs,
 fenced and indented code blocks with a language label, ordered and unordered
@@ -221,6 +221,31 @@ bun run typecheck
 bun run build
 ```
 
+## Shared documents, organizations, and teams
+
+Read and edit online at https://readm3.com/viewer, and manage your account at
+https://readm3.com/admin. Create private Markdown files, share view or edit links,
+add named collaborators, and grant access to an organization or team. Every link
+opens in read mode. File owners manage permissions and deletion; editors save new
+versions; the super administrator can manage every user's documents.
+
+Every online save creates an immutable version with a short ID and SHA-256 checksum.
+Stale saves are rejected so concurrent edits cannot silently overwrite each other.
+Owners can restore prior versions, pin links to a version, and revoke links.
+
+```sh
+readm3 login --token-stdin             # token from /admin → API tokens
+readm3 orgs list
+readm3 share README.md --org ORG_ID    # view link by default
+readm3 docs update DOC_ID notes.md --base VERSION_ID
+readm3 docs history DOC_ID
+readm3 mcp                            # stdio MCP, same account permissions
+```
+
+The REST API is at `/api/v1`, with all operations also available through
+`POST /api/v1/actions` and `readm3 cloud OPERATION --args JSON`.
+Full permissions, accounts, CLI, API, and MCP documentation: https://readm3.com/sharing.
+
 ## Web reader
 
 Open https://readm3.com/viewer for the same two-pane Markdown reader in your browser.
@@ -237,7 +262,7 @@ so an existing draft is preserved. Clearing browser site data removes the worksp
 Install through your browser’s app menu, or Share → Add to Home Screen on iOS.
 After the first visit, the application and saved workspace work offline. Remote URLs
 need a connection and a host that permits browser access (CORS); files are fetched
-directly with no credentials or server proxy. Local files are never uploaded.
+directly with no credentials or server proxy. Local files are uploaded only when you explicitly choose Share → Save online.
 
 Imports are limited to 4 MB per file, 20 MB per workspace, and 1,000 files.
 
@@ -306,6 +331,28 @@ The site build bundles `site/viewer.ts` for browsers, generates content-addresse
 assets, and precaches the viewer shell through a service worker scoped to `/viewer`.
 Updates wait until the reader chooses **Update available**; drafts are saved before
 reloading. The web viewer does not load the marketing site’s third-party scripts.
+
+## Hosting shared documents
+
+The web server uses Bun and SQLite. Set `READM3_DB` to a database file on persistent
+storage, and `READM3_URL` to the public HTTPS origin. The Docker image uses
+`/data/readm3.sqlite`; mount a volume at `/data`. On Railway set `RAILWAY_RUN_UID=0`
+for access to the mounted volume. Use one service replica for SQLite and configure
+volume backups in the hosting platform.
+
+Set `READM3_ADMIN_BOOTSTRAP_SECRET` to a random secret. Sign in at `/account` as
+the intended super administrator, then open `/admin#claim=YOUR_SECRET`. This is a
+one-time claim stored in the database. Never publish this URL; remove the environment
+secret after claiming. Email sign-in never grants administrator access by itself.
+
+Accounts use verified email sign-in and HttpOnly cookies. API tokens and share
+capabilities are stored as SHA-256 hashes. Shared documents are not cached in the
+PWA or saved in the browser's local workspace, so revocation applies to future access.
+
+```sh
+bun run test:server  # auth, roles, version history, persistence, CLI and MCP
+bun run test:site    # local/offline reader plus browser sharing and admin workflows
+```
 
 ## License
 

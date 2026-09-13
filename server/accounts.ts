@@ -67,7 +67,8 @@ export class Accounts {
     if (!row) throw new AccountError(400, "This sign-in link is invalid or has expired. Request a new link.");
     return row;
   }
-  private async requestLink(input: unknown, ip: string) {
+  private async requestLink(input: unknown, ip: string, requestedNext?: unknown) {
+    const next = typeof requestedNext === "string" && /^\/(?:admin|viewer)(?:\?|$)/.test(requestedNext) ? requestedNext : null;
     this.rate(`send-ip:${ip}`, 20, 3600);
     const email = typeof input === "string" ? input.trim().toLowerCase() : "";
     if (email.length > 254 || !/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i.test(email) || email.split("@")[0].length > 64) {
@@ -78,7 +79,7 @@ export class Accounts {
     const token = secret();
     this.db.query("DELETE FROM email_challenges WHERE expiresAt<=?").run(stamp());
     this.db.query("INSERT INTO email_challenges VALUES (?,?,?,?)").run(hash(token), email, new Date(Date.now() + 15 * 60000).toISOString(), stamp());
-    try { await this.sendMail({ to: email, url: `${this.origin}/account#verify=${token}` }); }
+    try { await this.sendMail({ to: email, url: `${this.origin}/account${next ? "?next=" + encodeURIComponent(next) : ""}#verify=${token}` }); }
     catch {
       this.db.query("DELETE FROM email_challenges WHERE tokenHash=?").run(hash(token));
       throw new AccountError(503, "We couldn't send your sign-in email. Please try again in a minute.");
@@ -122,7 +123,7 @@ export class Accounts {
       let args: Record<string, unknown>;
       try { args = JSON.parse(body); if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error(); }
       catch { throw new AccountError(400, "Invalid request."); }
-      if (path === "/api/auth/email") return reply(await this.requestLink(args.email, ip));
+      if (path === "/api/auth/email") return reply(await this.requestLink(args.email, ip, args.next));
       if (path === "/api/auth/preview" || path === "/api/auth/verify") {
         this.rate(`verify:${ip}`, 60, 60);
         if (path.endsWith("preview")) return reply(this.challenge(args.token));

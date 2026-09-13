@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#05070a">
-  <meta name="description" content="Read Markdown in your browser with readm3. Open a folder, browse your files, and read or edit offline. The same renderer and themes as the terminal app.">
+  <meta name="description" content="Write and share Markdown with readm3. Open local files offline or collaborate online with view/edit links, private workspaces, and version history.">
   <title>readm3 — web reader</title>
   <link rel="canonical" href="https://readm3.com/viewer">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -12,6 +12,7 @@
   <link rel="manifest" href="/viewer.webmanifest">
   <link rel="stylesheet" href="__STYLES__">
   <link rel="stylesheet" href="__VIEWER_STYLES__">
+  <link rel="stylesheet" href="__ADMIN_STYLES__">
   <script type="module" src="__VIEWER_SCRIPT__"></script>
 </head>
 <body class="reader-app">
@@ -19,6 +20,7 @@
   <header class="app-header">
     <a class="brand" href="/">readm3<span class="app-label"> / web reader</span></a>
     <div class="header-actions">
+      <a href="/admin">Workspaces</a>
       <a class="account-link" href="/account">Account</a>
       <span id="connection" class="connection">Browser workspace</span>
       <button id="update" hidden>Update available</button>
@@ -39,7 +41,7 @@
       <label class="filter-label" for="filter"><span aria-hidden="true">/</span><input id="filter" type="search" placeholder="Filter files…" autocomplete="off" aria-label="Filter files"><kbd>/</kbd></label>
       <div class="folder-label" id="workspace-name">readm3 / getting started</div>
       <nav id="file-list" aria-label="Markdown files"></nav>
-      <div class="local-note"><span class="local-dot" aria-hidden="true"></span><span>Files stay on this device.<br>Drop Markdown files anywhere.</span></div>
+      <div class="local-note"><span class="local-dot" aria-hidden="true"></span><span>Local files stay on this device.<br>Drop Markdown files anywhere.</span></div>
     </aside>
     <section class="document-pane" aria-label="Document">
       <div class="document-toolbar">
@@ -47,6 +49,9 @@
         <div class="file-heading"><span class="file-mark" aria-hidden="true">M↓</span><h1 id="document-name">Loading workspace…</h1></div>
         <div class="document-actions">
           <div class="mode-switch" role="group" aria-label="Document mode"><button id="read-mode" aria-pressed="true">Read</button><button id="edit-mode" aria-pressed="false">Edit</button></div>
+          <button id="cloud-save" class="primary-action" hidden>Save version</button>
+          <button id="share">Share</button>
+          <button id="history" hidden>History</button>
           <button id="download" title="Download Markdown (Ctrl or ⌘ S)">Download</button>
         </div>
       </div>

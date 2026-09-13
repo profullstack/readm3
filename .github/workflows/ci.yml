@@ -23,8 +23,8 @@ jobs:
         run: bun run typecheck
       - name: Test
         run: bun run test:bun
-      - name: Account security tests
-        run: bun test ./server/test
+      - name: Shared document API and interfaces
+        run: bun run test:server
       - name: Build
         run: bun run build
       - name: Build the site
@@ -53,6 +53,10 @@ jobs:
           bun run build
           node bin/readm3.mjs --version
           node bin/readm3.mjs --help > /dev/null
+      - name: Node CLI and MCP against document API
+        env:
+          READM3_TEST_NODE: "1"
+        run: bun test server/test/surfaces.test.ts
 
   browser:
     name: web reader and offline PWA
@@ -66,3 +70,8 @@ jobs:
       - run: bun x playwright install --with-deps chromium
       - run: bun run test:site
       - run: bun run test:accounts
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-failure-traces
+          path: test-results/

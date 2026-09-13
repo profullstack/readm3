@@ -8,8 +8,9 @@ import { themeList } from "@profullstack/hqtui";
 import { FLAVORS, isFlavor, type Flavor } from "./flavors.ts";
 import { printDocument, COLOR_MODES, type ColorMode } from "./print.ts";
 import { run, type ViewerOptions } from "./viewer.ts";
+import { isCloudCommand, cloudMain, CLOUD_USAGE } from "./cloud-cli.ts";
 
-export const VERSION = "0.3.0";
+export const VERSION = "0.4.0";
 
 /** The help text, exported so a test can hold it to the flags it documents. */
 export const USAGE = `readm3 — a terminal markdown reader and editor
@@ -54,7 +55,8 @@ Editing
   ctrl+a ctrl+e  line start / end      ctrl+u   kill to start of line
   ctrl+arrow     move by word          enter    split, continuing a list
   ctrl+g         keys for editing      tab      indent two spaces
-`;
+
+${CLOUD_USAGE}`;
 
 export interface ParsedArgs extends ViewerOptions {
   help: boolean;
@@ -180,6 +182,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
 }
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
+  if (isCloudCommand(argv[0])) { await cloudMain(argv); return; }
   let args: ParsedArgs;
   try {
     args = parseArgs(argv);

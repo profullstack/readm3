@@ -315,7 +315,8 @@ pre.tree { color: var(--fg); }
 @media (max-width: 760px) {
   .pane-tree { display: none; }
   .window { font-size: 12px; }
-  .top nav { gap: 0.9rem; }
+  .top { flex-wrap: wrap; }
+  .top nav { gap: 0.65rem 1rem; flex-wrap: wrap; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -324,3 +325,5 @@ pre.tree { color: var(--fg); }
 
 .web-cta { background: var(--page-accent); color: var(--page-bg); border-color: var(--page-accent); font-weight: 600; }
 .web-cta:hover { color: var(--page-bg); filter: brightness(1.1); }
+
+.collaboration-section { padding-top: 0; }

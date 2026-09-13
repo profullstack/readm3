@@ -1,11 +1,13 @@
 type Account = { id: string; email: string; displayName: string; emailVerifiedAt: string };
 const el = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const panels = ["loading", "sign-in", "check-email", "verify-email", "profile"];
+const requestedNext = new URLSearchParams(location.search).get("next");
+const next = requestedNext && /^\/(?:admin|viewer)(?:\?|$)/.test(requestedNext) ? requestedNext : null;
 let email = "";
 let token: string | null = null;
 function readLink() {
   token = new URLSearchParams(location.hash.slice(1)).get("verify");
-  if (location.hash) history.replaceState(null, "", location.pathname);
+  if (location.hash) history.replaceState(null, "", location.pathname + location.search);
 }
 readLink();
 let timer: ReturnType<typeof setInterval> | undefined;
@@ -41,6 +43,7 @@ async function action(button: HTMLButtonElement, fn: () => Promise<void>) {
   finally { busy = false; button.disabled = false; button.removeAttribute("aria-busy"); }
 }
 function profile(user: Account) {
+  if (next) { location.replace(next); return; }
   show("profile");
   el("account-email").textContent = user.email;
   el<HTMLInputElement>("display-name").value = user.displayName;
@@ -58,7 +61,7 @@ function cooldown(seconds: number) {
   tick(); timer = setInterval(tick, 1000);
 }
 async function sendLink() {
-  const response = await api<{ retryAfter: number }>("email", { email });
+  const response = await api<{ retryAfter: number }>("email", { email, next });
   show("check-email"); el("sent-email").textContent = email;
   cooldown(response.retryAfter);
 }

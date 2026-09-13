@@ -178,11 +178,12 @@ function shell(options: { title: string; description: string; path: string; main
 <header class="top">
   <a class="brand" href="/">readm3</a>
   <nav>
-    <a href="/viewer">Web reader</a>
-    <a href="/account">Sign in</a>
+    <a href="/viewer">Editor</a>
+    <a href="/admin">Workspaces</a>
+    <a href="/account">Account</a>
     <a href="/docs">Docs</a>
+    <a href="/sharing">Sharing & API</a>
     <a href="${REPO}">GitHub</a>
-    <a href="${NPM}">npm</a>
   </nav>
 </header>
 <main id="main">
@@ -220,17 +221,28 @@ function home(): string {
   const readme = readFileSync(join(root, "README.md"), "utf8");
 
   const hero = `<section class="hero">
-  <p class="eyebrow">Terminal markdown reader</p>
-  <h1>Read your docs where you already are.</h1>
-  <p class="lede">readm3 opens a directory of markdown, puts the file browser on the left and
-  the rendered document on the right, and gets out of the way. It runs on Bun and Node, it
-  draws in truecolor, and it restores your terminal no matter how the process dies.</p>
+  <p class="eyebrow">Markdown, made for working together</p>
+  <h1>Good writing starts with a draft.<br>Great docs get shared.</h1>
+  <p class="lede">Write the README. Draft the proposal. Give your team a place to edit it.
+  readm3 brings Markdown editing, simple view or edit links, and a history of every save
+  into one quiet workspace.</p>
   <div class="cta">
-    <a class="ghost web-cta" href="/viewer">Open web reader ↗</a>
-    <div class="install"><code id="install">${escape(INSTALL)}</code><button type="button" id="copy" data-copy="${escape(INSTALL)}">Copy</button></div>
-    <a class="ghost" href="/docs">Read the docs</a>
+    <a class="ghost web-cta" href="/viewer?new=1">Start writing ↗</a>
+    <a class="ghost" href="/admin">Create your workspace</a>
   </div>
-  <p class="sub">Read and edit in your browser, install as an app, or run the terminal reader without installing: <code>bunx @profullstack/readm3</code></p>
+  <p class="sub">Start locally without an account. Sign in when you’re ready to share.</p>
+</section>
+<section class="section collaboration-section">
+  <div class="section-head"><h2>From your first line to the version everyone agrees on.</h2>
+  <p>For the files people actually work on: READMEs, project plans, meeting notes, and proposals.</p></div>
+  <div class="grid">
+    <div class="card"><h3>Write, preview, repeat.</h3><p>Open a file or start from scratch. Edit the Markdown, switch to a clean preview, and download the source whenever you need it.</p></div>
+    <div class="card"><h3>“Can view” or “can edit.”</h3><p>Share a link with a reviewer or invite someone to make changes. You own your files and decide who gets access.</p></div>
+    <div class="card"><h3>Keep the story of the document.</h3><p>Every online save creates a version. See who changed it, share a specific version, or restore an earlier draft without losing the history.</p></div>
+    <div class="card"><h3>A workspace for your team.</h3><p>Organize people into organizations and teams. Share with a whole group, a few collaborators, or anyone with your link.</p></div>
+    <div class="card"><h3>Take the editor with you.</h3><p>Install readm3 as an app. Local files work offline; shared documents stay connected so permissions and saves are checked.</p></div>
+    <div class="card"><h3>Use the tools you already use.</h3><p>The web editor, CLI, API, and MCP work with the same documents and permissions. Your terminal and your agents can join the workflow.</p></div>
+  </div>
 </section>`;
 
   const demoSection = `<section class="section">
@@ -299,9 +311,9 @@ function home(): string {
 </section>`;
 
   return shell({
-    title: "readm3 — a terminal markdown reader",
+    title: "readm3 — Markdown editing and sharing for people and teams",
     description:
-      "readm3 is a terminal markdown reader: a file browser on the left, the rendered document on the right. Bun and Node, truecolor, nine themes, and a --print mode that works in a pipe.",
+      "Write and edit Markdown, share view or edit links, and keep every version. Work with your team in the browser, CLI, API, and MCP.",
     path: "/",
     main: [hero, demoSection, grid, printSection, librarySection, readmeSection].join("\n"),
     jsonLd: {
@@ -371,6 +383,7 @@ const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>${SITE}/</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>1.0</priority></url>
   <url><loc>${SITE}/viewer</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
+  <url><loc>${SITE}/sharing</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>${SITE}/docs</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
 </urlset>
 `;
@@ -445,6 +458,13 @@ const css = readFileSync(join(here, "assets", "styles.css"), "utf8").replace(
 
 write("index.html", home());
 write("docs/index.html", docs());
+write("sharing/index.html", shell({
+  title: "Sharing, teams, API and MCP — readm3",
+  description: "Edit and share Markdown with view/edit permissions, version history, organizations, teams, CLI, API and MCP.",
+  path: "/sharing",
+  main: `<section class="hero hero-tight"><p class="eyebrow">Working together</p><h1>Editing, sharing, and your tools.</h1><p class="lede">The same documents and permissions, wherever you work.</p></section>${pane({ title: "sharing.md", body: render(readFileSync(join(here, "content/sharing.md"), "utf8"), 100), percent: "100%" })}`,
+  jsonLd: { "@context": "https://schema.org", "@type": "TechArticle", headline: "Markdown sharing, teams, CLI, API and MCP" },
+}));
 write("styles.css", css);
 write("robots.txt", robots);
 write("sitemap.xml", sitemap);
@@ -481,20 +501,27 @@ const accountCss = asset("account.css", readFileSync(join(here, "assets/account.
 write("account/index.html", readFileSync(join(here, "assets/account.html"), "utf8")
   .replace("__ACCOUNT_SCRIPT__", accountScript).replace("__ACCOUNT_STYLES__", accountCss));
 const sharedCss = asset("styles.css", css);
+const adminCss = asset("admin.css", readFileSync(join(here, "assets/admin.css"), "utf8"));
+const adminBundle = await Bun.build({ entrypoints: [join(here, "admin.ts")], target: "browser", minify: true });
+if (!adminBundle.success) throw new AggregateError(adminBundle.logs, "Admin build failed");
+const adminScript = asset("admin.js", await adminBundle.outputs[0].text());
+write("admin/index.html", readFileSync(join(here, "assets/admin.html"), "utf8")
+  .replace("__STYLES__", sharedCss).replace("__VIEWER_STYLES__", viewerCss)
+  .replace("__ADMIN_STYLES__", adminCss).replace("__ADMIN_SCRIPT__", adminScript));
 const viewerHtml = readFileSync(join(here, "assets/viewer.html"), "utf8")
   .replace("__STYLES__", sharedCss).replace("__VIEWER_STYLES__", viewerCss)
-  .replace("__VIEWER_SCRIPT__", script)
+  .replace("__VIEWER_SCRIPT__", script).replace("__ADMIN_STYLES__", adminCss)
   .replace("__THEMES__", themeList.map((entry) => `<option value="${escape(entry.name)}">${escape(entry.name)}</option>`).join(""));
 write("viewer/index.html", viewerHtml);
 for (const size of [192, 512]) cpSync(join(here, `assets/icon-${size}.png`), join(out, `viewer-assets/icon-${size}.png`));
 write("viewer.webmanifest", JSON.stringify({
-  id: "/viewer", name: "readm3 — Markdown reader", short_name: "readm3",
+  id: "/viewer", name: "readm3 — Markdown editor", short_name: "readm3",
   description: "Your Markdown, in a quiet reading window. Read and edit offline.",
   start_url: "/viewer", scope: "/viewer", display: "standalone",
   background_color: "#05070a", theme_color: "#05070a", lang: "en",
   icons: [192, 512].map((size) => ({ src: `/viewer-assets/icon-${size}.png`, sizes: `${size}x${size}`, type: "image/png", purpose: "any" })),
 }));
-const precache = ["/viewer", script, viewerCss, sharedCss, seed, "/viewer.webmanifest", "/favicon.svg", "/viewer-assets/icon-192.png", "/viewer-assets/icon-512.png"];
+const precache = ["/viewer", script, viewerCss, sharedCss, adminCss, seed, "/viewer.webmanifest", "/favicon.svg", "/viewer-assets/icon-192.png", "/viewer-assets/icon-512.png"];
 const cacheVersion = createHash("sha256").update(viewerHtml + precache.join("|")).digest("hex").slice(0, 16);
 write("viewer-sw.js", readFileSync(join(here, "assets/viewer-sw.js"), "utf8")
   .replace("__CACHE_NAME__", `readm3-viewer-${cacheVersion}`).replace("__PRECACHE__", JSON.stringify(precache)));

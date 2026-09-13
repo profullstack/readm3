@@ -9,6 +9,8 @@ import { dirname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Accounts } from "../server/accounts.ts";
 import { accountMailer } from "../server/account-mail.ts";
+import { Store } from "../server/store.ts";
+import { createApi } from "../server/api.ts";
 
 const dist = join(dirname(fileURLToPath(import.meta.url)), "dist");
 const port = Number(process.env.PORT ?? 3000);
@@ -46,10 +48,12 @@ export function serveSite(options: { accounts?: Accounts; port?: number; hostnam
     process.env.READM3_URL || (process.env.NODE_ENV === "production" ? "https://readm3.com" : `http://127.0.0.1:${listenPort}`),
     accountMailer(),
   );
+  const store = new Store(accounts.db);
+  const api = createApi(store, accounts.origin);
   return Bun.serve({
     port: listenPort,
     hostname: options.hostname ?? "0.0.0.0",
-    maxRequestBodySize: 4096,
+    maxRequestBodySize: 1100 * 1024,
     async fetch(request, server) {
       const url = new URL(request.url);
 
@@ -67,23 +71,28 @@ export function serveSite(options: { accounts?: Accounts; port?: number; hostnam
         : server.requestIP(request)?.address || "unknown";
       const accountResponse = await accounts.handle(request, ip);
       if (accountResponse) return accountResponse;
+      const documentResponse = await api(request, ip);
+      if (documentResponse) return documentResponse;
 
       // One canonical path per page: /docs/ and /docs.html both settle on /docs.
       if (url.pathname.length > 1 && url.pathname.endsWith("/")) {
         return Response.redirect(`${url.origin}${url.pathname.slice(0, -1)}${url.search}`, 308);
       }
 
-      const file = resolve(url.pathname);
+      const sharedPage = /^\/s\/[A-Za-z0-9_-]{43}$/.test(url.pathname);
+      const file = resolve(sharedPage ? "/viewer" : url.pathname);
       if (!file) {
         return new Response("Not found", { status: 404, headers: { "content-type": "text/plain" } });
       }
 
-      const accountPage = file === join(dist, "account", "index.html");
+      const accountPage = file === join(dist, "account", "index.html") || url.pathname === "/admin";
+      const privatePage = accountPage || sharedPage || url.pathname === "/viewer";
       return new Response(Bun.file(file), {
         headers: {
-          "cache-control": accountPage ? "no-store" : cacheFor(file),
+          "cache-control": privatePage ? "no-store" : cacheFor(file),
           "x-content-type-options": "nosniff",
-          "referrer-policy": accountPage ? "no-referrer" : "strict-origin-when-cross-origin",
+          "referrer-policy": privatePage ? "no-referrer" : "strict-origin-when-cross-origin",
+          ...(sharedPage ? { "x-robots-tag": "noindex, nofollow" } : {}),
           ...(accountPage ? {
             "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
             "x-frame-options": "DENY",

@@ -18,6 +18,7 @@ self.addEventListener("message", (event) => {
 });
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
+  if (url.pathname.startsWith("/api/") || url.searchParams.has("doc")) return;
   if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
   if (event.request.mode === "navigate" && ["/viewer", "/viewer/"].includes(url.pathname)) {
     event.respondWith((async () => {
