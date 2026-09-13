@@ -399,7 +399,7 @@ test("team members update in place and organization members get read-only contro
   await dialog.getByRole("button", { name: "Close dialog" }).click();
 
   const memberContext = await browser.newContext({
-    baseURL: "http://127.0.0.1:4318",
+    baseURL: testOrigin,
   });
   try {
     await register(memberContext);
