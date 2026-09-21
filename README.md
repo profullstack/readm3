@@ -246,6 +246,24 @@ The REST API is at `/api/v1`, with all operations also available through
 `POST /api/v1/actions` and `readm3 cloud OPERATION --args JSON`.
 Full permissions, accounts, CLI, API, and MCP documentation: https://readm3.com/sharing.
 
+### Private links without an account
+
+```sh
+readm3 paste notes.md                  # prints https://readm3.com/p/<token>
+cat notes.md | readm3 paste --expires 1d --title "Standup"
+readm3 paste get URL --raw
+readm3 paste delete URL
+```
+
+A paste is a Markdown file behind a secret link. No sign-in, no account: anyone with
+the link can read it, nobody can list or search for it, and only the hash of the
+secret is stored, so the link cannot be shown again. The Share button in the web
+reader makes one when you are signed out. Pastes expire after seven days by default
+(1h, 1d, 7d or 30d), are limited to 256 KB, and can be deleted by anyone holding the
+link. The same three calls are `POST /api/v1/pastes`, `GET /api/v1/pastes/<token>` and
+`DELETE /api/v1/pastes/<token>`, and the `paste_create`, `paste_get` and
+`paste_delete` MCP tools.
+
 ## Web reader
 
 Open https://readm3.com/viewer for the same two-pane Markdown reader in your browser.

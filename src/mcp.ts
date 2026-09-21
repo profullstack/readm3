@@ -4,10 +4,13 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { cloudAction, cloudRequest, sharedLocation } from "./cloud-client.ts";
+import { cloudAction, cloudRequest, pasteLocation, sharedLocation } from "./cloud-client.ts";
 const string = { type: "string" };
 const role = { type: "string", enum: ["view", "edit"] };
 const definitions: [string, string, Record<string, unknown>, string[]][] = [
+  ["paste_create", "Create an anonymous paste: a Markdown document behind a secret link, no account needed. Expires after 7 days by default (1h, 1d, 7d or 30d), 256 KB at most. Returns the URL; keep it, the server cannot show it again.", { source: string, title: string, expiresIn: { type: "string", enum: ["1h", "1d", "7d", "30d"] } }, ["source"]],
+  ["paste_get", "Read an anonymous paste by its URL.", { url: string }, ["url"]],
+  ["paste_delete", "Delete an anonymous paste by its URL. The link stops working for everyone.", { url: string }, ["url"]],
   ["settings_get", "Read the verified account's latest settings and Markdown workspace snapshot, including its revision.", {}, []],
   ["settings_save", "Save settings.json and workspace.json. Use the revision from settings_get, or 0 for a first save. Stale saves are rejected.", {
     snapshot: { type: "object", properties: { version: { type: "integer", const: 1 }, files: { type: "object", description: "Only settings.json and workspace.json, each containing a JSON string in its content property." } }, required: ["version", "files"] },
@@ -259,7 +262,7 @@ const definitions: [string, string, Record<string, unknown>, string[]][] = [
 ];
 export async function runMcp() {
   const server = new Server(
-    { name: "readm3", version: "0.5.0" },
+    { name: "readm3", version: "0.6.0" },
     { capabilities: { tools: {} } },
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -289,6 +292,13 @@ export async function runMcp() {
       if (name.startsWith("settings_")) {
         if (name === "settings_save" && (!Number.isSafeInteger(args.ifRevision) || Number(args.ifRevision) < 0 || !args.snapshot)) throw new Error("snapshot and a nonnegative ifRevision are required.");
         result = await cloudRequest(name === "settings_revisions" ? "settings/revisions" : "settings", name === "settings_save" ? "PUT" : "GET", name === "settings_save" ? { snapshot: args.snapshot, ifRevision: args.ifRevision } : undefined);
+      } else if (name.startsWith("paste_")) {
+        if (name === "paste_create")
+          result = await cloudRequest("pastes", "POST", { source: args.source, title: args.title, expiresIn: args.expiresIn });
+        else {
+          const { token, config } = pasteLocation(String(args.url));
+          result = await cloudRequest(`pastes/${token}`, name === "paste_delete" ? "DELETE" : "GET", undefined, config);
+        }
       } else if (name.startsWith("shared_")) {
         const { token, config } = sharedLocation(String(args.url));
         result = await cloudRequest(

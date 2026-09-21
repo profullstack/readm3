@@ -32,6 +32,23 @@ For named collaborators, add their verified email or username and choose view or
 For groups, select the whole organization or one team, then choose its access.
 Files start private. Downloaded or already viewed copies cannot be recalled.
 
+## A private link without an account
+
+Signed out, **Share** offers a private link instead of a sign-in wall: pick how long it
+lives (an hour, a day, a week or a month), and readm3 answers with `readm3.com/p/<token>`.
+Anyone with the link can read the file; nobody can list or search for it, and only the
+hash of the secret is stored, so copy the link when it is shown. Whoever holds it can
+delete it. Pastes are limited to 256 KB and always expire, so they are for handing a
+document to someone, not for keeping one.
+
+    readm3 paste notes.md                       # prints the link
+    readm3 paste get https://readm3.com/p/… --raw
+    readm3 paste delete https://readm3.com/p/…
+
+The API is `POST /api/v1/pastes` with `{ "source": "…", "title": "notes.md", "expiresIn": "7d" }`,
+`GET /api/v1/pastes/<token>` and `DELETE /api/v1/pastes/<token>`; an agent gets the same
+three as the `paste_create`, `paste_get` and `paste_delete` MCP tools.
+
 ## History and conflicting saves
 
 Each online save has a random version ID, author, timestamp, parent version,

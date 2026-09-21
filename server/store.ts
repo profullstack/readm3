@@ -77,6 +77,8 @@ export class Store {
       CREATE TABLE IF NOT EXISTS permissions (documentId TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE, userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, role TEXT NOT NULL CHECK(role IN ('view','edit')), PRIMARY KEY(documentId,userId));
       CREATE TABLE IF NOT EXISTS account_emails (userId TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, email TEXT UNIQUE NOT NULL COLLATE NOCASE, emailVerifiedAt TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS pastes (id TEXT PRIMARY KEY, tokenHash TEXT UNIQUE NOT NULL, title TEXT NOT NULL, source TEXT NOT NULL, bytes INTEGER NOT NULL, createdAt TEXT NOT NULL, expiresAt TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS pastes_expiry ON pastes(expiresAt);
       CREATE INDEX IF NOT EXISTS documents_org ON documents(orgId);
       CREATE INDEX IF NOT EXISTS documents_owner ON documents(ownerId);
       CREATE INDEX IF NOT EXISTS versions_document ON versions(documentId,createdAt);

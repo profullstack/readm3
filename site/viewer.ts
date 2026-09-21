@@ -24,6 +24,9 @@ let workspace: Workspace;
 let cloudDocument: CloudDocument | null = null;
 const shareToken = location.pathname.match(/^\/s\/([A-Za-z0-9_-]{43})$/)?.[1];
 const cloudId = new URLSearchParams(location.search).get("doc");
+const pasteToken = location.pathname.match(/^\/p\/([A-Za-z0-9_-]{43})$/)?.[1];
+interface PasteView { id: string; title: string; source: string; bytes: number; createdAt: string; expiresAt: string; }
+let pasteDocument: PasteView | null = null;
 let cloudSaving = false;
 
 function cloudControls() {
@@ -45,6 +48,23 @@ function adoptCloud(doc: CloudDocument) {
   saveFailed = false;
   openDocument(doc.title);
   cloudControls();
+}
+
+/** A paste is somebody's private link: shown read-only, never written into this device's workspace. */
+function adoptPaste(paste: PasteView) {
+  pasteDocument = paste;
+  workspace = { name: "Private link", active: paste.title, documents: [{ path: paste.title, source: paste.source }] };
+  pendingSave = false;
+  saveFailed = false;
+  openDocument(paste.title);
+  element("sync-workspace").hidden = true;
+  element("share").hidden = true;
+  element("history").hidden = true;
+  element("cloud-save").hidden = true;
+  element("paste-delete").hidden = false;
+  element<HTMLButtonElement>("edit-mode").disabled = true;
+  element("file-pane").querySelectorAll<HTMLElement>(".open-actions,.extra-actions,.filter-label,.local-note").forEach(el => el.hidden = true);
+  saveStatus.textContent = `Private link · expires ${new Date(paste.expiresAt).toLocaleString()}`;
 }
 
 async function saveCloud() {
@@ -87,6 +107,7 @@ function notice(message: string) {
 function current(): Document { return workspace.documents.find((doc) => doc.path === workspace.active)!; }
 
 async function save() {
+  if (pasteDocument) return;
   if (cloudDocument) { await saveCloud(); return; }
   clearTimeout(saveTimer);
   const savingRevision = revision;
@@ -334,6 +355,11 @@ function bindEvents() {
     });
     void task.catch(error => notice(error instanceof Error ? error.message : "Could not open sharing."));
   };
+  element("paste-delete").onclick = async () => {
+    if (!pasteToken || !confirm("Delete this paste? The link stops working for everyone.")) return;
+    try { await request(`pastes/${pasteToken}`, "DELETE"); location.href = "/viewer"; }
+    catch (error) { notice(error instanceof Error ? error.message : "Could not delete this paste."); }
+  };
   element("history").onclick = () => {
     if (!cloudDocument) return;
     if (pendingSave) { notice("Save or download your draft before restoring a version."); return; }
@@ -520,6 +546,20 @@ async function setupPwa() {
 
 async function start() {
   loadPreferences();
+  if (pasteToken) {
+    try {
+      adoptPaste(await request<PasteView>(`pastes/${pasteToken}`));
+      bindEvents();
+      element("connection").textContent = "Private link · online";
+    } catch (error) {
+      element("document-name").textContent = "Paste unavailable";
+      content.textContent = error instanceof Error ? error.message : "Could not open this paste.";
+      saveStatus.textContent = "No document loaded";
+      element("file-pane").hidden = true;
+      document.querySelectorAll<HTMLButtonElement>(".document-actions button").forEach(button => button.disabled = true);
+    }
+    return;
+  }
   if (shareToken || cloudId) {
     try {
       const doc = shareToken ? await request<CloudDocument>(`shared/${shareToken}`) : await request<CloudDocument>(`documents/${encodeURIComponent(cloudId!)}`);

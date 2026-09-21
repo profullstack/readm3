@@ -9,6 +9,7 @@ now in a browser. Pick a file on the left. Make yourself at home.
 - **Open files** to read a few documents, or drag them into this window.
 - **Open URL** for a raw Markdown URL or a GitHub file link. A link does the same: `/viewer?url=https://host/doc.md`.
 - **New note** to start with a blank page.
+- **Share** while signed out to get a private link for a file. No account needed.
 
 Only Markdown files appear in the explorer. Build output, dependencies,
 and hidden directories stay out of the way. README files sort first.

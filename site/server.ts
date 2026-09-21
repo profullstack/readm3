@@ -83,7 +83,7 @@ export function serveSite(options: { accounts?: Accounts; port?: number; hostnam
         return Response.redirect(`${url.origin}${url.pathname.slice(0, -1)}${url.search}`, 308);
       }
 
-      const sharedPage = /^\/s\/[A-Za-z0-9_-]{43}$/.test(url.pathname);
+      const sharedPage = /^\/(s|p)\/[A-Za-z0-9_-]{43}$/.test(url.pathname);
       const file = resolve(sharedPage ? "/viewer" : url.pathname);
       if (!file) {
         return new Response("Not found", { status: 404, headers: { "content-type": "text/plain" } });
