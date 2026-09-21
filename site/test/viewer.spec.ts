@@ -115,6 +115,20 @@ test("opens GitHub file links through the raw host and reports blocked URLs", as
   await expect(page.locator("#document-name")).toHaveText("guide.md");
 });
 
+test("opens a document named in the url query parameter, and shows the dialog when it fails", async ({ page }) => {
+  await page.route("https://fleetsysops.com/manifesto.md", (route) => route.fulfill({ contentType: "text/markdown", headers: { "access-control-allow-origin": "*" }, body: "# Fleet SysOps Manifesto\n\nWe test in prod." }));
+  await page.goto("/viewer?url=https://fleetsysops.com/manifesto.md");
+  await expect(page.locator("#document-name")).toHaveText("manifesto.md");
+  await expect(page.locator("#document-content")).toContainText("We test in prod.");
+  await expect(page.locator("#url-dialog")).not.toBeVisible();
+  await page.route("https://example.com/missing.md", (route) => route.fulfill({ status: 404, contentType: "text/plain", headers: { "access-control-allow-origin": "*" }, body: "nope" }));
+  await page.goto("/viewer?url=https://example.com/missing.md");
+  await expect(page.locator("#url-dialog")).toBeVisible();
+  await expect(page.locator("#url-input")).toHaveValue("https://example.com/missing.md");
+  await expect(page.locator("#url-error")).toContainText("HTTP 404");
+  await expect(page.locator("#document-name")).not.toHaveText("missing.md");
+});
+
 test("installs a complete offline shell and restores edited documents after an offline reload", async ({ page, context, request }) => {
   const manifestResponse = await request.get("/viewer.webmanifest");
   expect(manifestResponse.headers()["content-type"]).toContain("manifest+json");

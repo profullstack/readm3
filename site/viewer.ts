@@ -419,6 +419,29 @@ function onKey(event: KeyboardEvent) {
   }
 }
 
+/** The message shown in the URL dialog when a fetch fails, worded for the likely cause. */
+function urlErrorMessage(cause: unknown): string {
+  if (cause instanceof TypeError) return "Could not fetch this URL. The host may block browser access (CORS), or you may be offline. Download the file and use Open files.";
+  return cause instanceof Error ? cause.message : "Unable to open that URL.";
+}
+
+/**
+ * Opens a Markdown document from a public URL: `/viewer?url=https://host/doc.md`.
+ * The link is what a Markdown-only site puts on every page so a reader can render it
+ * here without leaving Markdown behind on their side. On failure the URL dialog opens
+ * with the address filled in and the error shown, so the reader can see what happened.
+ */
+async function openUrlParam(input: string) {
+  element<HTMLInputElement>("url-input").value = input;
+  saveStatus.textContent = "Opening URL…";
+  try {
+    await fetchDocument(input);
+  } catch (cause) {
+    element("url-error").textContent = urlErrorMessage(cause);
+    urlDialog.showModal();
+  }
+}
+
 async function importUrl() {
   const button = element<HTMLButtonElement>("load-url");
   const error = element("url-error");
@@ -426,34 +449,39 @@ async function importUrl() {
   button.disabled = true;
   button.textContent = "Opening…";
   try {
-    const url = rawUrl(element<HTMLInputElement>("url-input").value.trim());
-    const response = await fetch(url, { credentials: "omit", referrerPolicy: "no-referrer", signal: AbortSignal.timeout(20000) });
-    if (!response.ok) throw new Error(`The host returned HTTP ${response.status}. Check the URL and try again.`);
-    if (response.headers.get("content-type")?.includes("text/html")) throw new Error("That URL returns a web page. Use the raw Markdown file URL instead.");
-    if (Number(response.headers.get("content-length")) > MAX_FILE_BYTES) throw new Error("This file exceeds the 4 MB limit.");
-    const stream = response.body?.getReader();
-    if (!stream) throw new Error("The host returned an empty response.");
-    const chunks: Uint8Array[] = [];
-    let length = 0;
-    try {
-      while (true) {
-        const { done, value } = await stream.read();
-        if (done) break;
-        length += value.byteLength;
-        if (length > MAX_FILE_BYTES) { await stream.cancel(); throw new Error("This file exceeds the 4 MB limit."); }
-        chunks.push(value);
-      }
-    } finally { stream.releaseLock(); }
-    const bytes = new Uint8Array(length);
-    let offset = 0;
-    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-    let name = decodeURIComponent(url.pathname.split("/").at(-1) || "Document.md").replace(/[/\\]/g, "-");
-    if (!accepts(name)) name = "Document.md";
-    addDocuments([{ path: name, source: new TextDecoder().decode(bytes) }]);
+    await fetchDocument(element<HTMLInputElement>("url-input").value.trim());
     urlDialog.close();
   } catch (cause) {
-    error.textContent = cause instanceof TypeError ? "Could not fetch this URL. The host may block browser access (CORS), or you may be offline. Download the file and use Open files." : cause instanceof Error ? cause.message : "Unable to open that URL.";
+    error.textContent = urlErrorMessage(cause);
   } finally { button.disabled = false; button.textContent = "Open document"; }
+}
+
+/** Fetches a raw Markdown URL and adds it to the workspace; throws a readable Error on any failure. */
+async function fetchDocument(input: string) {
+  const url = rawUrl(input);
+  const response = await fetch(url, { credentials: "omit", referrerPolicy: "no-referrer", signal: AbortSignal.timeout(20000) });
+  if (!response.ok) throw new Error(`The host returned HTTP ${response.status}. Check the URL and try again.`);
+  if (response.headers.get("content-type")?.includes("text/html")) throw new Error("That URL returns a web page. Use the raw Markdown file URL instead.");
+  if (Number(response.headers.get("content-length")) > MAX_FILE_BYTES) throw new Error("This file exceeds the 4 MB limit.");
+  const stream = response.body?.getReader();
+  if (!stream) throw new Error("The host returned an empty response.");
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    while (true) {
+      const { done, value } = await stream.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > MAX_FILE_BYTES) { await stream.cancel(); throw new Error("This file exceeds the 4 MB limit."); }
+      chunks.push(value);
+    }
+  } finally { stream.releaseLock(); }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+  let name = decodeURIComponent(url.pathname.split("/").at(-1) || "Document.md").replace(/[/\\]/g, "-");
+  if (!accepts(name)) name = "Document.md";
+  addDocuments([{ path: name, source: new TextDecoder().decode(bytes) }]);
 }
 
 interface InstallPrompt extends Event { prompt(): Promise<void>; userChoice: Promise<{ outcome: string }>; }
@@ -519,7 +547,10 @@ async function start() {
   openDocument(workspace.active, false);
   bindEvents();
   await save();
-  if (new URLSearchParams(location.search).has("new")) { element("new-file").click(); history.replaceState(null, "", "/viewer"); }
+  const params = new URLSearchParams(location.search);
+  if (params.has("new")) { element("new-file").click(); history.replaceState(null, "", "/viewer"); }
+  const remote = params.get("url")?.trim();
+  if (remote) await openUrlParam(remote);
   void setupPwa();
 }
 
