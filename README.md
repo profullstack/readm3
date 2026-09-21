@@ -259,6 +259,12 @@ Press `/` to filter, `e` to edit, `Escape` to return to reading, and `?` for sho
 on this device; originals on disk are never overwritten. Reopening a file adds a copy
 so an existing draft is preserved. Clearing browser site data removes the workspace.
 
+A link can open a document too: `https://readm3.com/viewer?url=https://host/doc.md`
+fetches that raw Markdown URL into the workspace, so a site that publishes plain
+Markdown can put a "render this" link on every page. The host must allow
+cross-origin reads (`Access-Control-Allow-Origin: *`); when the fetch fails, the
+Open URL dialog opens with the address and the reason filled in.
+
 Install through your browser’s app menu, or Share → Add to Home Screen on iOS.
 After the first visit, the application and saved workspace work offline. Remote URLs
 need a connection and a host that permits browser access (CORS); files are fetched

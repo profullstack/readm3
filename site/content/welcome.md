@@ -7,7 +7,7 @@ now in a browser. Pick a file on the left. Make yourself at home.
 
 - **Open folder** to browse a directory of Markdown.
 - **Open files** to read a few documents, or drag them into this window.
-- **Open URL** for a raw Markdown URL or a GitHub file link.
+- **Open URL** for a raw Markdown URL or a GitHub file link. A link does the same: `/viewer?url=https://host/doc.md`.
 - **New note** to start with a blank page.
 
 Only Markdown files appear in the explorer. Build output, dependencies,
