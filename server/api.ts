@@ -1,5 +1,6 @@
 import { Store, HttpError, checksum, now, text } from "./store.ts";
 import { operate } from "./operations.ts";
+import { createPaste, deletePaste, readPaste } from "./pastes.ts";
 
 const MAX_BODY = 1100 * 1024;
 const headers = {
@@ -149,6 +150,39 @@ export function createApi(store: Store, configuredOrigin?: string) {
         throw new HttpError(
           405,
           "Shared links support reading and permitted edits only.",
+        );
+      }
+      // Anonymous pastes: no account, the link is the capability. Created, read and
+      // deleted by whoever holds the token; never listed.
+      const paste = path.match(/^pastes(?:\/([A-Za-z0-9_-]{43}))?$/);
+      if (paste) {
+        if (!paste[1] && request.method === "POST") {
+          limit(`paste-create:${ip}`, 10);
+          const created = createPaste(store, await body(request));
+          return json(
+            {
+              id: created.id,
+              url: `${origin}/p/${created.token}`,
+              title: created.title,
+              createdAt: created.createdAt,
+              expiresAt: created.expiresAt,
+              bytes: created.bytes,
+            },
+            201,
+          );
+        }
+        if (paste[1] && request.method === "GET") {
+          limit(`paste-read:${ip}`, 120);
+          return json(readPaste(store, paste[1]));
+        }
+        if (paste[1] && request.method === "DELETE") {
+          limit(`paste-write:${ip}`, 30);
+          deletePaste(store, paste[1]);
+          return json({ deleted: true });
+        }
+        throw new HttpError(
+          405,
+          "A paste is created with POST, and read or deleted by its link.",
         );
       }
       if (!user)

@@ -129,6 +129,30 @@ test("opens a document named in the url query parameter, and shows the dialog wh
   await expect(page.locator("#document-name")).not.toHaveText("missing.md");
 });
 
+test("shares a private paste link without an account, opens it read-only, and deletes it", async ({ page, context }) => {
+  await page.locator("#files-input").setInputFiles({ name: "secret-notes.md", mimeType: "text/markdown", buffer: Buffer.from("# Secret notes\n\nRoot everywhere.\n") });
+  await expect(page.locator("#document-name")).toHaveText("secret-notes.md");
+  await page.locator("#share").click();
+  const dialog = page.locator("dialog.cloud-dialog");
+  await expect(dialog).toBeVisible();
+  await dialog.locator("select[name=expiresIn]").selectOption("1d");
+  await dialog.locator("button.primary-action").click();
+  const link = await dialog.locator(".copy-value input").inputValue();
+  expect(link).toMatch(/\/p\/[A-Za-z0-9_-]{43}$/);
+  const reader = await context.newPage();
+  await reader.goto(link);
+  await expect(reader.locator("#document-name")).toHaveText("secret-notes.md");
+  await expect(reader.locator("#document-content")).toContainText("Root everywhere.");
+  await expect(reader.locator("#save-status")).toContainText("Private link");
+  await expect(reader.locator("#edit-mode")).toBeDisabled();
+  await expect(reader.locator("#share")).toBeHidden();
+  reader.once("dialog", (d) => void d.accept());
+  await reader.locator("#paste-delete").click();
+  await expect(reader).toHaveURL(/\/viewer$/);
+  await reader.goto(link);
+  await expect(reader.locator("#document-name")).toHaveText("Paste unavailable");
+});
+
 test("installs a complete offline shell and restores edited documents after an offline reload", async ({ page, context, request }) => {
   const manifestResponse = await request.get("/viewer.webmanifest");
   expect(manifestResponse.headers()["content-type"]).toContain("manifest+json");

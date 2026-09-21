@@ -1,3 +1,4 @@
+import { pasteLocation } from "./cloud-client.ts";
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import {
@@ -23,6 +24,9 @@ export const CLOUD_USAGE = `Shared Markdown
   readm3 docs revoke ID --share SHARE_ID
   readm3 docs transfer ID --username USERNAME
   readm3 shared get URL [--raw]
+  readm3 paste [FILE] [--title NAME] [--expires 1h|1d|7d|30d]
+                                          Private link, no account; prints the URL
+  readm3 paste get URL [--raw] | delete URL
   readm3 shared update URL FILE --base VERSION
   readm3 orgs list | create --name NAME | update ID --name NAME | delete ID
   readm3 teams list --org ID | create --org ID --name NAME
@@ -41,6 +45,7 @@ const commands = new Set([
   "share",
   "docs",
   "shared",
+  "paste",
   "orgs",
   "teams",
   "members",
@@ -95,6 +100,33 @@ export async function cloudMain(argv: string[]) {
     const user = await cloudAction("account_me", {}, config);
     saveCloudConfig(config);
     output({ signedIn: true, user });
+    return;
+  }
+  if (command === "paste") {
+    if (positional[0] === "get" || positional[0] === "delete") {
+      if (!positional[1]) throw new Error("A paste URL is required.");
+      const { token, config } = pasteLocation(positional[1]);
+      if (positional[0] === "delete") {
+        await cloudRequest(`pastes/${token}`, "DELETE", undefined, config);
+        output({ deleted: true });
+        return;
+      }
+      const paste = await cloudRequest<{ source: string }>(`pastes/${token}`, "GET", undefined, config);
+      if (flags.raw) process.stdout.write(paste.source);
+      else output(paste);
+      return;
+    }
+    if (!positional[0] && process.stdin.isTTY)
+      throw new Error("Give a Markdown file, or pipe one in.");
+    const source = fileSource(positional[0] ?? "-");
+    const paste = await cloudRequest<{ url: string }>(
+      "pastes",
+      "POST",
+      { source, title: flags.title, expiresIn: flags.expires },
+      cloudConfig(),
+    );
+    if (flags.json) output(paste);
+    else process.stdout.write(paste.url + "\n");
     return;
   }
   if (command === "logout") {

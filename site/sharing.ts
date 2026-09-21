@@ -16,8 +16,30 @@ export async function publish(
   const session = await request<{ user: CloudUser | null }>("me");
   if (!session.user) {
     const box = modal("Share your Markdown");
-    box.body.innerHTML =
-      '<p>Sign in to save a document online, invite editors, and keep its history. Your local draft stays on this device.</p><a href="/admin?next=%2Fviewer">Sign in or create an account →</a>';
+    box.body.innerHTML = `<form class="cloud-form" id="paste-form"><p>Get a private link with no account. Anyone with the link can read this file; nobody can list or search for it, and it is gone when the link expires.</p><label>File name<input name="title" value="${escape(title)}" required maxlength="200"></label><label>Link expires in<select name="expiresIn"><option value="1h">1 hour</option><option value="1d">1 day</option><option value="7d" selected>7 days</option><option value="30d">30 days</option></select></label><p class="error"></p><button class="primary-action">Create private link</button></form><div id="paste-link"></div><p>Or <a href="/admin?next=%2Fviewer">sign in or create an account</a> to save it online, invite editors, and keep its history. Your local draft stays on this device either way.</p>`;
+    const form = box.body.querySelector("form")!;
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const button = form.querySelector("button")!;
+      button.disabled = true;
+      try {
+        const data = new FormData(form);
+        const paste = await request<{ url: string; expiresAt: string }>("pastes", "POST", {
+          title: data.get("title"),
+          expiresIn: data.get("expiresIn"),
+          source,
+        });
+        form.hidden = true;
+        const target = box.body.querySelector<HTMLElement>("#paste-link")!;
+        const note = document.createElement("p");
+        note.textContent = `Copy this link now. Its secret is not stored on the server, so it cannot be shown again. It expires ${new Date(paste.expiresAt).toLocaleString()}.`;
+        target.append(note);
+        outputLink(target, paste.url);
+      } catch (error) {
+        showError(form.querySelector<HTMLElement>(".error")!, error);
+        button.disabled = false;
+      }
+    };
     return;
   }
   const orgs =

@@ -18,7 +18,7 @@ export async function syncContext(rootDir = configDir()): Promise<SyncContext> {
   const account = await credentials(rootDir);
   const identity = createHash("sha256").update(`${account.api}\0${account.user.id}`).digest("hex");
   const client = createClient({ baseUrl: account.api, path: "/settings", token: account.token, fetchImpl: ((input, init) => fetch(input, { ...init, redirect: "error" })) as typeof fetch });
-  return { rootDir, policy: SYNC_POLICY, api: `${account.api}#${account.user.id}`, markerName: `sync-${identity}.json`, host: hostname(), app: "readm3 0.5.0", client: {
+  return { rootDir, policy: SYNC_POLICY, api: `${account.api}#${account.user.id}`, markerName: `sync-${identity}.json`, host: hostname(), app: "readm3 0.6.0", client: {
     ...client,
     async get() {
       const latest = await client.get();

@@ -1,6 +1,6 @@
 {
   "name": "@profullstack/readm3",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Markdown editing and sharing for people and teams. Web/PWA, CLI, API and MCP with version history, view/edit links, and a terminal reader.",
   "type": "module",
   "license": "MIT",

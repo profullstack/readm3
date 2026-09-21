@@ -66,6 +66,16 @@ export async function cloudAction<T = unknown>(
     );
   return cloudRequest<T>("actions", "POST", { operation, args }, config);
 }
+export function pasteLocation(value: string): {
+  token: string;
+  config: CloudConfig;
+} {
+  const url = new URL(value);
+  const match = url.pathname.match(/^\/p\/([\w-]{43})$/);
+  if (!match || !["https:", "http:"].includes(url.protocol))
+    throw new Error("Use a readm3 paste URL (…/p/<token>).");
+  return { token: match[1]!, config: { url: url.origin } };
+}
 export function sharedLocation(value: string): {
   token: string;
   config: CloudConfig;
