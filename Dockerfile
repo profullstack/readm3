@@ -21,7 +21,9 @@ ENV READM3_URL=https://readm3.com
 COPY --from=builder --chown=bun:bun /app/site/dist ./site/dist
 COPY --from=builder --chown=bun:bun /app/site/server.ts ./site/server.ts
 COPY --from=builder --chown=bun:bun /app/server ./server
-COPY --from=builder --chown=bun:bun /app/src/sync-schema.ts /app/src/flavors.ts /app/src/emoji.ts ./src/
+# Only the src modules the server imports at runtime: sync-api needs sync-schema, and
+# pastes needs code.ts (language detection; its one dependency, highlight.js, is in node_modules).
+COPY --from=builder --chown=bun:bun /app/src/sync-schema.ts /app/src/flavors.ts /app/src/emoji.ts /app/src/code.ts ./src/
 COPY --from=deps --chown=bun:bun /app/node_modules ./node_modules
 RUN mkdir -p /data && chown bun:bun /data
 
