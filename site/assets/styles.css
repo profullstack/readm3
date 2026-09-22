@@ -86,6 +86,41 @@ main { max-width: var(--measure); margin: 0 auto; padding: 0 1.5rem 4rem; }
 .hero { padding: 3.5rem 0 3rem; max-width: 46rem; }
 .hero-tight { padding-bottom: 1.5rem; }
 
+/* readm3.com/paste: the box, the file drop, the result, and "open a paste". */
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.paste-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(16rem, 1fr); gap: 1.5rem; align-items: start; }
+.paste-form { display: grid; gap: 1rem; }
+.paste-form[hidden], .paste-result[hidden] { display: none; }
+.paste-drop { display: block; border: 1px dashed var(--page-line); border-radius: 8px; background: var(--page-panel); transition: border-color .15s; }
+.paste-drop.over { border-color: var(--page-accent); }
+.paste-drop textarea { display: block; width: 100%; min-height: 18rem; padding: 1rem 1.1rem; border: 0; border-radius: 8px; background: transparent; color: var(--page-fg); font: 0.9rem/1.7 var(--mono); resize: vertical; tab-size: 2; }
+.paste-drop textarea:focus { outline: 2px solid var(--page-accent); outline-offset: -2px; }
+.paste-drop textarea:disabled { color: var(--page-dim); }
+.paste-row { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; }
+.paste-row label { display: grid; gap: 0.35rem; font-size: 0.85rem; color: var(--page-dim); }
+.paste-row label.grow { flex: 1; min-width: 12rem; }
+.paste-row input, .paste-row select { padding: 0.55rem 0.7rem; border: 1px solid var(--page-line); border-radius: 6px; background: var(--page-panel); color: var(--page-fg); font: inherit; }
+.paste-file { cursor: pointer; }
+.paste-meta { margin: 0; font: 0.8rem var(--mono); color: var(--page-dim); }
+.paste-form .error, .paste-open .error { margin: 0; color: #e5484d; font-size: 0.9rem; }
+.paste-form .error:empty, .paste-open .error:empty { display: none; }
+.ghost.primary { color: var(--page-bg); background: var(--page-accent); border-color: var(--page-accent); font-weight: 600; }
+.paste-result { background: var(--page-panel); border: 1px solid var(--page-line); border-radius: 8px; padding: 1.4rem 1.5rem; display: grid; gap: 0.9rem; }
+.paste-result h2 { margin: 0; font-size: 1.15rem; }
+.paste-result p { margin: 0; color: var(--page-dim); }
+.paste-result .copy-value { display: flex; gap: 0.5rem; }
+.paste-result .copy-value input { flex: 1; min-width: 0; padding: 0.6rem 0.7rem; border: 1px solid var(--page-line); border-radius: 6px; background: var(--page-bg); color: var(--page-fg); font: 0.8rem var(--mono); }
+.paste-result .copy-value button { padding: 0.55rem 0.9rem; border: 1px solid var(--page-line); border-radius: 6px; background: transparent; color: var(--page-fg); font: inherit; cursor: pointer; }
+.paste-curl { margin: 0; padding: 0.8rem 1rem; border-radius: 6px; background: var(--page-bg); color: var(--page-fg); font: 0.8rem/1.6 var(--mono); overflow-x: auto; }
+.paste-open { background: var(--page-panel); border: 1px solid var(--page-line); border-radius: 8px; padding: 1.3rem 1.4rem; display: grid; gap: 0.8rem; }
+.paste-open h2 { margin: 0; font-size: 1.05rem; }
+.paste-open form { display: flex; gap: 0.5rem; }
+.paste-open input { flex: 1; min-width: 0; padding: 0.55rem 0.7rem; border: 1px solid var(--page-line); border-radius: 6px; background: var(--page-bg); color: var(--page-fg); font: 0.85rem var(--mono); }
+.paste-open p { margin: 0; color: var(--page-dim); font-size: 0.9rem; }
+.paste-open code, .paste-result code { color: var(--page-fg); }
+.example-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); gap: 1.25rem; }
+@media (max-width: 760px) { .paste-grid { grid-template-columns: 1fr; } .paste-drop textarea { min-height: 12rem; } }
+
 .eyebrow {
   font-family: var(--mono);
   font-size: 0.8rem;

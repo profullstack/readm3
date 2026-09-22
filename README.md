@@ -260,8 +260,10 @@ curl https://readm3.com/p/<token>/raw  # the text itself
 
 A paste is a file behind a secret link. No sign-in, no account: anyone with the link
 can read it, nobody can list or search for it, and only the hash of the secret is
-stored, so the link cannot be shown again. The Share button in the web reader makes
-one when you are signed out. Pastes expire after seven days by default (1h, 1d, 7d or
+stored, so the link cannot be shown again. The front door is https://readm3.com/paste:
+paste text or drop a file, pick an expiry, get the link, and open any paste by its
+link; the page also carries the CLI, curl, API and MCP examples. In the web reader the
+**Paste link** button does the same for the open file, signed in or not. Pastes expire after seven days by default (1h, 1d, 7d or
 30d), are limited to 256 KB, and can be deleted by anyone holding the link.
 
 A paste can be any text, not only Markdown. Markdown renders as a document. Anything

@@ -34,8 +34,10 @@ Files start private. Downloaded or already viewed copies cannot be recalled.
 
 ## A private link without an account
 
-Signed out, **Share** offers a private link instead of a sign-in wall: pick how long it
+The front door is [readm3.com/paste](/paste): paste text or drop a file, pick how long it
 lives (an hour, a day, a week or a month), and readm3 answers with `readm3.com/p/<token>`.
+The same page opens any paste by its link and shows the CLI, curl, API and MCP forms of
+the same thing. In the editor, **Paste link** does it for the open file, signed in or not.
 Anyone with the link can read the file; nobody can list or search for it, and only the
 hash of the secret is stored, so copy the link when it is shown. Whoever holds it can
 delete it. Pastes are limited to 256 KB and always expire, so they are for handing a

@@ -179,6 +179,7 @@ function shell(options: { title: string; description: string; path: string; main
   <a class="brand" href="/">readm3</a>
   <nav>
     <a href="/viewer">Editor</a>
+    <a href="/paste">Paste</a>
     <a href="/admin">Workspaces</a>
     <a href="/account">Account</a>
     <a href="/docs">Docs</a>
@@ -228,15 +229,17 @@ function home(): string {
   into one quiet workspace.</p>
   <div class="cta">
     <a class="ghost web-cta" href="/viewer?new=1">Start writing ↗</a>
+    <a class="ghost" href="/paste">Paste a file</a>
     <a class="ghost" href="/admin">Create your workspace</a>
   </div>
-  <p class="sub">Start locally without an account. Sign in when you’re ready to share.</p>
+  <p class="sub">Start locally without an account. Paste anything behind a private link. Sign in when you’re ready to share.</p>
 </section>
 <section class="section collaboration-section">
   <div class="section-head"><h2>From your first line to the version everyone agrees on.</h2>
   <p>For the files people actually work on: READMEs, project plans, meeting notes, and proposals.</p></div>
   <div class="grid">
     <div class="card"><h3>Write, preview, repeat.</h3><p>Open a file or start from scratch. Edit the Markdown, switch to a clean preview, and download the source whenever you need it.</p></div>
+    <div class="card"><h3>Paste anything, no account.</h3><p>Text, code, JSON, a PDF or an image behind a secret link that expires. Markdown renders, code is highlighted and folds, and only a hash of the secret is kept. <a href="/paste">readm3.com/paste</a>, or <code>readm3 paste FILE</code>.</p></div>
     <div class="card"><h3>“Can view” or “can edit.”</h3><p>Share a link with a reviewer or invite someone to make changes. You own your files and decide who gets access.</p></div>
     <div class="card"><h3>Keep the story of the document.</h3><p>Every online save creates a version. See who changed it, share a specific version, or restore an earlier draft without losing the history.</p></div>
     <div class="card"><h3>A workspace for your team.</h3><p>Organize people into organizations and teams. Share with a whole group, a few collaborators, or anyone with your link.</p></div>
@@ -383,6 +386,7 @@ const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>${SITE}/</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>1.0</priority></url>
   <url><loc>${SITE}/viewer</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
+  <url><loc>${SITE}/paste</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
   <url><loc>${SITE}/sharing</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>${SITE}/docs</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
 </urlset>
@@ -425,6 +429,7 @@ terminal.
 ## Links
 
 - Web reader: ${SITE}/viewer (installable, offline Markdown reader and editor)
+- Paste: ${SITE}/paste (anonymous pastes of any text, PDF or image behind an expiring secret link; CLI, curl, API and MCP examples)
 - Site: ${SITE}
 - Source: ${REPO}
 - Package: ${NPM}
@@ -513,6 +518,110 @@ const viewerHtml = readFileSync(join(here, "assets/viewer.html"), "utf8")
   .replace("__VIEWER_SCRIPT__", script).replace("__ADMIN_STYLES__", adminCss)
   .replace("__THEMES__", themeList.map((entry) => `<option value="${escape(entry.name)}">${escape(entry.name)}</option>`).join(""));
 write("viewer/index.html", viewerHtml);
+
+// readm3.com/paste: the front door to anonymous pastes. A site page (nav, footer,
+// styles) with a small bundle for the form; everything it does is the public API.
+const pasteBundle = await Bun.build({ entrypoints: [join(here, "paste.ts")], target: "browser", minify: true });
+if (!pasteBundle.success) throw new AggregateError(pasteBundle.logs, "Paste page build failed");
+const pasteScript = asset("paste.js", await pasteBundle.outputs[0].text());
+function pastePage(): string {
+  const cli = codeBlock("CLI", [
+    "npm i -g @profullstack/readm3",
+    "readm3 paste notes.md                    # prints https://readm3.com/p/<token>",
+    "readm3 paste config.json                 # any file: the extension decides",
+    "kubectl get pods -o yaml | readm3 paste  # no name: the content is sniffed",
+    "readm3 paste spec.pdf                    # a PDF or image, shown as itself",
+    "readm3 paste app.log --expires 1h --title crash.log",
+    "readm3 paste get https://readm3.com/p/<token> --raw",
+    "readm3 paste delete https://readm3.com/p/<token>",
+  ]);
+  const curl = codeBlock("curl", [
+    "# create: any text, the language is detected; title and expiresIn are optional",
+    "curl -s https://readm3.com/api/v1/pastes \\",
+    "  -H 'content-type: application/json' \\",
+    "  -d '{\"source\":\"{\\\"live\\\":true}\",\"title\":\"status.json\",\"expiresIn\":\"1d\"}'",
+    "# → {\"url\":\"https://readm3.com/p/<token>\",\"raw\":\".../p/<token>/raw\",\"language\":\"json\",…}",
+    "",
+    "# the text itself, always text/plain; add ?download=1 for the file with its own type",
+    "curl https://readm3.com/p/<token>/raw",
+    "",
+    "# the paste as JSON: title, source, language, mime, expiresAt",
+    "curl https://readm3.com/api/v1/pastes/<token>",
+    "",
+    "# gone for everyone",
+    "curl -X DELETE https://readm3.com/api/v1/pastes/<token>",
+    "",
+    "# a file straight from disk, with jq doing the quoting",
+    "jq -Rs '{source: ., title: \"notes.md\"}' notes.md | curl -s https://readm3.com/api/v1/pastes -H 'content-type: application/json' -d @-",
+  ]);
+  const api = codeBlock("API", [
+    "POST   /api/v1/pastes                 { source, title?, expiresIn?: 1h|1d|7d|30d, language? }",
+    "GET    /api/v1/pastes/<token>         the paste as JSON",
+    "GET    /api/v1/pastes/<token>/raw     the text, or the file's bytes for a PDF or image",
+    "DELETE /api/v1/pastes/<token>         delete by link",
+    "",
+    "256 KB per paste. 10 creates a minute per address. Only the hash of the token is",
+    "stored, so a lost link is gone. A PDF or image is sent as base64 with its name.",
+  ]);
+  const mcp = codeBlock("MCP", [
+    "readm3 mcp                     # stdio server; add it to your agent",
+    "paste_create { source, title?, expiresIn?, language? }   → url, raw",
+    "paste_get    { url }                                     → title, source, language, mime",
+    "paste_delete { url }",
+  ]);
+  const main = `<section class="hero hero-tight">
+  <p class="eyebrow">Paste</p>
+  <h1>Paste anything.<br>Get a private link.</h1>
+  <p class="lede">Text of any kind, a PDF or an image, behind a secret link. No account.
+  Markdown renders as a document, code is highlighted and folds, and the link expires when
+  you say. Only a hash of the secret is kept, so nobody can list or find it.</p>
+</section>
+<section class="section">
+  <div class="paste-grid">
+    <form id="paste-form" class="paste-form" novalidate>
+      <label class="paste-drop" id="paste-drop"><span class="visually-hidden">Paste text or drop a file</span><textarea id="paste-source" placeholder="Paste text here, or drop a file on this box…" spellcheck="false" autofocus></textarea></label>
+      <div class="paste-row">
+        <label class="grow">File name (optional)<input id="paste-title" placeholder="notes.md, config.json, deploy.sh…" maxlength="200" autocomplete="off"></label>
+        <label>Expires<select id="paste-expires"><option value="1h">1 hour</option><option value="1d">1 day</option><option value="7d" selected>7 days</option><option value="30d">30 days</option></select></label>
+        <label class="paste-file"><input type="file" id="paste-file" hidden><span class="ghost">Choose a file</span></label>
+      </div>
+      <p class="paste-meta" id="paste-meta">The language is detected from the name or the content. Up to 256 KB.</p>
+      <p class="error" id="paste-error" role="alert"></p>
+      <div class="cta"><button class="ghost primary" id="paste-submit" type="submit">Create private link</button><span class="paste-meta">Ctrl / ⌘ Enter</span></div>
+    </form>
+    <div id="paste-result" class="paste-result" hidden></div>
+    <aside class="paste-open" aria-label="Open a paste">
+      <h2>Open a paste</h2>
+      <form id="open-form"><input id="open-input" placeholder="https://readm3.com/p/…" aria-label="Paste link or token" autocomplete="off"><button class="ghost" type="submit">Open</button></form>
+      <p class="error" id="open-error" role="alert"></p>
+      <p>A paste page shows the file with Copy, Raw and Download, and Delete for whoever holds the link. Anonymous is the point; an account is optional. <a href="/admin">Sign in</a> and use Share in the <a href="/viewer">editor</a> when a file should keep editors and history instead.</p>
+    </aside>
+  </div>
+</section>
+<section class="section">
+  <div class="section-head"><h2>From the terminal, a script, or an agent</h2>
+  <p>The page above is a form over one endpoint. Everything it does, these do too.</p></div>
+  <div class="example-grid">${cli}${curl}${api}${mcp}</div>
+</section>
+<script type="module" src="${pasteScript}"></script>`;
+  return shell({
+    title: "Paste anything, get a private link — readm3",
+    description: "Paste text, code, JSON, a PDF or an image behind a secret link with no account. Markdown renders, code is highlighted and folds, and the link expires. CLI, curl, API and MCP examples.",
+    path: "/paste",
+    main,
+    jsonLd: {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      name: "readm3 paste",
+      url: `${SITE}/paste`,
+      applicationCategory: "DeveloperApplication",
+      operatingSystem: "Any",
+      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+      description: "Anonymous pastes of any text, PDF or image behind an expiring secret link.",
+    },
+  });
+}
+write("paste/index.html", pastePage());
 for (const size of [192, 512]) cpSync(join(here, `assets/icon-${size}.png`), join(out, `viewer-assets/icon-${size}.png`));
 write("viewer.webmanifest", JSON.stringify({
   id: "/viewer", name: "readm3 — Markdown editor", short_name: "readm3",
