@@ -120,6 +120,45 @@ const byExtension = new Map<string, Language>();
 for (const language of LANGUAGES) for (const extension of language.extensions) byExtension.set(extension, language);
 const AUTO_DETECT = LANGUAGES.filter((language) => language.auto !== false).map((language) => language.id);
 
+/**
+ * Files the browser shows on its own without any text rendering: a PDF through the
+ * built-in viewer, an image through <img>. Their bytes travel as base64 in `source`.
+ */
+export interface BinaryType { kind: "pdf" | "image"; mime: string; label: string }
+const BINARY_TYPES: Record<string, BinaryType> = {
+  pdf: { kind: "pdf", mime: "application/pdf", label: "PDF" },
+  png: { kind: "image", mime: "image/png", label: "PNG image" },
+  jpg: { kind: "image", mime: "image/jpeg", label: "JPEG image" },
+  jpeg: { kind: "image", mime: "image/jpeg", label: "JPEG image" },
+  gif: { kind: "image", mime: "image/gif", label: "GIF image" },
+  webp: { kind: "image", mime: "image/webp", label: "WebP image" },
+  avif: { kind: "image", mime: "image/avif", label: "AVIF image" },
+  bmp: { kind: "image", mime: "image/bmp", label: "Bitmap image" },
+  ico: { kind: "image", mime: "image/x-icon", label: "Icon" },
+  svg: { kind: "image", mime: "image/svg+xml", label: "SVG image" },
+};
+
+/** The binary type a file name maps to, or undefined for text (which includes unknown names). */
+export function binaryType(name: string | null | undefined): BinaryType | undefined {
+  return name ? BINARY_TYPES[extensionOf(name)] : undefined;
+}
+
+/**
+ * Whether text read from a file is really binary: a NUL byte, or a run of control
+ * characters, in the first 8 KB. Text in any encoding the browser decoded has neither.
+ */
+export function looksBinary(text: string): boolean {
+  const head = text.slice(0, 8192);
+  if (head.includes("\0")) return true;
+  let control = 0;
+  for (let i = 0; i < head.length; i++) {
+    const code = head.charCodeAt(i);
+    if (code < 32 && code !== 9 && code !== 10 && code !== 13 && code !== 12) control++;
+    else if (code === 0xfffd) control++;
+  }
+  return head.length > 0 && control / head.length > 0.05;
+}
+
 export function languageOf(id: string | null | undefined): Language {
   return byId.get(id ?? "") ?? byId.get(MARKDOWN)!;
 }

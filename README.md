@@ -281,13 +281,22 @@ and `DELETE /api/v1/pastes/<token>`, and the `paste_create`, `paste_get` and
 ## Web reader
 
 Open https://readm3.com/viewer for the same two-pane Markdown reader in your browser.
-Open local files or a folder, drop Markdown files into the window, open a raw URL or
-GitHub file link, or start a new note. The explorer filters files, prunes hidden and
-build directories, and sorts README first. All nine themes and Markdown flavors use
-the same renderer as the terminal.
+Open local files or a folder, drop files into the window, open a raw URL or GitHub
+file link, or start a new note. The explorer filters files, prunes hidden and build
+directories, and sorts README first. All nine themes and Markdown flavors use the
+same renderer as the terminal.
+
+Any file a browser can show opens, not only Markdown. Markdown renders as a document.
+Every other text file (JSON, JavaScript, Python, YAML, SQL, config, logs, some thirty
+languages) is shown as highlighted, numbered, foldable code, and `e` edits it in
+place like a note. The language comes from the extension when there is a known one and
+is sniffed from the content otherwise. PDFs and images open in the browser's own
+viewer. Archives, executables, media and office files are skipped on import, and so
+is anything that turns out to be binary. Copy puts the current file on the clipboard;
+Download saves it with its own type.
 
 Press `/` to filter, `e` to edit, `Escape` to return to reading, and `?` for shortcuts.
-`Ctrl+S` / `⌘S` downloads the current Markdown. Files and edits are saved in IndexedDB
+`Ctrl+S` / `⌘S` downloads the current file. Files and edits are saved in IndexedDB
 on this device; originals on disk are never overwritten. Reopening a file adds a copy
 so an existing draft is preserved. Clearing browser site data removes the workspace.
 
@@ -438,7 +447,7 @@ explicitly overrides a conflict. Replaced local files receive numbered `.bak-NNN
 backups. Browser replacements receive backups in IndexedDB, accessible through
 **Sync → Local backups** for download or restoration. Clearing browser site data
 also removes those local backups. Sync supports the browser's workspace limits:
-1,000 Markdown files, 4 MB per file, and 20 MB of source in total.
+1,000 files, 4 MB per file, and 20 MB of source in total.
 
 The authenticated API exposes:
 

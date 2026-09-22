@@ -72,7 +72,12 @@ html, body.reader-app { height: 100%; overflow: hidden; }
 #url-input { width: 100%; margin-top: 8px; padding: 10px; }
 #url-error { color: var(--danger); }
 .no-script { position: fixed; inset: 25%; padding: 32px; background: var(--surface); border: 1px solid var(--border); }
-.reader-app.dragging::after { content: "Drop your Markdown files here"; position: fixed; inset: 12px; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 95%, transparent); border: 2px dashed var(--primary); border-radius: 12px; color: var(--primary); font: 20px var(--mono); pointer-events: none; z-index: 10; }
+.media-view { display: flex; flex-direction: column; gap: 12px; min-height: 100%; }
+.media-view embed, .media-view iframe { flex: 1; width: 100%; min-height: calc(100dvh - 300px); border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+.media-view img { max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 6px; background: repeating-conic-gradient(color-mix(in srgb, var(--fg) 6%, transparent) 0 25%, transparent 0 50%) 0 0 / 20px 20px; }
+.media-note { color: var(--muted); font: 11px var(--mono); }
+.media-note a { color: var(--primary); }
+.reader-app.dragging::after { content: "Drop files here"; position: fixed; inset: 12px; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 95%, transparent); border: 2px dashed var(--primary); border-radius: 12px; color: var(--primary); font: 20px var(--mono); pointer-events: none; z-index: 10; }
 [data-theme="light"] { color-scheme: light; }
 @media (min-width: 1600px) { #reader, #editor { padding-left: 90px; } }
 @media (max-width: 900px) { .file-pane { flex-basis: 230px; } .connection, .app-status > span:last-child, #document-info { display: none; } .reader-options { justify-content: flex-end; } .app-header { padding: 12px 18px; } }

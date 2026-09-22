@@ -1,7 +1,12 @@
-export interface Document {
-  path: string;
-  source: string;
-}
+import { binaryType, languageForName, languageOf, MARKDOWN, type BinaryType, type Language } from "../src/code.ts";
+import type { WorkspaceDocument } from "../src/sync-schema.ts";
+
+/**
+ * A workspace file: any text (Markdown renders, everything else is highlighted code),
+ * or a PDF or image whose bytes are base64 in `source`. `language` is stored only when
+ * the name had no known extension and the content was sniffed on import.
+ */
+export type Document = WorkspaceDocument;
 
 export interface Workspace {
   documents: Document[];
@@ -12,11 +17,41 @@ export interface Workspace {
 export const MAX_FILE_BYTES = 4 * 1024 * 1024;
 export const MAX_WORKSPACE_BYTES = 20 * 1024 * 1024;
 export const MAX_FILES = 1000;
-const MARKDOWN = /\.(?:md|markdown|mdown|mkd|mdx)$/i;
-const IGNORED = new Set(["node_modules", "dist", "build", "out", "target", "vendor", "coverage", "venv", "__pycache__"]);
+const IGNORED = new Set(["node_modules", "dist", "build", "out", "target", "vendor", "coverage", "venv", "__pycache__", ".git"]);
+/** Files that are never text and never viewable, so they are skipped without being read. */
+const NEVER = /\.(?:zip|gz|tgz|bz2|xz|7z|rar|tar|exe|dll|so|dylib|o|a|class|jar|war|wasm|bin|dat|db|sqlite|sqlite3|mp3|mp4|m4a|mov|avi|mkv|webm|ogg|wav|flac|woff2?|ttf|otf|eot|psd|ai|doc|docx|xls|xlsx|ppt|pptx|iso|dmg|pkg|deb|rpm|apk|lock)$/i;
 
+/** Whether a path may enter the workspace: not hidden, not build output, not a known binary blob. */
 export function accepts(path: string): boolean {
-  return MARKDOWN.test(path) && path.split("/").every((part) => !part.startsWith(".") && !IGNORED.has(part));
+  return !NEVER.test(path) && path.split("/").every((part) => part && !part.startsWith(".") && !IGNORED.has(part));
+}
+
+/** What a document is on screen: rendered Markdown, highlighted code, or a browser-viewed binary. */
+export type DocumentKind = { kind: "markdown"; language: Language } | { kind: "code"; language: Language } | { kind: "binary"; binary: BinaryType };
+
+export function kindOf(doc: Pick<Document, "path" | "language">): DocumentKind {
+  const binary = binaryType(doc.path);
+  if (binary) return { kind: "binary", binary };
+  const language = languageOf(doc.language ?? languageForName(doc.path)?.id ?? MARKDOWN);
+  return language.id === MARKDOWN ? { kind: "markdown", language } : { kind: "code", language };
+}
+
+/** The bytes of a document: decoded base64 for a binary, UTF-8 for text. */
+export function bytesOf(doc: Document): Uint8Array {
+  if (!binaryType(doc.path)) return new TextEncoder().encode(doc.source);
+  try {
+    const raw = atob(doc.source);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    return bytes;
+  } catch { return new Uint8Array(); }
+}
+
+/** Base64 of a file's bytes, built in chunks so a multi-megabyte PDF does not blow the call stack. */
+export function toBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
 }
 
 export function comparePaths(a: string, b: string): number {
@@ -39,7 +74,7 @@ export function comparePaths(a: string, b: string): number {
 
 export function rawUrl(input: string): URL {
   const url = new URL(input);
-  if (!/^https?:$/.test(url.protocol) || url.username || url.password) throw new Error("Use a public HTTP or HTTPS Markdown URL.");
+  if (!/^https?:$/.test(url.protocol) || url.username || url.password) throw new Error("Use a public HTTP or HTTPS file URL.");
   if (url.hostname === "github.com") {
     const parts = url.pathname.split("/");
     if (parts[3] === "blob" && parts.length > 5) {

@@ -67,6 +67,8 @@ test("imports a pruned directory with README ordering and retains existing draft
       writeFile(join(root, "docs", "README.md"), "# Folder readme"),
       writeFile(join(root, "notes.md"), "# Notes"),
       writeFile(join(root, "notes.txt"), "Not Markdown"),
+      writeFile(join(root, "app.bin"), Buffer.from([0, 1, 2, 0, 255, 0, 3])),
+      writeFile(join(root, "build.tar.gz"), "not really an archive"),
       writeFile(join(root, "node_modules", "ignored.md"), "# Dependency"),
       writeFile(join(root, ".hidden", "secret.md"), "# Hidden"),
     ]);
@@ -75,7 +77,9 @@ test("imports a pruned directory with README ordering and retains existing draft
     const names = await page.locator("#file-list .row-name").allTextContents();
     expect(names).not.toContain("ignored.md");
     expect(names).not.toContain("secret.md");
-    expect(names).not.toContain("notes.txt");
+    expect(names).toContain("notes.txt");
+    expect(names).not.toContain("app.bin");
+    expect(names).not.toContain("build.tar.gz");
     expect(names.indexOf("README.md")).toBeLessThan(names.indexOf("zebra.md"));
     await page.locator("#edit-mode").click();
     await page.locator("#editor").fill("# My unsaved-to-disk draft");
@@ -196,6 +200,53 @@ test("renders a JSON paste highlighted, folds it, copies it, and serves its raw 
   const download = await request.get(`${paste.raw}?download=1`);
   expect(download.headers()["content-type"]).toBe("application/json");
   expect(download.headers()["content-disposition"]).toContain("attachment");
+});
+
+test("opens JSON as editable highlighted code, sniffs an unnamed file, and shows a PDF in the browser", async ({ page }) => {
+  const pdf = Buffer.from("%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 100]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n");
+  await page.locator("#files-input").setInputFiles([
+    { name: "config.json", mimeType: "application/json", buffer: Buffer.from('{"name":"vienna","ports":[80,443]}') },
+    { name: "deploy", mimeType: "application/octet-stream", buffer: Buffer.from("#!/usr/bin/env bash\nset -e\necho deploying\n") },
+    { name: "spec.pdf", mimeType: "application/pdf", buffer: pdf },
+  ]);
+  const names = await page.locator("#file-list .row-name").allTextContents();
+  expect(names).toEqual(expect.arrayContaining(["config.json", "deploy", "spec.pdf"]));
+  await page.locator('#file-list button[title="config.json"]').click();
+  await expect(page.locator("#document-name")).toHaveText("config.json");
+  await expect(page.locator("#code-content")).toBeVisible();
+  await expect(page.locator("#document-content")).toBeHidden();
+  await expect(page.locator("#code-content .hljs-attr").first()).toBeVisible();
+  await expect(page.locator("#document-info")).toContainText("JSON");
+  await expect(page.locator("#file-mark")).toHaveText("JSON");
+  await expect(page.locator("#code-tools")).toBeVisible();
+  await expect(page.locator("#flavor-label")).toBeHidden();
+  // Code is a note like any other: edit it and the highlighted view follows.
+  await expect(page.locator("#edit-mode")).toBeEnabled();
+  await page.locator("#edit-mode").click();
+  await page.locator("#editor").fill('{\n  "name": "berlin"\n}\n');
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#code-content")).toContainText('"berlin"');
+  await expect(page.locator("#code-content .code-line")).toHaveCount(3);
+  await expect(page.locator("#save-status")).toHaveText("Saved on this device");
+  // No extension: the shebang decides, and the decision survives a reload.
+  await page.locator('#file-list button[title="deploy"]').click();
+  await expect(page.locator("#document-info")).toContainText("Shell");
+  await expect(page.locator("#code-content .hljs-meta").first()).toBeVisible();
+  await page.reload();
+  await page.locator('#file-list button[title="deploy"]').click();
+  await expect(page.locator("#document-info")).toContainText("Shell");
+  // A PDF is the browser's job: no editor, an embed, and a note with an escape hatch.
+  await page.locator('#file-list button[title="spec.pdf"]').click();
+  await expect(page.locator("#media-content")).toBeVisible();
+  await expect(page.locator("#media-content embed")).toHaveAttribute("type", "application/pdf");
+  await expect(page.locator("#media-content embed")).toHaveAttribute("src", /^blob:/);
+  await expect(page.locator("#document-info")).toContainText("PDF");
+  await expect(page.locator("#edit-mode")).toBeDisabled();
+  await expect(page.locator("#copy")).toBeHidden();
+  await expect(page.locator("#code-content")).toBeHidden();
+  const download = page.waitForEvent("download");
+  await page.locator("#download").click();
+  expect((await download).suggestedFilename()).toBe("spec.pdf");
 });
 
 test("still renders a Markdown paste as a document", async ({ page, request }) => {

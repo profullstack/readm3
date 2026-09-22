@@ -15,7 +15,7 @@ export async function publish(
 ) {
   const session = await request<{ user: CloudUser | null }>("me");
   if (!session.user) {
-    const box = modal("Share your Markdown");
+    const box = modal("Share this file");
     box.body.innerHTML = `<form class="cloud-form" id="paste-form"><p>Get a private link with no account. Anyone with the link can read this file; nobody can list or search for it, and it is gone when the link expires.</p><label>File name<input name="title" value="${escape(title)}" required maxlength="200"></label><label>Link expires in<select name="expiresIn"><option value="1h">1 hour</option><option value="1d">1 day</option><option value="7d" selected>7 days</option><option value="30d">30 days</option></select></label><p class="error"></p><button class="primary-action">Create private link</button></form><div id="paste-link"></div><p>Or <a href="/admin?next=%2Fviewer">sign in or create an account</a> to save it online, invite editors, and keep its history. Your local draft stays on this device either way.</p>`;
     const form = box.body.querySelector("form")!;
     form.onsubmit = async (e) => {
@@ -45,7 +45,7 @@ export async function publish(
   const orgs =
     await action<{ id: string; name: string }[]>("organizations_list");
   const box = modal("Save to your workspace");
-  box.body.innerHTML = `<form class="cloud-form"><label>File name<input name="title" value="${escape(title)}" required maxlength="200"></label><label>Organization<select name="orgId">${orgs.map((o) => `<option value="${o.id}">${escape(o.name)}</option>`).join("")}</select></label><p class="permission-note">This uploads the current Markdown to your private workspace. You choose who can view or edit it next.</p><p class="error" role="alert"></p><button class="primary-action">Save online</button></form>`;
+  box.body.innerHTML = `<form class="cloud-form"><label>File name<input name="title" value="${escape(title)}" required maxlength="200"></label><label>Organization<select name="orgId">${orgs.map((o) => `<option value="${o.id}">${escape(o.name)}</option>`).join("")}</select></label><p class="permission-note">This uploads the current file to your private workspace. You choose who can view or edit it next.</p><p class="error" role="alert"></p><button class="primary-action">Save online</button></form>`;
   const form = box.body.querySelector("form")!;
   form.onsubmit = async (e) => {
     e.preventDefault();
