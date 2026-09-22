@@ -1,7 +1,12 @@
 /** Browser-safe account data contract. Only these two files may be synced. */
 import { isFlavor, type Flavor } from "./flavors.ts";
 
-export interface WorkspaceDocument { path: string; source: string }
+/**
+ * A workspace file. `source` is the text, or base64 bytes when the path names a PDF or
+ * an image. `language` is only stored when the name could not decide it (no known
+ * extension) and the content was sniffed on import.
+ */
+export interface WorkspaceDocument { path: string; source: string; language?: string }
 export interface SyncedWorkspace { documents: WorkspaceDocument[]; active: string; name: string }
 export interface ReaderSettings { theme?: string; flavor?: Flavor }
 export const SYNC_LIMITS = { maxFileBytes: 32 * 1024 * 1024, maxTotalBytes: 33 * 1024 * 1024, maxFiles: 2 };
@@ -25,14 +30,17 @@ export function validateWorkspace(value: unknown): SyncedWorkspace {
   if (!value || typeof value !== "object") throw new Error("Workspace must be an object.");
   const ws = value as SyncedWorkspace;
   if (Object.keys(ws).some((key) => !["name", "active", "documents"].includes(key))) throw new Error("Workspace can only contain name, active and documents.");
-  if (typeof ws.name !== "string" || ws.name.length > 200 || !Array.isArray(ws.documents) || !ws.documents.length || ws.documents.length > 1000) throw new Error("Workspace needs a name and 1–1,000 Markdown files.");
+  if (typeof ws.name !== "string" || ws.name.length > 200 || !Array.isArray(ws.documents) || !ws.documents.length || ws.documents.length > 1000) throw new Error("Workspace needs a name and 1–1,000 files.");
   const paths = new Set<string>();
   let total = 0;
   const encoder = new TextEncoder();
   for (const doc of ws.documents) {
-    if (!doc || typeof doc.path !== "string" || doc.path.length > 1024 || /[\\\x00-\x1f:]/.test(doc.path) || doc.path.split("/").some((p) => !p || p.startsWith(".")) || !/\.(md|markdown|mdown|mkd|mdx)$/i.test(doc.path) || paths.has(doc.path)) throw new Error("Workspace contains an invalid or duplicate Markdown path.");
-    if (typeof doc.source !== "string") throw new Error("Markdown source must be text.");
-    if (Object.keys(doc).some((key) => !["path", "source"].includes(key))) throw new Error("Documents can only contain path and source.");
+    // Any file name the reader can show: text of any kind, a PDF, an image. Dotfiles and
+    // directory-less names stay out, as before.
+    if (!doc || typeof doc.path !== "string" || doc.path.length > 1024 || /[\\\x00-\x1f:]/.test(doc.path) || doc.path.split("/").some((p) => !p || p.startsWith(".")) || paths.has(doc.path)) throw new Error("Workspace contains an invalid or duplicate file path.");
+    if (typeof doc.source !== "string") throw new Error("A file's source must be text.");
+    if (doc.language !== undefined && (typeof doc.language !== "string" || !/^[a-z0-9_+-]{1,40}$/.test(doc.language))) throw new Error("A file's language must be a short highlight name.");
+    if (Object.keys(doc).some((key) => !["path", "source", "language"].includes(key))) throw new Error("Documents can only contain path, source and language.");
     const bytes = encoder.encode(doc.source).length;
     total += bytes;
     if (bytes > 4 * 1024 * 1024 || total > 20 * 1024 * 1024) throw new Error("Workspace limit: 4 MB per file and 20 MB total.");

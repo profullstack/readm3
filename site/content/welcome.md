@@ -11,7 +11,9 @@ now in a browser. Pick a file on the left. Make yourself at home.
 - **New note** to start with a blank page.
 - **Share** while signed out to get a private link for a file. No account needed.
 
-Only Markdown files appear in the explorer. Build output, dependencies,
+Any text file appears in the explorer: Markdown renders as a document, and
+JSON, code, config and logs are shown as highlighted, foldable code you can edit.
+PDFs and images open in the browser's own viewer. Build output, dependencies,
 and hidden directories stay out of the way. README files sort first.
 
 ## A little less reaching for the mouse

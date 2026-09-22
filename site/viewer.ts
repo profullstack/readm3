@@ -5,8 +5,8 @@ import { renderMarkdown } from "../src/markdown.ts";
 import type { Flavor } from "../src/flavors.ts";
 import { toHtml } from "./html.ts";
 import { renderCode, type CodeView } from "./code-view.ts";
-import { languageOf, MARKDOWN } from "../src/code.ts";
-import { accepts, comparePaths, MAX_FILE_BYTES, MAX_FILES, MAX_WORKSPACE_BYTES, persist, rawUrl, restore, type Document, type Workspace } from "./workspace.ts";
+import { binaryType, detectLanguage, languageForName, looksBinary, MARKDOWN } from "../src/code.ts";
+import { accepts, bytesOf, comparePaths, kindOf, MAX_FILE_BYTES, MAX_FILES, MAX_WORKSPACE_BYTES, persist, rawUrl, restore, toBase64, type Document, type Workspace } from "./workspace.ts";
 
 const element = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const reader = element("reader");
@@ -31,9 +31,25 @@ interface PasteView { id: string; title: string; source: string; bytes: number; 
 let pasteDocument: PasteView | null = null;
 let cloudSaving = false;
 const codeContent = element("code-content");
+const mediaContent = element("media-content");
 let codeView: CodeView | null = null;
-/** True while the open document is a paste in a language other than Markdown. */
-const isCode = () => !!pasteDocument && pasteDocument.language !== MARKDOWN;
+let mediaUrl: string | null = null;
+/** What the active document is on screen: Markdown, code in some language, or a PDF or image. */
+const kind = () => kindOf(current());
+const isCode = () => kind().kind === "code";
+const isBinary = () => kind().kind === "binary";
+const formatBytes = (n: number) => n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
+
+/** Shows the controls that make sense for the active document's kind. */
+function applyKind() {
+  const current = kind();
+  element("flavor-label").hidden = current.kind !== "markdown";
+  element("spoilers").hidden = current.kind !== "markdown";
+  element("code-tools").hidden = current.kind !== "code";
+  element("copy").hidden = current.kind === "binary";
+  element("file-mark").textContent = current.kind === "markdown" ? "M↓" : current.kind === "code" ? current.language.extensions[0]!.toUpperCase() : current.binary.label.split(" ")[0]!.toUpperCase();
+  element<HTMLButtonElement>("edit-mode").disabled = current.kind === "binary" || !!pasteDocument || (!!cloudDocument && !cloudDocument.canEdit);
+}
 
 function cloudControls() {
   element("sync-workspace").hidden = !!cloudDocument;
@@ -59,22 +75,16 @@ function adoptCloud(doc: CloudDocument) {
 /** A paste is somebody's private link: shown read-only, never written into this device's workspace. */
 function adoptPaste(paste: PasteView) {
   pasteDocument = paste;
-  workspace = { name: "Private link", active: paste.title, documents: [{ path: paste.title, source: paste.source }] };
+  // The server decided the language once, on create; the title alone might not carry it.
+  workspace = { name: "Private link", active: paste.title, documents: [{ path: paste.title, source: paste.source, language: paste.language }] };
   pendingSave = false;
   saveFailed = false;
-  const code = isCode();
-  // Code is not Markdown: no flavor, no spoilers, but folding and wrapping instead.
-  element("flavor-label").hidden = code;
-  element("spoilers").hidden = code;
-  element("code-tools").hidden = !code;
-  element("file-mark").textContent = code ? languageOf(paste.language).extensions[0]!.toUpperCase() : "M↓";
   openDocument(paste.title);
   element("sync-workspace").hidden = true;
   element("share").hidden = true;
   element("history").hidden = true;
   element("cloud-save").hidden = true;
   element("paste-delete").hidden = false;
-  element("copy").hidden = false;
   const raw = element<HTMLAnchorElement>("raw-link");
   raw.href = `/p/${pasteToken}/raw`;
   raw.hidden = false;
@@ -178,7 +188,7 @@ function renderFiles(focusPath?: string) {
   if (!docs.length) {
     const empty = document.createElement("p");
     empty.className = "empty-files";
-    empty.textContent = "No Markdown files match your filter.";
+    empty.textContent = "No files match your filter.";
     fileList.append(empty);
   }
   element("file-count").textContent = String(workspace.documents.length).padStart(2, "0");
@@ -196,7 +206,8 @@ function fileRow(path: string, name: string, depth: number, directory: boolean) 
   const icon = document.createElement("span");
   icon.className = "file-icon";
   icon.setAttribute("aria-hidden", "true");
-  icon.textContent = directory ? (filter.value || !collapsed.has(path) ? "▾" : "▸") : "M↓";
+  const fileKind = directory ? null : kindOf(workspace.documents.find((doc) => doc.path === path)!);
+  icon.textContent = directory ? (filter.value || !collapsed.has(path) ? "▾" : "▸") : fileKind!.kind === "markdown" ? "M↓" : fileKind!.kind === "code" ? "{}" : "▣";
   const label = document.createElement("span");
   label.className = "row-name";
   label.textContent = name;
@@ -217,20 +228,66 @@ function progress() {
 }
 
 let previousRender = "";
+/** A PDF or image: the browser's own viewer on a blob URL, which is revoked when the next one is made. */
+function renderMedia(mime: string, media: "pdf" | "image", label: string) {
+  const key = JSON.stringify(["media", workspace.active, current().source.length]);
+  if (key === previousRender) return;
+  previousRender = key;
+  content.hidden = true;
+  codeContent.hidden = true;
+  mediaContent.hidden = false;
+  codeView = null;
+  if (mediaUrl) URL.revokeObjectURL(mediaUrl);
+  mediaUrl = URL.createObjectURL(new Blob([bytesOf(current()).buffer as ArrayBuffer], { type: mime }));
+  mediaContent.replaceChildren();
+  if (media === "image") {
+    const image = document.createElement("img");
+    image.src = mediaUrl;
+    image.alt = current().path;
+    mediaContent.append(image);
+  } else {
+    const embed = document.createElement("embed");
+    embed.type = mime;
+    embed.src = mediaUrl;
+    embed.title = current().path;
+    mediaContent.append(embed);
+  }
+  const note = document.createElement("p");
+  note.className = "media-note";
+  const link = document.createElement("a");
+  link.href = mediaUrl;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.textContent = "Open in a new tab";
+  note.append(`${label}, shown by your browser. `, link, ", or Download to keep a copy.");
+  mediaContent.append(note);
+}
+
 function renderDocument() {
   if (!workspace || editing) return;
-  if (isCode()) {
-    const key = JSON.stringify(["code", pasteDocument!.id, pasteDocument!.language]);
+  const active = kind();
+  if (active.kind === "code") {
+    const key = JSON.stringify(["code", workspace.active, current().source, active.language.id]);
     if (key !== previousRender) {
       content.hidden = true;
+      mediaContent.hidden = true;
       codeContent.hidden = false;
-      codeView = renderCode(codeContent, pasteDocument!.source, pasteDocument!.language);
+      codeView = renderCode(codeContent, current().source, active.language.id);
       previousRender = key;
-      if (codeView.formatted) notice("Minified JSON shown formatted. Download gives the file exactly as pasted.");
+      if (codeView.formatted) notice("Minified JSON shown formatted. Download gives the file exactly as it is.");
     }
     progress();
     return;
   }
+  if (active.kind === "binary") {
+    renderMedia(active.binary.mime, active.binary.kind, active.binary.label);
+    progress();
+    return;
+  }
+  content.hidden = false;
+  codeContent.hidden = true;
+  mediaContent.hidden = true;
+  codeView = null;
   const styles = getComputedStyle(reader);
   const probe = document.createElement("span");
   probe.textContent = "0000000000";
@@ -249,6 +306,7 @@ function renderDocument() {
 function setMode(edit: boolean, focus = true) {
   if (edit && cloudDocument && !cloudDocument.canEdit) { notice("You have view-only access to this document."); return; }
   if (edit && pasteDocument) { notice("A private link is read-only. Copy or download the file to edit it."); return; }
+  if (edit && isBinary()) { notice("A PDF or image cannot be edited here. Download it to change it elsewhere."); return; }
   editing = edit;
   editor.hidden = !edit;
   reader.hidden = edit;
@@ -265,10 +323,15 @@ function setMode(edit: boolean, focus = true) {
 }
 
 function documentInfo() {
-  if (isCode()) {
-    const lines = pasteDocument!.source.split("\n").length - (pasteDocument!.source.endsWith("\n") ? 1 : 0);
-    const size = pasteDocument!.bytes < 1024 ? `${pasteDocument!.bytes} B` : `${(pasteDocument!.bytes / 1024).toFixed(1)} KB`;
-    element("document-info").textContent = `${languageOf(pasteDocument!.language).label} · ${lines.toLocaleString()} lines · ${size}`;
+  const active = kind();
+  if (active.kind === "binary") {
+    element("document-info").textContent = `${active.binary.label} · ${formatBytes(bytesOf(current()).length)}`;
+    return;
+  }
+  if (active.kind === "code") {
+    const source = current().source;
+    const lines = source.split("\n").length - (source.endsWith("\n") ? 1 : 0);
+    element("document-info").textContent = `${active.language.label} · ${lines.toLocaleString()} lines · ${formatBytes(encoder.encode(source).length)}`;
     return;
   }
   const words = current().source.trim().split(/\s+/).filter(Boolean).length;
@@ -280,6 +343,7 @@ function openDocument(path: string, focus = true) {
   element("document-name").textContent = path;
   document.title = `${path.split("/").at(-1)} — readm3`;
   renderFiles();
+  applyKind();
   documentInfo();
   setMode(false, focus);
   reader.scrollTop = 0;
@@ -326,23 +390,43 @@ async function importFiles(files: File[]) {
     const incoming: Document[] = [];
     let bytes = 0;
     let skipped = 0;
+    let unreadable = 0;
     for (const file of files) {
       const path = file.webkitRelativePath || file.name;
       if (!accepts(path)) continue;
-      if (file.size > MAX_FILE_BYTES || bytes + file.size > MAX_WORKSPACE_BYTES || incoming.length >= MAX_FILES) { skipped++; continue; }
-      incoming.push({ path, source: await file.text() });
-      bytes += file.size;
+      // A PDF or image is kept as base64, a third larger than the file; the limits apply to what is stored.
+      const cost = binaryType(path) ? Math.ceil(file.size * 4 / 3) : file.size;
+      if (cost > MAX_FILE_BYTES || bytes + cost > MAX_WORKSPACE_BYTES || incoming.length >= MAX_FILES) { skipped++; continue; }
+      if (binaryType(path)) {
+        incoming.push({ path, source: toBase64(new Uint8Array(await file.arrayBuffer())) });
+        bytes += cost;
+        continue;
+      }
+      const text = await file.text();
+      if (looksBinary(text)) { unreadable++; continue; }
+      const doc: Document = { path, source: text };
+      // A name without a known extension is sniffed once here, and the answer travels with the file.
+      if (!languageForName(path)) {
+        const language = detectLanguage(path, text);
+        if (language !== MARKDOWN) doc.language = language;
+      }
+      incoming.push(doc);
+      bytes += cost;
     }
-    if (incoming.length) addDocuments(incoming, "Your Markdown workspace");
-    else notice("No readable Markdown files found. Open .md, .markdown, .mdown, .mkd, or .mdx files up to 4 MB.");
+    if (incoming.length) addDocuments(incoming, "Your workspace");
+    else notice("No readable files found. Open text files (Markdown, JSON, code, config), PDFs or images up to 4 MB.");
     if (skipped) notice(`${skipped} file(s) skipped because of size or workspace limits.`);
+    if (unreadable) notice(`${unreadable} file(s) skipped: not text, PDF or image.`);
   } catch { notice("A file could not be read. Try selecting it again."); }
   finally { importBusy = false; filesInput.value = ""; folderInput.value = ""; }
 }
 
 function download() {
-  const type = pasteDocument ? pasteDocument.mime : "text/markdown";
-  const url = URL.createObjectURL(new Blob([current().source], { type: `${type};charset=utf-8` }));
+  const active = kind();
+  const blob = active.kind === "binary"
+    ? new Blob([bytesOf(current()).buffer as ArrayBuffer], { type: active.binary.mime })
+    : new Blob([current().source], { type: `${active.language.mime};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = current().path.split("/").at(-1)!;
@@ -536,7 +620,9 @@ async function fetchDocument(input: string) {
   const url = rawUrl(input);
   const response = await fetch(url, { credentials: "omit", referrerPolicy: "no-referrer", signal: AbortSignal.timeout(20000) });
   if (!response.ok) throw new Error(`The host returned HTTP ${response.status}. Check the URL and try again.`);
-  if (response.headers.get("content-type")?.includes("text/html")) throw new Error("That URL returns a web page. Use the raw Markdown file URL instead.");
+  const type = response.headers.get("content-type") ?? "";
+  const givenName = decodeURIComponent(url.pathname.split("/").at(-1) || "").replace(/[/\\]/g, "-");
+  if (type.includes("text/html") && !/\.html?$/i.test(givenName)) throw new Error("That URL returns a web page. Use the raw file URL instead.");
   if (Number(response.headers.get("content-length")) > MAX_FILE_BYTES) throw new Error("This file exceeds the 4 MB limit.");
   const stream = response.body?.getReader();
   if (!stream) throw new Error("The host returned an empty response.");
@@ -554,9 +640,22 @@ async function fetchDocument(input: string) {
   const bytes = new Uint8Array(length);
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-  let name = decodeURIComponent(url.pathname.split("/").at(-1) || "Document.md").replace(/[/\\]/g, "-");
+  let name = givenName || "Document.md";
   if (!accepts(name)) name = "Document.md";
-  addDocuments([{ path: name, source: new TextDecoder().decode(bytes) }]);
+  // A PDF or image served without an extension in its path still gets one from its type.
+  if (!binaryType(name)) {
+    if (type.startsWith("application/pdf")) name += ".pdf";
+    else if (type.startsWith("image/")) name += `.${type.slice(6).split(/[;+]/)[0]}`;
+  }
+  if (binaryType(name)) { addDocuments([{ path: name, source: toBase64(bytes) }]); return; }
+  const text = new TextDecoder().decode(bytes);
+  if (looksBinary(text)) throw new Error("That URL is not a text file, PDF or image.");
+  const doc: Document = { path: name, source: text };
+  if (!languageForName(name)) {
+    const language = detectLanguage(name, text);
+    if (language !== MARKDOWN) doc.language = language;
+  }
+  addDocuments([doc]);
 }
 
 interface InstallPrompt extends Event { prompt(): Promise<void>; userChoice: Promise<{ outcome: string }>; }

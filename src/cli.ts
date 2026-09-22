@@ -10,7 +10,7 @@ import { printDocument, COLOR_MODES, type ColorMode } from "./print.ts";
 import { run, type ViewerOptions } from "./viewer.ts";
 import { isCloudCommand, cloudMain, CLOUD_USAGE } from "./cloud-cli.ts";
 
-export const VERSION = "0.7.0";
+export const VERSION = "0.8.0";
 
 /** The help text, exported so a test can hold it to the flags it documents. */
 export const USAGE = `readm3 — a terminal markdown reader and editor

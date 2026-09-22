@@ -1,6 +1,26 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { detectLanguage, extensionOf, foldRegions, formatForReading, highlightLines, languageForName, languageOf, sniffLanguage } from "../src/code.ts";
+import { binaryType, detectLanguage, extensionOf, foldRegions, formatForReading, highlightLines, languageForName, languageOf, looksBinary, sniffLanguage } from "../src/code.ts";
+
+describe("binary files", () => {
+  test("PDFs and images are browser-viewed binaries, everything else is text", () => {
+    assert.equal(binaryType("spec.pdf")?.kind, "pdf");
+    assert.equal(binaryType("a/b/Photo.JPG")?.mime, "image/jpeg");
+    assert.equal(binaryType("logo.svg")?.kind, "image");
+    assert.equal(binaryType("config.json"), undefined);
+    assert.equal(binaryType("deploy"), undefined);
+    assert.equal(binaryType(undefined), undefined);
+  });
+
+  test("text that decoded from bytes is caught by NULs or control runs", () => {
+    assert.equal(looksBinary("hello\nworld\t!\r\n"), false);
+    assert.equal(looksBinary(""), false);
+    assert.equal(looksBinary("abc\0def"), true);
+    assert.equal(looksBinary("\x01\x02\x03\x04\x05abcdefghij"), true);
+    assert.equal(looksBinary("�����abcdefghij"), true);
+    assert.equal(looksBinary("only one \x01 in a long line of ordinary text " + "x".repeat(100)), false);
+  });
+});
 
 describe("language detection", () => {
   test("a known extension wins over the content", () => {
