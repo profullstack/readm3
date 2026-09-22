@@ -163,6 +163,25 @@ describe("anonymous pastes", () => {
     expect((await api(new Request(`http://localhost/api/v1/pastes/${"b".repeat(43)}/raw`), "1.2.3.4"))!.status).toBe(404);
   });
 
+  test("a PDF or image paste is base64 in, its own bytes out", async () => {
+    const { store, call } = fixture();
+    const api = createApi(store, "http://localhost");
+    const bytes = Buffer.from("%PDF-1.4 not really");
+    const created = await call("pastes", "POST", { source: bytes.toString("base64"), title: "spec.pdf" });
+    expect(created.status).toBe(201);
+    expect(created.data.language).toBe("binary");
+    expect(created.data.mime).toBe("application/pdf");
+    expect(created.data.title).toBe("spec.pdf");
+    const token = tokenOf(created.data.url);
+    const raw = (await api(new Request(`http://localhost/api/v1/pastes/${token}/raw`), "1.2.3.4"))!;
+    expect(raw.headers.get("content-type")).toBe("application/pdf");
+    expect(Buffer.from(await raw.arrayBuffer()).equals(bytes)).toBe(true);
+    const svg = await call("pastes", "POST", { source: Buffer.from("<svg onload=alert(1)/>").toString("base64"), title: "icon.svg" });
+    const svgRaw = (await api(new Request(`http://localhost/api/v1/pastes/${tokenOf(svg.data.url)}/raw`), "1.2.3.4"))!;
+    expect(svgRaw.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect((await call("pastes", "POST", { source: "plain text, not base64!", title: "x.pdf" })).status).toBe(400);
+  });
+
   test("a paste stored before languages existed reads as Markdown", async () => {
     const { store, call } = fixture();
     const created = await call("pastes", "POST", { source: "# Old\n" });

@@ -11,7 +11,10 @@
  * when one with a known extension is given and from the content otherwise, and stored
  * with the paste so the page, the CLI and the raw download all agree on what it is.
  */
-import { detectLanguage, languageOf, MARKDOWN } from "../src/code.ts";
+import { binaryType, detectLanguage, languageOf, MARKDOWN } from "../src/code.ts";
+
+/** The language stored for a PDF or image paste, whose source is base64 rather than text. */
+export const BINARY = "binary";
 import { HttpError, Store, checksum, id, now, secret, text } from "./store.ts";
 
 export const PASTE_MAX_BYTES = 256 * 1024;
@@ -79,8 +82,13 @@ export function createPaste(
   const expiresIn = args.expiresIn ?? PASTE_DEFAULT_EXPIRY;
   if (typeof expiresIn !== "string" || !(expiresIn in PASTE_EXPIRIES))
     throw new HttpError(400, `expiresIn must be one of ${Object.keys(PASTE_EXPIRIES).join(", ")}.`);
-  const language = pasteLanguage(args, source);
-  const title = pasteTitle(args.title, source, language);
+  // A PDF or image, named as such, arrives as base64 and is stored that way; the page
+  // decodes it for the browser's own viewer and the raw route serves the real bytes.
+  const binary = binaryType(typeof args.title === "string" ? args.title : undefined);
+  if (binary && !/^[A-Za-z0-9+/]+=*\s*$/.test(source.trim()))
+    throw new HttpError(400, `A ${binary.label} paste must be sent as base64.`);
+  const language = binary ? BINARY : pasteLanguage(args, source);
+  const title = binary ? pasteTitle(args.title, source) : pasteTitle(args.title, source, language);
   const token = secret();
   const pasteId = id();
   const createdAt = now();
@@ -99,7 +107,12 @@ export function createPaste(
       expiresAt,
     );
   })();
-  return { id: pasteId, token, title, language, mime: languageOf(language).mime, createdAt, expiresAt, bytes };
+  return { id: pasteId, token, title, language, mime: pasteMime(title, language), createdAt, expiresAt, bytes };
+}
+
+/** The type of a paste's real bytes: the binary's own for a PDF or image, else the language's. */
+export function pasteMime(title: string, language: string): string {
+  return binaryType(title)?.mime ?? languageOf(language).mime;
 }
 
 export function readPaste(store: Store, token: string): Paste {
@@ -111,7 +124,7 @@ export function readPaste(store: Store, token: string): Paste {
   if (!paste) throw new HttpError(404, "This paste does not exist, has expired, or was deleted.");
   // Rows from before languages were stored are Markdown, which is all a paste could be then.
   const language = paste.language ?? MARKDOWN;
-  return { ...paste, language, mime: languageOf(language).mime };
+  return { ...paste, language, mime: pasteMime(paste.title, language) };
 }
 
 export function deletePaste(store: Store, token: string) {

@@ -1,6 +1,7 @@
 import { Store, HttpError, checksum, now, text } from "./store.ts";
 import { operate } from "./operations.ts";
 import { createPaste, deletePaste, readPaste } from "./pastes.ts";
+import { binaryType } from "../src/code.ts";
 
 const MAX_BODY = 1100 * 1024;
 const headers = {
@@ -183,10 +184,15 @@ export function createApi(store: Store, configuredOrigin?: string) {
           // run as this site. The download carries the real type, as an attachment.
           const download = url.searchParams.get("download") === "1";
           const filename = `filename*=UTF-8''${encodeURIComponent(found.title)}`;
-          return new Response(found.source, {
+          // A PDF or image paste is stored as base64; its real bytes go out. A PDF or
+          // raster image is safe to show inline; SVG can carry script, so it is plain text.
+          const binary = binaryType(found.title);
+          const body = binary ? Buffer.from(found.source, "base64") : found.source;
+          const inlineType = binary && binary.mime !== "image/svg+xml" ? binary.mime : "text/plain; charset=utf-8";
+          return new Response(body, {
             headers: {
               ...headers,
-              "content-type": download ? found.mime : "text/plain; charset=utf-8",
+              "content-type": download ? found.mime : inlineType,
               "content-disposition": download ? `attachment; ${filename}` : `inline; ${filename}`,
               "content-security-policy": "default-src 'none'; sandbox",
               "x-robots-tag": "noindex, nofollow",

@@ -1,5 +1,5 @@
 import { action, request, type CloudDocument } from "./cloud.ts";
-import { publish, sharing, history as versionHistory } from "./sharing.ts";
+import { pasteDialog, publish, sharing, history as versionHistory } from "./sharing.ts";
 import { showSync } from "./sync.ts";
 import { renderMarkdown } from "../src/markdown.ts";
 import type { Flavor } from "../src/flavors.ts";
@@ -85,6 +85,8 @@ function adoptPaste(paste: PasteView) {
   element("history").hidden = true;
   element("cloud-save").hidden = true;
   element("paste-delete").hidden = false;
+  element("paste-share").hidden = true;
+  element("new-paste").hidden = false;
   const raw = element<HTMLAnchorElement>("raw-link");
   raw.href = `/p/${pasteToken}/raw`;
   raw.hidden = false;
@@ -468,6 +470,7 @@ function bindEvents() {
     },
   });
   element("cloud-save").onclick = () => void saveCloud();
+  element("paste-share").onclick = () => pasteDialog(current().path, current().source);
   element("share").onclick = () => {
     if (pendingSave && cloudDocument) { notice("Save your changes before changing sharing settings."); return; }
     const task = cloudDocument ? sharing(cloudDocument, adoptCloud) : publish(current().path, current().source, doc => {
