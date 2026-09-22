@@ -47,25 +47,28 @@
     <section class="document-pane" aria-label="Document">
       <div class="document-toolbar">
         <button id="toggle-files" aria-controls="file-pane" aria-expanded="false" aria-label="Toggle file browser">☰</button>
-        <div class="file-heading"><span class="file-mark" aria-hidden="true">M↓</span><h1 id="document-name">Loading workspace…</h1></div>
+        <div class="file-heading"><span class="file-mark" id="file-mark" aria-hidden="true">M↓</span><h1 id="document-name">Loading workspace…</h1></div>
         <div class="document-actions">
           <div class="mode-switch" role="group" aria-label="Document mode"><button id="read-mode" aria-pressed="true">Read</button><button id="edit-mode" aria-pressed="false">Edit</button></div>
           <button id="cloud-save" class="primary-action" hidden>Save version</button>
           <button id="share">Share</button>
           <button id="paste-delete" hidden>Delete link</button>
           <button id="history" hidden>History</button>
-          <button id="download" title="Download Markdown (Ctrl or ⌘ S)">Download</button>
+          <button id="copy" hidden title="Copy the whole file to the clipboard">Copy</button>
+          <a id="raw-link" class="raw-link" hidden title="The file as plain text">Raw</a>
+          <button id="download" title="Download this file (Ctrl or ⌘ S)">Download</button>
         </div>
       </div>
       <div class="reader-options">
         <span id="document-info">Markdown</span>
         <div class="reader-selects">
-          <label>Flavor <select id="flavor"><option value="github">GitHub</option><option value="commonmark">CommonMark</option><option value="reddit">Reddit</option><option value="all">All</option></select></label>
+          <span id="code-tools" class="code-tools" hidden><button id="fold-all" title="Fold every block">Fold all</button><button id="unfold-all" title="Unfold every block">Unfold all</button><button id="wrap" aria-pressed="false" title="Wrap long lines">Wrap</button></span>
+          <label id="flavor-label">Flavor <select id="flavor"><option value="github">GitHub</option><option value="commonmark">CommonMark</option><option value="reddit">Reddit</option><option value="all">All</option></select></label>
           <label>Theme <select id="theme">__THEMES__</select></label>
           <button id="spoilers" aria-pressed="false" title="Reveal spoilers (s)">Spoilers</button>
         </div>
       </div>
-      <div id="reader" tabindex="0" role="region" aria-label="Rendered Markdown"><pre id="document-content" class="doc"></pre></div>
+      <div id="reader" tabindex="0" role="region" aria-label="Document"><pre id="document-content" class="doc"></pre><div id="code-content" class="code-view" hidden></div></div>
       <textarea id="editor" aria-label="Markdown source" spellcheck="false" hidden></textarea>
       <div class="document-footer"><span id="save-status" role="status">Opening workspace…</span><span id="reading-progress">0%</span></div>
     </section>

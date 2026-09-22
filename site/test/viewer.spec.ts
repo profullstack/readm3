@@ -153,6 +153,64 @@ test("shares a private paste link without an account, opens it read-only, and de
   await expect(reader.locator("#document-name")).toHaveText("Paste unavailable");
 });
 
+test("renders a JSON paste highlighted, folds it, copies it, and serves its raw text", async ({ page, context, request }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const created = await request.post("/api/v1/pastes", { data: { source: '{"fleet":{"name":"vienna","live":true,"tags":["a","b"]},"count":2}' } });
+  expect(created.status()).toBe(201);
+  const paste = await created.json();
+  expect(paste.language).toBe("json");
+  expect(paste.title).toBe("paste.json");
+  await page.goto(paste.url);
+  await expect(page.locator("#document-name")).toHaveText("paste.json");
+  await expect(page.locator("#document-info")).toContainText("JSON");
+  await expect(page.locator("#document-content")).toBeHidden();
+  const code = page.locator("#code-content");
+  await expect(code).toBeVisible();
+  await expect(code.locator(".code-line")).toHaveCount(11);
+  await expect(code.locator(".hljs-attr").first()).toBeVisible();
+  await expect(code.locator(".hljs-string").first()).toHaveText('"vienna"');
+  await expect(page.locator("#flavor-label")).toBeHidden();
+  await expect(page.locator("#code-tools")).toBeVisible();
+  await expect(page.locator("#edit-mode")).toBeDisabled();
+  await expect(page.locator("#raw-link")).toHaveAttribute("href", `/p/${paste.url.split("/p/")[1]}/raw`);
+  // Fold the "fleet" object: its four inner lines and the closing brace disappear behind a marker.
+  const fleetLine = code.locator(".code-line").nth(1);
+  await fleetLine.hover();
+  await fleetLine.locator(".fold").click();
+  await expect(fleetLine).toHaveClass(/folded/);
+  await expect(fleetLine.locator(".fold-marker")).toContainText("7 lines }");
+  await expect(code.locator(".code-line:visible")).toHaveCount(4);
+  await page.locator("#unfold-all").click();
+  await expect(code.locator(".code-line:visible")).toHaveCount(11);
+  await page.locator("#fold-all").click();
+  await expect(code.locator(".code-line:visible")).toHaveCount(1);
+  await page.locator("#unfold-all").click();
+  await page.locator("#copy").click();
+  await expect(page.locator("#notice")).toContainText("Copied");
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(JSON.parse(copied)).toEqual({ fleet: { name: "vienna", live: true, tags: ["a", "b"] }, count: 2 });
+  expect(copied).toContain("\n  ");
+  const raw = await request.get(paste.raw);
+  expect(raw.headers()["content-type"]).toBe("text/plain; charset=utf-8");
+  expect(await raw.text()).toBe('{"fleet":{"name":"vienna","live":true,"tags":["a","b"]},"count":2}');
+  const download = await request.get(`${paste.raw}?download=1`);
+  expect(download.headers()["content-type"]).toBe("application/json");
+  expect(download.headers()["content-disposition"]).toContain("attachment");
+});
+
+test("still renders a Markdown paste as a document", async ({ page, request }) => {
+  const created = await request.post("/api/v1/pastes", { data: { source: "# Fleet notes\n\nWe test in prod.\n" } });
+  const paste = await created.json();
+  expect(paste.language).toBe("markdown");
+  await page.goto(paste.url);
+  await expect(page.locator("#document-name")).toHaveText("Fleet notes.md");
+  await expect(page.locator("#document-content")).toContainText("We test in prod.");
+  await expect(page.locator("#code-content")).toBeHidden();
+  await expect(page.locator("#code-tools")).toBeHidden();
+  await expect(page.locator("#copy")).toBeVisible();
+  await expect(page.locator("#raw-link")).toBeVisible();
+});
+
 test("installs a complete offline shell and restores edited documents after an offline reload", async ({ page, context, request }) => {
   const manifestResponse = await request.get("/viewer.webmanifest");
   expect(manifestResponse.headers()["content-type"]).toContain("manifest+json");

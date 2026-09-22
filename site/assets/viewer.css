@@ -92,3 +92,35 @@ html, body.reader-app { height: 100%; overflow: hidden; }
 .header-actions a { color: var(--primary); font-size: 12px; text-decoration: none; }
 @media (max-width: 900px) { .document-toolbar { flex-wrap: wrap; } .document-actions { flex-wrap: wrap; justify-content: flex-end; margin-left: auto; } }
 .account-link { color: var(--fg); font-size: 12px; text-decoration: none; padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; }
+
+/* Code pastes: numbered, highlighted, foldable lines. Colors come from the theme variables the Markdown roles use. */
+.code-view { font: 14px/1.85 var(--mono); tab-size: 2; color: var(--fg); width: fit-content; min-width: 100%; }
+.code-line { display: flex; align-items: flex-start; white-space: pre; }
+.code-line:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.code-line.folded { background: color-mix(in srgb, var(--primary) 7%, transparent); }
+.code-gutter { flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 6px; width: calc(var(--gutter-digits, 3) * 1ch + 36px); padding-right: 14px; color: var(--muted); user-select: none; }
+.code-gutter::after { content: attr(data-line); min-width: calc(var(--gutter-digits, 3) * 1ch); text-align: right; font-size: 12px; }
+.reader-app .fold { border: 0; border-radius: 3px; background: transparent; padding: 0; width: 14px; color: var(--muted); font-size: 10px; line-height: inherit; visibility: hidden; }
+.code-line:hover .fold, .code-line.folded .fold, .reader-app .fold:focus-visible { visibility: visible; }
+.reader-app .fold:hover { color: var(--primary); background: transparent; border: 0; }
+.code-text { flex: 1; min-width: 0; white-space: pre; }
+.code-text:empty::before { content: " "; }
+.code-view.wrap .code-line, .code-view.wrap .code-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.reader-app .fold-marker { margin-left: 10px; padding: 0 7px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--muted); font: 11px/1.7 var(--mono); }
+.reader-app .fold-marker:hover { color: var(--primary); border-color: var(--primary); }
+.code-tools { display: flex; gap: 4px; }
+.reader-app .code-tools button { padding: 3px 7px; font-size: 11px; color: var(--muted); }
+.reader-app .code-tools [aria-pressed="true"] { color: var(--primary); border-color: var(--primary); }
+.raw-link { color: var(--fg); font-size: 12px; text-decoration: none; padding: 6px 11px; border: 1px solid var(--border); border-radius: 5px; }
+.raw-link:hover { border-color: var(--muted); }
+.hljs-comment, .hljs-quote { color: var(--muted); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-doctag, .hljs-template-tag, .hljs-meta .hljs-keyword { color: var(--primary); }
+.hljs-string, .hljs-addition, .hljs-regexp, .hljs-template-variable, .hljs-meta .hljs-string { color: var(--success); }
+.hljs-number, .hljs-literal, .hljs-symbol, .hljs-attr, .hljs-attribute, .hljs-variable, .hljs-selector-attr, .hljs-selector-pseudo, .hljs-bullet, .hljs-link { color: var(--accent); }
+.hljs-title, .hljs-title.function_, .hljs-title.class_, .hljs-section, .hljs-name, .hljs-selector-id, .hljs-selector-class { color: var(--title); }
+.hljs-type, .hljs-built_in, .hljs-class .hljs-title, .hljs-params, .hljs-property { color: var(--info); }
+.hljs-meta, .hljs-tag, .hljs-punctuation { color: var(--secondary); }
+.hljs-deletion { color: var(--danger); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 700; }
+@media (max-width: 680px) { .code-view { font-size: 12px; line-height: 1.8; } .code-gutter { width: calc(var(--gutter-digits, 3) * 1ch + 28px); padding-right: 10px; } .raw-link { padding: 5px 7px; font-size: 11px; } }

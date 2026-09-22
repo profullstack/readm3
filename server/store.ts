@@ -85,6 +85,11 @@ export class Store {
       CREATE INDEX IF NOT EXISTS shares_document ON shares(documentId);
       CREATE INDEX IF NOT EXISTS sessions_user ON sessions(userId);
     `);
+    // Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS leaves an
+    // existing table alone, so a live database gets them here, once.
+    const pasteColumns = this.db.query("PRAGMA table_info(pastes)").all() as { name: string }[];
+    if (!pasteColumns.some((column) => column.name === "language"))
+      this.db.exec("ALTER TABLE pastes ADD COLUMN language TEXT");
   }
   get<T>(sql: string, ...args: (string | number | null)[]): T | null {
     return this.db.query(sql).get(...args) as T | null;

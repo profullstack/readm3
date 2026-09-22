@@ -24,8 +24,10 @@ export const CLOUD_USAGE = `Shared Markdown
   readm3 docs revoke ID --share SHARE_ID
   readm3 docs transfer ID --username USERNAME
   readm3 shared get URL [--raw]
-  readm3 paste [FILE] [--title NAME] [--expires 1h|1d|7d|30d]
-                                          Private link, no account; prints the URL
+  readm3 paste [FILE] [--title NAME] [--expires 1h|1d|7d|30d] [--language ID]
+                                          Private link, no account; prints the URL.
+                                          Any text: Markdown renders, code is highlighted.
+                                          The language is detected from the name or content.
   readm3 paste get URL [--raw] | delete URL
   readm3 shared update URL FILE --base VERSION
   readm3 orgs list | create --name NAME | update ID --name NAME | delete ID
@@ -34,7 +36,7 @@ export const CLOUD_USAGE = `Shared Markdown
   readm3 cloud OPERATION --args '{"key":"value"}'
   readm3 mcp                              Start the stdio MCP server
 
-FILE may be - for stdin. --raw prints Markdown; other results are JSON.
+FILE may be - for stdin. --raw prints the source text; other results are JSON.
 READM3_URL selects a self-hosted server; READM3_TOKEN supplies an API token.
 View links cannot write. Edit links can save versions. Owners administer files.
 Use readm3 cloud for the full API, including team membership and permissions.
@@ -117,12 +119,15 @@ export async function cloudMain(argv: string[]) {
       return;
     }
     if (!positional[0] && process.stdin.isTTY)
-      throw new Error("Give a Markdown file, or pipe one in.");
-    const source = fileSource(positional[0] ?? "-");
+      throw new Error("Give a file, or pipe one in.");
+    const file = positional[0] ?? "-";
+    const source = fileSource(file);
+    // The file name carries the language; stdin has none, so the server sniffs the content.
+    const title = flags.title || (file === "-" ? undefined : basename(file));
     const paste = await cloudRequest<{ url: string }>(
       "pastes",
       "POST",
-      { source, title: flags.title, expiresIn: flags.expires },
+      { source, title, expiresIn: flags.expires, language: flags.language },
       cloudConfig(),
     );
     if (flags.json) output(paste);

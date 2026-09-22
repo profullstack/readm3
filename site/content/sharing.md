@@ -42,12 +42,31 @@ delete it. Pastes are limited to 256 KB and always expire, so they are for handi
 document to someone, not for keeping one.
 
     readm3 paste notes.md                       # prints the link
+    readm3 paste config.json                    # any file, not only Markdown
+    kubectl get pods -o yaml | readm3 paste     # no name: the content is sniffed
     readm3 paste get https://readm3.com/p/… --raw
     readm3 paste delete https://readm3.com/p/…
+    curl https://readm3.com/p/…/raw             # the text itself
 
-The API is `POST /api/v1/pastes` with `{ "source": "…", "title": "notes.md", "expiresIn": "7d" }`,
-`GET /api/v1/pastes/<token>` and `DELETE /api/v1/pastes/<token>`; an agent gets the same
-three as the `paste_create`, `paste_get` and `paste_delete` MCP tools.
+A paste can be any text. Markdown renders as a document, and everything else is
+shown as code: JSON, JavaScript, TypeScript, Python, shell, YAML, HTML, CSS, SQL, Go,
+Rust, Java, C, Dockerfiles, diffs and some thirty languages in all, with syntax colors
+drawn from the reader's theme, line numbers, and folding. Click the arrow beside a
+line, or **Fold all**, and a block collapses to `{ ⋯ 12 lines }`; **Wrap** folds long
+lines instead of scrolling them. Minified JSON is shown pretty-printed. Every paste
+page has **Copy**, **Raw** and **Download**. Raw is `/p/<token>/raw`, always served
+as plain text so a pasted HTML page can never run as this site; add `?download=1` to
+receive the file with its own type.
+
+The language is decided once, when the paste is made: from the file name's extension
+when it has a known one, otherwise from the content. A piped `{…}` is JSON and a piped
+`kubectl` dump is YAML without anyone saying so, and prose stays Markdown. Pass
+`--language` (or `language` in the API) to force one.
+
+The API is `POST /api/v1/pastes` with `{ "source": "…", "title": "notes.md", "expiresIn": "7d", "language": "json" }`
+(title and language optional), `GET /api/v1/pastes/<token>`, `GET /api/v1/pastes/<token>/raw`
+and `DELETE /api/v1/pastes/<token>`; every answer carries `language` and `mime`. An agent
+gets the same as the `paste_create`, `paste_get` and `paste_delete` MCP tools.
 
 ## History and conflicting saves
 

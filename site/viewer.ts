@@ -4,6 +4,8 @@ import { showSync } from "./sync.ts";
 import { renderMarkdown } from "../src/markdown.ts";
 import type { Flavor } from "../src/flavors.ts";
 import { toHtml } from "./html.ts";
+import { renderCode, type CodeView } from "./code-view.ts";
+import { languageOf, MARKDOWN } from "../src/code.ts";
 import { accepts, comparePaths, MAX_FILE_BYTES, MAX_FILES, MAX_WORKSPACE_BYTES, persist, rawUrl, restore, type Document, type Workspace } from "./workspace.ts";
 
 const element = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -25,9 +27,13 @@ let cloudDocument: CloudDocument | null = null;
 const shareToken = location.pathname.match(/^\/s\/([A-Za-z0-9_-]{43})$/)?.[1];
 const cloudId = new URLSearchParams(location.search).get("doc");
 const pasteToken = location.pathname.match(/^\/p\/([A-Za-z0-9_-]{43})$/)?.[1];
-interface PasteView { id: string; title: string; source: string; bytes: number; createdAt: string; expiresAt: string; }
+interface PasteView { id: string; title: string; source: string; bytes: number; language: string; mime: string; createdAt: string; expiresAt: string; }
 let pasteDocument: PasteView | null = null;
 let cloudSaving = false;
+const codeContent = element("code-content");
+let codeView: CodeView | null = null;
+/** True while the open document is a paste in a language other than Markdown. */
+const isCode = () => !!pasteDocument && pasteDocument.language !== MARKDOWN;
 
 function cloudControls() {
   element("sync-workspace").hidden = !!cloudDocument;
@@ -56,12 +62,22 @@ function adoptPaste(paste: PasteView) {
   workspace = { name: "Private link", active: paste.title, documents: [{ path: paste.title, source: paste.source }] };
   pendingSave = false;
   saveFailed = false;
+  const code = isCode();
+  // Code is not Markdown: no flavor, no spoilers, but folding and wrapping instead.
+  element("flavor-label").hidden = code;
+  element("spoilers").hidden = code;
+  element("code-tools").hidden = !code;
+  element("file-mark").textContent = code ? languageOf(paste.language).extensions[0]!.toUpperCase() : "M↓";
   openDocument(paste.title);
   element("sync-workspace").hidden = true;
   element("share").hidden = true;
   element("history").hidden = true;
   element("cloud-save").hidden = true;
   element("paste-delete").hidden = false;
+  element("copy").hidden = false;
+  const raw = element<HTMLAnchorElement>("raw-link");
+  raw.href = `/p/${pasteToken}/raw`;
+  raw.hidden = false;
   element<HTMLButtonElement>("edit-mode").disabled = true;
   element("file-pane").querySelectorAll<HTMLElement>(".open-actions,.extra-actions,.filter-label,.local-note").forEach(el => el.hidden = true);
   saveStatus.textContent = `Private link · expires ${new Date(paste.expiresAt).toLocaleString()}`;
@@ -203,6 +219,18 @@ function progress() {
 let previousRender = "";
 function renderDocument() {
   if (!workspace || editing) return;
+  if (isCode()) {
+    const key = JSON.stringify(["code", pasteDocument!.id, pasteDocument!.language]);
+    if (key !== previousRender) {
+      content.hidden = true;
+      codeContent.hidden = false;
+      codeView = renderCode(codeContent, pasteDocument!.source, pasteDocument!.language);
+      previousRender = key;
+      if (codeView.formatted) notice("Minified JSON shown formatted. Download gives the file exactly as pasted.");
+    }
+    progress();
+    return;
+  }
   const styles = getComputedStyle(reader);
   const probe = document.createElement("span");
   probe.textContent = "0000000000";
@@ -220,6 +248,7 @@ function renderDocument() {
 
 function setMode(edit: boolean, focus = true) {
   if (edit && cloudDocument && !cloudDocument.canEdit) { notice("You have view-only access to this document."); return; }
+  if (edit && pasteDocument) { notice("A private link is read-only. Copy or download the file to edit it."); return; }
   editing = edit;
   editor.hidden = !edit;
   reader.hidden = edit;
@@ -236,6 +265,12 @@ function setMode(edit: boolean, focus = true) {
 }
 
 function documentInfo() {
+  if (isCode()) {
+    const lines = pasteDocument!.source.split("\n").length - (pasteDocument!.source.endsWith("\n") ? 1 : 0);
+    const size = pasteDocument!.bytes < 1024 ? `${pasteDocument!.bytes} B` : `${(pasteDocument!.bytes / 1024).toFixed(1)} KB`;
+    element("document-info").textContent = `${languageOf(pasteDocument!.language).label} · ${lines.toLocaleString()} lines · ${size}`;
+    return;
+  }
   const words = current().source.trim().split(/\s+/).filter(Boolean).length;
   element("document-info").textContent = `${words.toLocaleString()} words · ${Math.max(1, Math.ceil(words / 220))} min read`;
 }
@@ -306,7 +341,8 @@ async function importFiles(files: File[]) {
 }
 
 function download() {
-  const url = URL.createObjectURL(new Blob([current().source], { type: "text/markdown;charset=utf-8" }));
+  const type = pasteDocument ? pasteDocument.mime : "text/markdown";
+  const url = URL.createObjectURL(new Blob([current().source], { type: `${type};charset=utf-8` }));
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = current().path.split("/").at(-1)!;
@@ -359,6 +395,19 @@ function bindEvents() {
     if (!pasteToken || !confirm("Delete this paste? The link stops working for everyone.")) return;
     try { await request(`pastes/${pasteToken}`, "DELETE"); location.href = "/viewer"; }
     catch (error) { notice(error instanceof Error ? error.message : "Could not delete this paste."); }
+  };
+  element("copy").onclick = async () => {
+    // Copy what is on screen: formatted JSON when it was shown formatted, the source otherwise.
+    const text = codeView?.text ?? current().source;
+    try { await navigator.clipboard.writeText(text); notice(`Copied ${current().path} to the clipboard.`); }
+    catch { notice("The browser refused clipboard access. Select the text and copy it, or use Download."); }
+  };
+  element("fold-all").onclick = () => codeView?.foldAll();
+  element("unfold-all").onclick = () => codeView?.unfoldAll();
+  element("wrap").onclick = () => {
+    const on = element("wrap").getAttribute("aria-pressed") !== "true";
+    element("wrap").setAttribute("aria-pressed", String(on));
+    codeView?.setWrap(on);
   };
   element("history").onclick = () => {
     if (!cloudDocument) return;

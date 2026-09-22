@@ -83,6 +83,13 @@ export function serveSite(options: { accounts?: Accounts; port?: number; hostnam
         return Response.redirect(`${url.origin}${url.pathname.slice(0, -1)}${url.search}`, 308);
       }
 
+      // /p/<token>/raw is the paste's text, the address a curl or a "Raw" link wants.
+      const rawPaste = url.pathname.match(/^\/p\/([A-Za-z0-9_-]{43})\/raw$/);
+      if (rawPaste) {
+        const target = `${url.origin}/api/v1/pastes/${rawPaste[1]}/raw${url.search}`;
+        return (await api(new Request(target, { method: request.method, headers: request.headers }), ip))!;
+      }
+
       const sharedPage = /^\/(s|p)\/[A-Za-z0-9_-]{43}$/.test(url.pathname);
       const file = resolve(sharedPage ? "/viewer" : url.pathname);
       if (!file) {
