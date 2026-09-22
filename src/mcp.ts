@@ -8,8 +8,8 @@ import { cloudAction, cloudRequest, pasteLocation, sharedLocation } from "./clou
 const string = { type: "string" };
 const role = { type: "string", enum: ["view", "edit"] };
 const definitions: [string, string, Record<string, unknown>, string[]][] = [
-  ["paste_create", "Create an anonymous paste: a Markdown document behind a secret link, no account needed. Expires after 7 days by default (1h, 1d, 7d or 30d), 256 KB at most. Returns the URL; keep it, the server cannot show it again.", { source: string, title: string, expiresIn: { type: "string", enum: ["1h", "1d", "7d", "30d"] } }, ["source"]],
-  ["paste_get", "Read an anonymous paste by its URL.", { url: string }, ["url"]],
+  ["paste_create", "Create an anonymous paste: any text file behind a secret link, no account needed. Markdown renders as a document; code (JSON, JavaScript, Python, YAML, SQL and 30 more) is highlighted with folding. The language is detected from the title's extension, else from the content; pass language to force one. Expires after 7 days by default (1h, 1d, 7d or 30d), 256 KB at most. Returns the URL and a raw URL; keep them, the server cannot show them again.", { source: string, title: { type: "string", description: "A file name; its extension decides the language." }, language: { type: "string", description: "A highlight.js name such as json, javascript, python, bash, yaml or markdown. Detected when omitted." }, expiresIn: { type: "string", enum: ["1h", "1d", "7d", "30d"] } }, ["source"]],
+  ["paste_get", "Read an anonymous paste by its URL. Returns the source with its title, language and mime type.", { url: string }, ["url"]],
   ["paste_delete", "Delete an anonymous paste by its URL. The link stops working for everyone.", { url: string }, ["url"]],
   ["settings_get", "Read the verified account's latest settings and Markdown workspace snapshot, including its revision.", {}, []],
   ["settings_save", "Save settings.json and workspace.json. Use the revision from settings_get, or 0 for a first save. Stale saves are rejected.", {
@@ -294,7 +294,7 @@ export async function runMcp() {
         result = await cloudRequest(name === "settings_revisions" ? "settings/revisions" : "settings", name === "settings_save" ? "PUT" : "GET", name === "settings_save" ? { snapshot: args.snapshot, ifRevision: args.ifRevision } : undefined);
       } else if (name.startsWith("paste_")) {
         if (name === "paste_create")
-          result = await cloudRequest("pastes", "POST", { source: args.source, title: args.title, expiresIn: args.expiresIn });
+          result = await cloudRequest("pastes", "POST", { source: args.source, title: args.title, expiresIn: args.expiresIn, language: args.language });
         else {
           const { token, config } = pasteLocation(String(args.url));
           result = await cloudRequest(`pastes/${token}`, name === "paste_delete" ? "DELETE" : "GET", undefined, config);

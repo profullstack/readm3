@@ -154,7 +154,7 @@ export function createApi(store: Store, configuredOrigin?: string) {
       }
       // Anonymous pastes: no account, the link is the capability. Created, read and
       // deleted by whoever holds the token; never listed.
-      const paste = path.match(/^pastes(?:\/([A-Za-z0-9_-]{43}))?$/);
+      const paste = path.match(/^pastes(?:\/([A-Za-z0-9_-]{43})(\/raw)?)?$/);
       if (paste) {
         if (!paste[1] && request.method === "POST") {
           limit(`paste-create:${ip}`, 10);
@@ -163,7 +163,10 @@ export function createApi(store: Store, configuredOrigin?: string) {
             {
               id: created.id,
               url: `${origin}/p/${created.token}`,
+              raw: `${origin}/p/${created.token}/raw`,
               title: created.title,
+              language: created.language,
+              mime: created.mime,
               createdAt: created.createdAt,
               expiresAt: created.expiresAt,
               bytes: created.bytes,
@@ -173,7 +176,22 @@ export function createApi(store: Store, configuredOrigin?: string) {
         }
         if (paste[1] && request.method === "GET") {
           limit(`paste-read:${ip}`, 120);
-          return json(readPaste(store, paste[1]));
+          const found = readPaste(store, paste[1]);
+          if (!paste[2]) return json(found);
+          // The raw text. Shown in the browser it is always text/plain, never the
+          // language's own type: an HTML or SVG paste rendered on this origin would
+          // run as this site. The download carries the real type, as an attachment.
+          const download = url.searchParams.get("download") === "1";
+          const filename = `filename*=UTF-8''${encodeURIComponent(found.title)}`;
+          return new Response(found.source, {
+            headers: {
+              ...headers,
+              "content-type": download ? found.mime : "text/plain; charset=utf-8",
+              "content-disposition": download ? `attachment; ${filename}` : `inline; ${filename}`,
+              "content-security-policy": "default-src 'none'; sandbox",
+              "x-robots-tag": "noindex, nofollow",
+            },
+          });
         }
         if (paste[1] && request.method === "DELETE") {
           limit(`paste-write:${ip}`, 30);

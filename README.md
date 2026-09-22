@@ -250,19 +250,33 @@ Full permissions, accounts, CLI, API, and MCP documentation: https://readm3.com/
 
 ```sh
 readm3 paste notes.md                  # prints https://readm3.com/p/<token>
+readm3 paste config.json               # any file: JSON, code, YAML, SQL, a diff…
 cat notes.md | readm3 paste --expires 1d --title "Standup"
+kubectl get pods -o yaml | readm3 paste    # no name needed, the content is sniffed
 readm3 paste get URL --raw
 readm3 paste delete URL
+curl https://readm3.com/p/<token>/raw  # the text itself
 ```
 
-A paste is a Markdown file behind a secret link. No sign-in, no account: anyone with
-the link can read it, nobody can list or search for it, and only the hash of the
-secret is stored, so the link cannot be shown again. The Share button in the web
-reader makes one when you are signed out. Pastes expire after seven days by default
-(1h, 1d, 7d or 30d), are limited to 256 KB, and can be deleted by anyone holding the
-link. The same three calls are `POST /api/v1/pastes`, `GET /api/v1/pastes/<token>` and
-`DELETE /api/v1/pastes/<token>`, and the `paste_create`, `paste_get` and
-`paste_delete` MCP tools.
+A paste is a file behind a secret link. No sign-in, no account: anyone with the link
+can read it, nobody can list or search for it, and only the hash of the secret is
+stored, so the link cannot be shown again. The Share button in the web reader makes
+one when you are signed out. Pastes expire after seven days by default (1h, 1d, 7d or
+30d), are limited to 256 KB, and can be deleted by anyone holding the link.
+
+A paste can be any text, not only Markdown. Markdown renders as a document. Anything
+else (JSON, JavaScript, TypeScript, Python, shell, YAML, HTML, CSS, SQL, Go, Rust,
+Java, C, Dockerfiles, diffs and some thirty languages in all) is shown with syntax
+colors in the reader's theme, line numbers, and folding: click the arrow beside a
+line, or Fold all, to collapse a block to `{ ⋯ 12 lines }`. Minified JSON is shown
+pretty-printed. Every paste page has Copy, Raw and Download; Raw is
+`/p/<token>/raw`, always served as plain text, and `?download=1` sends the file with
+its own type. The language comes from the file name's extension when there is one and
+from the content otherwise, so a piped `kubectl` dump is YAML and a piped `{...}` is
+JSON without saying so; `--language` (or `language` in the API) forces one. The API is
+`POST /api/v1/pastes`, `GET /api/v1/pastes/<token>`, `GET /api/v1/pastes/<token>/raw`
+and `DELETE /api/v1/pastes/<token>`, and the `paste_create`, `paste_get` and
+`paste_delete` MCP tools; each answer carries `language` and `mime`.
 
 ## Web reader
 
