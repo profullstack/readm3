@@ -194,6 +194,11 @@ ${options.main}
   <div class="foot-links">
     <span>MIT. Built by <a href="https://profullstack.com">Profullstack</a> on <a href="${HQTUI}">HQTUI</a>.</span>
     <span><a href="${REPO}">Source</a> · <a href="${NPM}">npm</a> · v${VERSION}</span>
+    <nav class="webring" aria-label="Profullstack webring">
+      <a href="https://rssamplifier.com/ring/profullstack/previous?from=https%3A%2F%2Freadm3.com%2F" rel="prev">&lt;&lt;</a>
+      <a href="https://rssamplifier.com/ring/profullstack">Profullstack</a>
+      <a href="https://rssamplifier.com/ring/profullstack/next?from=https%3A%2F%2Freadm3.com%2F" rel="next">&gt;&gt;</a>
+    </nav>
   </div>
   <aside data-cp-ad data-slot="${CP_SLOT}" data-format="text_link"></aside>
 </footer>
@@ -475,6 +480,12 @@ write("robots.txt", robots);
 write("sitemap.xml", sitemap);
 write("llms.txt", llms);
 write("favicon.svg", favicon);
+write(".well-known/openwebring.json", JSON.stringify({
+  openwebring: "0.1",
+  site: { url: "https://readm3.com/", name: "readm3" },
+  made_by: "both",
+  rings: [{ ring: "https://rssamplifier.com/ring/profullstack", slug: "readm3-com" }],
+}, null, 2) + "\n");
 cpSync(join(here, "assets", "app.js"), join(out, "app.js"));
 
 // Browser assets are content-addressed so existing workers and open tabs stay
