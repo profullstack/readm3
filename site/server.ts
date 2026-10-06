@@ -67,6 +67,17 @@ export function serveSite(options: { accounts?: Accounts; port?: number; hostnam
         return Response.redirect(`https://${host.slice(4)}${url.pathname}${url.search}`, 308);
       }
 
+      // Health check for status.profullstack.com: the process serves and the database answers.
+      if (url.pathname === "/api/health" && request.method === "GET") {
+        const headers = { "cache-control": "no-store" };
+        try {
+          accounts.db.query("SELECT 1").get();
+          return Response.json({ status: "ok", db: "ok" }, { headers });
+        } catch {
+          return Response.json({ status: "error", db: "down" }, { status: 503, headers });
+        }
+      }
+
       // Railway overwrites X-Real-IP at the edge; never trust client-supplied X-Forwarded-For.
       const ip = process.env.RAILWAY_ENVIRONMENT_ID
         ? request.headers.get("x-real-ip") || server.requestIP(request)?.address || "unknown"
