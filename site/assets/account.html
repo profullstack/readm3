@@ -37,6 +37,7 @@
           <input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" maxlength="254" required>
           <button id="send-link" class="primary">Continue with email <span aria-hidden="true">→</span></button>
         </form>
+        <a id="coinpay-sign-in" class="secondary" href="/api/v1/coinpay/oauth/start" hidden>Sign in with CoinPay</a>
         <p class="fine-print">No password to remember. Every sign-in link is private, expires in 15 minutes, and works once.</p>
       </div>
       <div id="check-email" hidden>
@@ -55,7 +56,7 @@
         <button id="cancel-verify" class="text-button">Use a different email</button>
       </div>
       <div id="profile" hidden>
-        <div class="profile-heading"><span class="card-mark" aria-hidden="true">✓</span><span class="verified">Email verified</span></div>
+        <div class="profile-heading"><span class="card-mark" aria-hidden="true">✓</span><span id="verified-badge" class="verified">Email verified</span></div>
         <h2>Your account.</h2>
         <p id="account-email" class="account-email"></p>
         <form id="profile-form">
@@ -63,6 +64,11 @@
           <input id="display-name" name="displayName" autocomplete="nickname" maxlength="80" required>
           <button class="secondary">Save name</button>
         </form>
+        <div id="coinpay-link" class="coinpay-link" hidden>
+          <p id="coinpay-linked"></p>
+          <a id="coinpay-connect" class="secondary" href="/api/v1/coinpay/oauth/start?next=%2Faccount%3Fcoinpay%3Dlinked">Link your CoinPay account</a>
+          <button id="coinpay-unlink" class="text-button" type="button">Unlink CoinPay</button>
+        </div>
         <a href="/viewer" class="primary reader-link">Open your reader <span aria-hidden="true">→</span></a>
         <p class="fine-print">Your account is ready for shared workspaces. Files opened in the local reader stay on this device.</p>
         <div class="session-actions"><button id="logout" class="text-button">Sign out</button><button id="logout-all" class="text-button">Sign out all devices</button></div>

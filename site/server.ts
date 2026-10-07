@@ -11,6 +11,7 @@ import { Accounts } from "../server/accounts.ts";
 import { accountMailer } from "../server/account-mail.ts";
 import { Store } from "../server/store.ts";
 import { createApi } from "../server/api.ts";
+import { CoinPay } from "../server/coinpay.ts";
 import { createSyncApi } from "../server/sync-api.ts";
 
 const dist = join(dirname(fileURLToPath(import.meta.url)), "dist");
@@ -42,7 +43,7 @@ function cacheFor(path: string): string {
   return "public, max-age=300";
 }
 
-export function serveSite(options: { accounts?: Accounts; port?: number; hostname?: string } = {}) {
+export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorParameters<typeof CoinPay>[2]; port?: number; hostname?: string } = {}) {
   const listenPort = options.port ?? port;
   const accounts = options.accounts ?? new Accounts(
     process.env.READM3_DB || join(dirname(dist), "..", "data", "readm3.sqlite"),
@@ -50,7 +51,8 @@ export function serveSite(options: { accounts?: Accounts; port?: number; hostnam
     accountMailer(),
   );
   const store = new Store(accounts.db);
-  const api = createApi(store, accounts.origin);
+  // COINPAY_OAUTH_CLIENT_ID/SECRET turn on Sign in with CoinPay; READM3_COINPAY_TRUSTED_CLIENTS lets apps call the API.
+  const api = createApi(store, accounts.origin, new CoinPay(store, accounts, options.coinpay));
   const syncApi = createSyncApi(store, accounts);
   return Bun.serve({
     port: listenPort,

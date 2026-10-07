@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { applyFiles, planApply } from "@profullstack/synconfig";
-import { configDir, credentials, writeConfig } from "./account.ts";
+import { accountClient, configDir, credentials, writeConfig } from "./account.ts";
 import { loadSettings, localSettings, saveSettings, syncContext, syncStatus } from "./settings-sync.ts";
 import { validateWorkspace, type SyncedWorkspace } from "./sync-schema.ts";
 import { files, scan } from "./tree.ts";
@@ -9,7 +9,7 @@ import { isFlavor } from "./flavors.ts";
 import { themeList } from "@profullstack/hqtui";
 
 export const ACCOUNT_USAGE = `Account and sync commands
-  readm3 whoami                         Show the verified account
+  readm3 whoami                         Show the verified account and linked CoinPay account
   readm3 settings [--theme NAME] [--flavor NAME]
   readm3 save [file-or-directory] [--force]
   readm3 load [output-directory] [--dry-run] [--force]
@@ -82,7 +82,13 @@ export async function accountCommand(argv: string[]): Promise<boolean> {
   for (const option of Object.keys(options)) if (!(allowed[command] || []).includes(option)) throw new Error(`--${option} is not supported by ${command}.`);
   let result: unknown;
   switch (command) {
-    case "whoami": { const account = await credentials(); result = { user: account.user, api: account.api }; break; }
+    case "whoami": {
+      const account = await credentials();
+      // Linked sign-in identities (CoinPay) come from account_me; /me stays the bare user.
+      const me = await accountClient(account)<{ identities?: unknown[] }>("/actions", "POST", { operation: "account_me", args: {} });
+      result = { user: account.user, identities: me.identities ?? [], api: account.api };
+      break;
+    }
     case "settings": {
       const settings = localSettings();
       if (typeof options.theme === "string") {

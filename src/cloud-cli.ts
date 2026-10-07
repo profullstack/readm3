@@ -11,11 +11,12 @@ import {
 } from "./cloud-client.ts";
 export const CLOUD_USAGE = `Shared Markdown
   readm3 login --token-stdin              Save a personal API token securely
+  readm3 login --coinpay                  Sign in with CoinPay in the browser; saves a token
   readm3 logout                           Remove the local token
-  readm3 share FILE --org ID [--role view|edit]
+  readm3 share FILE [--org ID] [--role view|edit]
   readm3 docs list [--org ID] [--search TEXT] [--limit N] [--offset N]
   readm3 docs get ID [--raw]
-  readm3 docs create FILE --org ID [--title NAME]
+  readm3 docs create FILE [--org ID] [--title NAME]
   readm3 docs update ID FILE --base VERSION
   readm3 docs delete ID
   readm3 docs history ID
@@ -36,6 +37,7 @@ export const CLOUD_USAGE = `Shared Markdown
   readm3 cloud OPERATION --args '{"key":"value"}'
   readm3 mcp                              Start the stdio MCP server
 
+Without --org a document goes to your personal workspace.
 FILE may be - for stdin. --raw prints the source text; other results are JSON.
 READM3_URL selects a self-hosted server; READM3_TOKEN supplies an API token.
 View links cannot write. Edit links can save versions. Owners administer files.
@@ -74,7 +76,7 @@ export async function cloudMain(argv: string[]) {
     const value = argv[i]!;
     if (value.startsWith("--")) {
       const name = value.slice(2);
-      if (["raw", "token-stdin", "json"].includes(name)) flags[name] = "true";
+      if (["raw", "token-stdin", "json", "coinpay"].includes(name)) flags[name] = "true";
       else {
         if (!argv[i + 1] || argv[i + 1]!.startsWith("--"))
           throw new Error(`${value} needs a value.`);
@@ -92,11 +94,13 @@ export async function cloudMain(argv: string[]) {
     return value;
   };
   if (command === "login") {
-    if (!flags["token-stdin"])
+    if (!flags["token-stdin"] && !flags.coinpay)
       throw new Error(
-        "Use --token-stdin and paste the API token, then end input (Ctrl+D). Tokens are created at /admin.",
+        "Use --coinpay to sign in with CoinPay, or --token-stdin and paste the API token, then end input (Ctrl+D). Tokens are created at /admin.",
       );
-    const token = readFileSync(0, "utf8").trim();
+    const token = flags.coinpay
+      ? await (await import("./coinpay-login.ts")).coinpayLogin(cloudConfig("-"))
+      : readFileSync(0, "utf8").trim();
     if (!token) throw new Error("No token supplied.");
     const config = cloudConfig(token);
     const user = await cloudAction("account_me", {}, config);
@@ -178,7 +182,7 @@ export async function cloudMain(argv: string[]) {
     user: "userId",
   };
   for (const [name, value] of Object.entries(flags))
-    if (!["raw", "json"].includes(name)) args[names[name] || name] = value;
+    if (!["raw", "json", "coinpay"].includes(name)) args[names[name] || name] = value;
   if (command === "share") {
     const file = positional[0];
     const doc = await cloudAction<{ id: string }>("documents_create", {

@@ -117,7 +117,8 @@ Create a personal token under **/admin → API tokens**, then:
 
 ```sh
 readm3 login --token-stdin
-# Paste your token, then press Ctrl+D.
+# Paste your token, then press Ctrl+D. Or sign in with CoinPay in the browser:
+readm3 login --coinpay
 readm3 orgs list
 readm3 share README.md --org ORGANIZATION_ID
 readm3 share proposal.md --org ORGANIZATION_ID --role edit
@@ -140,7 +141,9 @@ Personal tokens expire after 90 days and can be revoked in the dashboard.
 
 Base URL: `https://readm3.com/api/v1`.
 
-Use `Authorization: Bearer PERSONAL_TOKEN`. Send JSON request bodies.
+Use `Authorization: Bearer PERSONAL_TOKEN`. Send JSON request bodies. Apps the
+server trusts (`READM3_COINPAY_TRUSTED_CLIENTS`) may send a CoinPay access token as
+the bearer instead, and act as the CoinPay account's readm3 user.
 Browser sessions use HttpOnly cookies and same-origin requests. Sign-in and sign-out
 use `/account` and the email account endpoints under `/api/auth/*`.
 
@@ -148,7 +151,7 @@ use `/account` and the email account endpoints under `/api/auth/*`.
 | --- | --- | --- |
 | GET | /me | Current browser or token identity |
 | GET | /documents | List readable documents |
-| POST | /documents | Create: orgId, title, source; optional teamId/access |
+| POST | /documents | Create: title, source; optional orgId (default: your personal workspace), teamId, access |
 | GET | /documents/:id | Current source and version metadata |
 | PATCH | /documents/:id | Save: baseVersion, source; optional title |
 | DELETE | /documents/:id | Permanently delete, owner/admin only |

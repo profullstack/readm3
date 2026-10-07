@@ -17,7 +17,7 @@ const definitions: [string, string, Record<string, unknown>, string[]][] = [
     ifRevision: { type: "integer", minimum: 0 },
   }, ["snapshot", "ifRevision"]],
   ["settings_revisions", "List the verified account's last ten sync revisions.", {}, []],
-  ["account_me", "Show the authenticated readm3 user.", {}, []],
+  ["account_me", "Show the authenticated readm3 user, with any linked sign-in identities (CoinPay) under identities.", {}, []],
   ["organizations_list", "List organizations you belong to.", {}, []],
   [
     "organizations_create",
@@ -127,7 +127,7 @@ const definitions: [string, string, Record<string, unknown>, string[]][] = [
   ],
   [
     "documents_create",
-    "Create a private Markdown document owned by you.",
+    "Create a private Markdown document owned by you. Without orgId it goes to your personal workspace.",
     {
       orgId: string,
       title: string,
@@ -135,7 +135,7 @@ const definitions: [string, string, Record<string, unknown>, string[]][] = [
       teamId: string,
       access: { type: "string", enum: ["private", "view", "edit"] },
     },
-    ["orgId", "title", "source"],
+    ["title", "source"],
   ],
   [
     "documents_get",
