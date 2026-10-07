@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { IDENTITY_SCHEMA, VERIFIED_IDENTITY } from "./accounts.ts";
 
 export type User = {
   id: string;
@@ -84,6 +85,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS versions_document ON versions(documentId,createdAt);
       CREATE INDEX IF NOT EXISTS shares_document ON shares(documentId);
       CREATE INDEX IF NOT EXISTS sessions_user ON sessions(userId);
+      ${IDENTITY_SCHEMA}
     `);
     // Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS leaves an
     // existing table alone, so a live database gets them here, once.
@@ -110,7 +112,7 @@ export class Store {
   }
   authenticate(token: string): User | null {
     const session = this.get<{ userId: string }>(
-      "SELECT s.userId FROM sessions s JOIN account_emails e ON e.userId=s.userId WHERE s.tokenHash=? AND s.expiresAt>?",
+      `SELECT s.userId FROM sessions s JOIN users u ON u.id=s.userId WHERE s.tokenHash=? AND s.expiresAt>? AND ${VERIFIED_IDENTITY}`,
       checksum(token),
       now(),
     );
@@ -277,8 +279,34 @@ export class Store {
     )
       throw new HttpError(403, "Join the team before adding a document to it.");
   }
+  /**
+   * The organization a document goes to when the caller names none: the oldest one
+   * they own, which is the personal workspace ensureWorkspace made for them, else
+   * their only membership. Several memberships and no owned one is ambiguous.
+   */
+  defaultOrg(user: User): string {
+    const owned = this.get<{ id: string }>(
+      "SELECT o.id FROM organizations o JOIN members m ON m.orgId=o.id WHERE m.userId=? AND m.role='owner' ORDER BY o.createdAt, o.rowid LIMIT 1",
+      user.id,
+    );
+    if (owned) return owned.id;
+    const memberships = this.all<{ orgId: string }>(
+      "SELECT orgId FROM members WHERE userId=? LIMIT 2",
+      user.id,
+    );
+    if (memberships.length === 1) return memberships[0]!.orgId;
+    throw new HttpError(
+      400,
+      memberships.length
+        ? "orgId is required: you belong to several organizations and own none."
+        : "orgId is required: you belong to no organization.",
+    );
+  }
   createDocument(user: User, args: Record<string, unknown>) {
-    const orgId = text(args.orgId, "orgId");
+    const orgId =
+      args.orgId === undefined || args.orgId === null || args.orgId === ""
+        ? this.defaultOrg(user)
+        : text(args.orgId, "orgId");
     this.orgAccess(user, orgId);
     const title = text(args.title, "Title");
     const markdown = source(args.source);

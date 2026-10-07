@@ -235,8 +235,10 @@ Owners can restore prior versions, pin links to a version, and revoke links.
 
 ```sh
 readm3 login --token-stdin             # token from /admin → API tokens
+readm3 login --coinpay                 # or sign in with CoinPay in the browser
+readm3 whoami                          # the account, and its linked CoinPay account
 readm3 orgs list
-readm3 share README.md --org ORG_ID    # view link by default
+readm3 share README.md --org ORG_ID    # view link by default; without --org, your personal workspace
 readm3 docs update DOC_ID notes.md --base VERSION_ID
 readm3 docs history DOC_ID
 readm3 mcp                            # stdio MCP, same account permissions
@@ -361,6 +363,80 @@ Do not enable a separate unverified registration or password-recovery path.
 | `POST /api/auth/logout-all` | Revoke all sessions belonging to the account |
 
 POST requests require JSON and an `Origin` matching `READM3_URL`.
+
+### Sign in with CoinPay
+
+[CoinPay](https://coinpayportal.com) is an OAuth 2.1 / OpenID provider, and a readm3
+account can sign in with it instead of, or as well as, an email link. Register readm3
+as a CoinPay OAuth client with the redirect URI
+`https://readm3.com/api/v1/coinpay/oauth/callback` (for a self-hosted server,
+`$READM3_URL/api/v1/coinpay/oauth/callback`) and the scopes `openid profile email`,
+then set:
+
+| Variable | Purpose |
+| --- | --- |
+| `COINPAY_OAUTH_CLIENT_ID` | readm3's CoinPay client ID. Unset, the button is hidden and the routes answer 503. |
+| `COINPAY_OAUTH_CLIENT_SECRET` | Its client secret. Server-side only; the CLI never sees it. |
+| `COINPAY_URL` | Default `https://coinpayportal.com`. |
+
+**Sign in with CoinPay** on `/account` runs the authorization code grant with PKCE
+(S256); the state and verifier live in a ten-minute, single-use database row bound to
+an HttpOnly cookie. On the way back:
+
+- signed in already: the CoinPay account is linked to this readm3 account, unless it
+  is linked to a different one (refused) or this account has another CoinPay account;
+- a CoinPay account linked before: its readm3 account signs in;
+- otherwise: a new readm3 account, with its own workspace, is created and linked.
+
+CoinPay reports every email as unverified, so its email never matches, merges into, or
+becomes an account email. The same address on an existing email account is a
+different account until you link them while signed in. A linked account can be
+unlinked on `/account` when it also has an email; an account that signs in only with
+CoinPay cannot be, since that would lock it out. Links, unlinks, sign-ins and app calls
+are recorded in `identity_events`; identities are in `user_identities`.
+
+`readm3 login --coinpay` runs the same grant from the terminal against a loopback
+redirect (`http://127.0.0.1:PORT/callback`, any port), then
+`POST /api/v1/coinpay/oauth/cli-exchange {code, code_verifier, redirect_uri}` has
+readm3 make the exchange and return an ordinary 90-day readm3 API token, saved like
+`login --token-stdin`. Set `READM3_NO_BROWSER=1` to print the link without opening it.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/v1/coinpay/status` | Whether CoinPay is configured, its client ID, and your linked identities |
+| `GET /api/v1/coinpay/oauth/start[?next=/admin]` | Redirect to CoinPay to sign in or link |
+| `GET /api/v1/coinpay/oauth/callback` | CoinPay's redirect target; sets the browser session |
+| `POST /api/v1/coinpay/oauth/cli-exchange` | Trade a loopback grant for a readm3 API token |
+| `POST /api/v1/coinpay/unlink` | Unlink CoinPay from the signed-in account |
+
+### Trusted apps
+
+Other apps that sign people in with CoinPay can call the readm3 API as those people
+with the CoinPay access token they already hold, without a readm3 token:
+`Authorization: Bearer <CoinPay access token>`. Only apps on an allowlist are accepted:
+
+```sh
+READM3_COINPAY_TRUSTED_CLIENTS=ai-profullstack,another-client-id  # CoinPay client_ids
+```
+
+readm3 checks each token by calling CoinPay's userinfo (which verifies its signature
+and expiry), and only then reads `client_id` from the token; a client not on the list
+gets a 403 naming it. Answers are cached by the token's SHA-256 until it expires or for
+five minutes, whichever is sooner. The CoinPay account maps to its linked readm3 user,
+and one that has never been seen gets a new account exactly as a first sign-in would.
+Each validation is recorded in `identity_events` with the acting `client_id`. These are
+server-to-server calls: a browser `Origin` other than readm3's is still refused.
+
+```sh
+curl -X POST https://readm3.com/api/v1/documents -H "authorization: Bearer $COINPAY_TOKEN" \
+  -H 'content-type: application/json' -d '{"title":"Answer.md","source":"# Hi","access":"private"}'
+curl -X POST https://readm3.com/api/v1/documents/DOC_ID/shares -H "authorization: Bearer $COINPAY_TOKEN" \
+  -H 'content-type: application/json' -d '{"role":"view"}'   # → {"url":"https://readm3.com/s/…"}
+```
+
+`orgId` is optional on `POST /api/v1/documents`: without it a document goes to the
+caller's personal workspace (the oldest organization they own), else their only
+organization; several memberships and none owned is a 400 asking for `orgId`.
 
 ### Building and serving
 

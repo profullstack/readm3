@@ -52,3 +52,16 @@ test("email errors are visible and verification is protected against embedding a
   await expect(page.getByRole("button", { name: "Continue with email" })).toBeEnabled();
   await expect(page.locator("#check-email")).not.toBeVisible();
 });
+
+test("Sign in with CoinPay creates an account whose only sign-in is CoinPay", async ({ page }) => {
+  await page.goto("/account");
+  await page.getByRole("link", { name: "Sign in with CoinPay" }).click();
+  await expect(page.getByText("CoinPay account", { exact: true })).toBeVisible();
+  await expect(page.locator("#account-email")).toHaveText("Signed in with CoinPay");
+  await expect(page.locator("#coinpay-linked")).toContainText("CoinPay linked (coin@example.com).");
+  await expect(page.locator("#coinpay-linked")).toContainText("cannot be unlinked");
+  await expect(page.getByRole("button", { name: "Unlink CoinPay" })).toBeHidden();
+  await expect(page.getByLabel("Display name")).toHaveValue("Coin Reader");
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(page.getByRole("link", { name: "Sign in with CoinPay" })).toBeVisible();
+});

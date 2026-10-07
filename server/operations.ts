@@ -54,7 +54,14 @@ export function operate(
   };
   switch (operation) {
     case "account_me":
-      return user;
+      // Linked sign-in identities (CoinPay) travel with the user, for whoami.
+      return {
+        ...user,
+        identities: store.all(
+          "SELECT provider,providerUserId,email,createdAt,lastUsedAt FROM user_identities WHERE userId=? ORDER BY createdAt",
+          user.id,
+        ),
+      };
     case "organizations_list":
       return store.all(
         user.admin

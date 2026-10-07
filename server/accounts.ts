@@ -8,13 +8,26 @@ const id = () => randomBytes(12).toString("base64url");
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const stamp = () => new Date().toISOString();
 const SESSION_SECONDS = 30 * 86400;
-export type Account = { id: string; username: string; displayName: string; admin: number; createdAt: string; email: string; emailVerifiedAt: string };
+/** `email` is null for an account that signs in only through a linked identity (CoinPay). */
+export type Account = { id: string; username: string; displayName: string; admin: number; createdAt: string; email: string | null; emailVerifiedAt: string | null };
 export type Mail = { to: string; url: string };
 export type SendMail = (mail: Mail) => Promise<void>;
 export class AccountError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 const publicColumns = "u.id,u.username,u.displayName,u.admin,u.createdAt,e.email,e.emailVerifiedAt";
+/**
+ * Sign-in identities other than email (CoinPay OAuth today), and an audit trail of
+ * their link, unlink, sign-in and trusted-app events. Shared with server/store.ts:
+ * either class may open the database first.
+ */
+export const IDENTITY_SCHEMA = `
+      CREATE TABLE IF NOT EXISTS user_identities (id TEXT PRIMARY KEY, userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, provider TEXT NOT NULL, providerUserId TEXT NOT NULL, email TEXT, createdAt TEXT NOT NULL, lastUsedAt TEXT NOT NULL, UNIQUE(provider, providerUserId));
+      CREATE INDEX IF NOT EXISTS user_identities_user ON user_identities(userId);
+      CREATE TABLE IF NOT EXISTS identity_events (id TEXT PRIMARY KEY, userId TEXT REFERENCES users(id) ON DELETE SET NULL, provider TEXT NOT NULL, providerUserId TEXT NOT NULL, event TEXT NOT NULL CHECK(event IN ('link','unlink','signin','api')), clientId TEXT, createdAt TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS identity_events_user ON identity_events(userId, createdAt);`;
+/** A user may authenticate with a verified email, or with a linked identity. Email alone stays the only way to create one by mail. */
+export const VERIFIED_IDENTITY = "(EXISTS (SELECT 1 FROM account_emails ae WHERE ae.userId=u.id) OR EXISTS (SELECT 1 FROM user_identities ui WHERE ui.userId=u.id))";
 
 /** Uses the same users/sessions schema as the shared workspace store. */
 export class Accounts {
@@ -35,6 +48,7 @@ export class Accounts {
       CREATE TABLE IF NOT EXISTS email_challenges (tokenHash TEXT PRIMARY KEY, email TEXT NOT NULL, expiresAt TEXT NOT NULL, createdAt TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS email_challenges_email ON email_challenges(email);
       CREATE TABLE IF NOT EXISTS account_rate_limits (key TEXT PRIMARY KEY, count INTEGER NOT NULL, expiresAt INTEGER NOT NULL);
+      ${IDENTITY_SCHEMA}
     `);
   }
   private rate(key: string, limit: number, seconds: number) {
@@ -50,11 +64,19 @@ export class Accounts {
   token(request: Request) {
     return request.headers.get("cookie")?.split(";").map(s => s.trim()).find(s => s.startsWith(`${this.cookieName}=`))?.slice(this.cookieName.length + 1) ?? "";
   }
-  /** Only verified identities are returned. Use this for every workspace API. */
+  /** Only verified identities (an email, or a linked CoinPay account) are returned. Use this for every workspace API. */
   authenticate(token: string): Account | null {
     if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
     return this.db.query(`SELECT ${publicColumns} FROM sessions s JOIN users u ON u.id=s.userId
-      JOIN account_emails e ON e.userId=u.id WHERE s.tokenHash=? AND s.expiresAt>?`).get(hash(token), stamp()) as Account | null;
+      LEFT JOIN account_emails e ON e.userId=u.id WHERE s.tokenHash=? AND s.expiresAt>? AND ${VERIFIED_IDENTITY}`).get(hash(token), stamp()) as Account | null;
+  }
+  /** Replace the browser's current session (if any) with a new one. Email and CoinPay sign-in both end here. */
+  startSession(userId: string, oldToken: string, label: string) {
+    this.db.query("DELETE FROM sessions WHERE tokenHash=? OR expiresAt<=?").run(hash(oldToken), stamp());
+    const session = secret();
+    this.db.query("INSERT INTO sessions (id,userId,tokenHash,kind,label,expiresAt,createdAt) VALUES (?,?,?,?,?,?,?)")
+      .run(id(), userId, hash(session), "browser", label, new Date(Date.now() + SESSION_SECONDS * 1000).toISOString(), stamp());
+    return session;
   }
   requireAccount(request: Request): Account {
     const user = this.authenticate(this.token(request));
@@ -99,10 +121,7 @@ export class Accounts {
         identity = { userId };
       }
       this.db.query("DELETE FROM email_challenges WHERE email=?").run(email);
-      this.db.query("DELETE FROM sessions WHERE tokenHash=? OR expiresAt<=?").run(hash(oldToken), stamp());
-      const session = secret();
-      this.db.query("INSERT INTO sessions (id,userId,tokenHash,kind,label,expiresAt,createdAt) VALUES (?,?,?,?,?,?,?)")
-        .run(id(), identity.userId, hash(session), "browser", "Email sign-in", new Date(Date.now() + SESSION_SECONDS * 1000).toISOString(), stamp());
+      const session = this.startSession(identity.userId, oldToken, "Email sign-in");
       return { user: this.authenticate(session)!, session };
     })();
   }

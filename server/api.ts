@@ -1,4 +1,5 @@
-import { Store, HttpError, checksum, now, text } from "./store.ts";
+import { Store, HttpError, checksum, now, text, type User } from "./store.ts";
+import { type CoinPay, isCoinPayToken } from "./coinpay.ts";
 import { operate } from "./operations.ts";
 import { createPaste, deletePaste, readPaste } from "./pastes.ts";
 import { binaryType } from "../src/code.ts";
@@ -79,7 +80,11 @@ function token(request: Request, origin: string) {
       ?.slice(name.length + 1) || ""
   );
 }
-export function createApi(store: Store, configuredOrigin?: string) {
+export function createApi(
+  store: Store,
+  configuredOrigin?: string,
+  coinpay?: CoinPay,
+) {
   return async (request: Request, ip = "local"): Promise<Response | null> => {
     const url = new URL(request.url);
     if (!url.pathname.startsWith("/api/v1/")) return null;
@@ -91,12 +96,41 @@ export function createApi(store: Store, configuredOrigin?: string) {
       if (sentOrigin && sentOrigin !== origin)
         throw new HttpError(403, "Cross-origin API requests are not allowed.");
       const credential = token(request, origin);
-      const user = credential ? store.authenticate(credential) : null;
+      let user: User | null = null;
+      // A trusted CoinPay app calls with the access token CoinPay issued it, which
+      // is a JWT; readm3's own tokens never contain a dot.
+      if (
+        coinpay &&
+        request.headers.get("authorization")?.startsWith("Bearer ") &&
+        isCoinPayToken(credential)
+      ) {
+        // Each uncached token costs a userinfo call to CoinPay; cap them per address.
+        limit(`coinpay-bearer:${ip}`, 300);
+        user = (await coinpay.bearer(credential)).user;
+      }
+      else user = credential ? store.authenticate(credential) : null;
       if (user) store.ensureWorkspace(user);
       const path = url.pathname.slice(8);
       if (path === "me" && request.method === "GET") return json({ user });
       if (path.startsWith("auth/"))
         throw new HttpError(410, "Sign in with a verified email at /account.");
+      if (path.startsWith("coinpay/")) {
+        if (!coinpay) {
+          if (path === "coinpay/status") return json({ enabled: false, identities: [], canUnlink: false });
+          throw new HttpError(503, "Sign in with CoinPay is not configured on this server.");
+        }
+        if (path.startsWith("coinpay/oauth/")) limit(`coinpay:${ip}`, 30);
+        if (
+          request.method !== "GET" &&
+          request.headers.has("cookie") &&
+          !request.headers.has("authorization") &&
+          !sentOrigin
+        )
+          throw new HttpError(403, "Browser writes require a same-origin Origin header.");
+        const handled = await coinpay.route(request, path, user, origin, () => body(request));
+        if (handled) return handled;
+        throw new HttpError(404, "API route not found.");
+      }
       const shared = path.match(/^shared\/([A-Za-z0-9_-]{43})$/);
       if (shared) {
         const link = store.get<{
