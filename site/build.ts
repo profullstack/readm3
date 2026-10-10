@@ -16,7 +16,7 @@ import { escape, toHtml } from "./html.ts";
 import { createHash } from "node:crypto";
 import { flatten, type Entry } from "../src/tree.ts";
 import { VERSION } from "../src/cli.ts";
-import { footerHtml, latestTemplate } from "@profullstack/footer";
+import { footerHtml } from "@profullstack/footer";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -31,12 +31,12 @@ const CP_SLOT = "b918cc2d-4bd9-45e4-9b9e-52955b4e2e54";
 
 /*
  * The shared Profullstack footer (@profullstack/footer): links, copyright and the
- * webring, from the @latest template at build time. The site's CSP allows no
- * inline <style>, so the template's CSS goes into styles.css instead (css: false).
+ * webring. Baked into every page here as the fallback, and re-rendered from the
+ * package's @latest template on each request by site/server.ts (from the
+ * options written to dist/pfs-footer.json), so a package release reaches the
+ * site without a rebuild. Public pages send no CSP, so its inline <style> is fine.
  */
-const FOOTER_TEMPLATE = await latestTemplate();
 const FOOTER_OPTIONS = {
-  template: FOOTER_TEMPLATE,
   site: "https://readm3.com/",
   links: [
     { label: "Source", href: REPO },
@@ -45,9 +45,7 @@ const FOOTER_OPTIONS = {
   ],
   tagline: `MIT licensed · v${VERSION}`,
 };
-const FOOTER = await footerHtml({ ...FOOTER_OPTIONS, css: false });
-/** The template's CSS, sanitized by the package, lifted out of its inline <style>. */
-const FOOTER_CSS = /<style>([\s\S]*?)<\/style>/.exec(await footerHtml(FOOTER_OPTIONS))?.[1] ?? "";
+const FOOTER = await footerHtml(FOOTER_OPTIONS);
 
 /* -------------------------------------------------------------- colors --- */
 
@@ -475,7 +473,7 @@ mkdirSync(out, { recursive: true });
 const css = readFileSync(join(here, "assets", "styles.css"), "utf8").replace(
   "/* THEMES */",
   themeBlocks(),
-) + "\n" + FOOTER_CSS;
+);
 
 write("index.html", home());
 write("docs/index.html", docs());
@@ -491,6 +489,7 @@ write("robots.txt", robots);
 write("sitemap.xml", sitemap);
 write("llms.txt", llms);
 write("favicon.svg", favicon);
+write("pfs-footer.json", JSON.stringify(FOOTER_OPTIONS));
 write(".well-known/openwebring.json", JSON.stringify({
   openwebring: "0.1",
   site: { url: "https://readm3.com/", name: "readm3" },
