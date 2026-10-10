@@ -4,7 +4,7 @@
  * Public pages stay static. Account APIs use verified email identities and
  * sessions persisted on the mounted database volume.
  */
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Accounts } from "../server/accounts.ts";
@@ -13,6 +13,7 @@ import { Store } from "../server/store.ts";
 import { createApi } from "../server/api.ts";
 import { CoinPay } from "../server/coinpay.ts";
 import { createSyncApi } from "../server/sync-api.ts";
+import { footerHtml } from "@profullstack/footer";
 
 const dist = join(dirname(fileURLToPath(import.meta.url)), "dist");
 const port = Number(process.env.PORT ?? 3000);
@@ -34,6 +35,31 @@ function resolve(pathname: string): string | null {
     if (existsSync(target) && statSync(target).isFile()) return target;
   }
   return null;
+}
+
+/*
+ * The shared Profullstack footer (@profullstack/footer). site/build.ts bakes it
+ * into each page and writes its options to dist/pfs-footer.json; here the baked
+ * copy is swapped for one rendered from the package's @latest template (cached
+ * an hour inside the package), so a package release reaches readm3.com without
+ * a rebuild. Any failure serves the baked page unchanged.
+ */
+const footerOptionsFile = join(dist, "pfs-footer.json");
+const footerOptions = existsSync(footerOptionsFile)
+  ? (JSON.parse(readFileSync(footerOptionsFile, "utf8")) as Parameters<typeof footerHtml>[0])
+  : null;
+const BAKED_FOOTER = /<footer class="pfs-footer"[\s\S]*?<\/footer>/;
+
+async function pageBody(file: string): Promise<{ body: BodyInit; type?: string }> {
+  if (!footerOptions || !file.endsWith(".html")) return { body: Bun.file(file) };
+  const html = await Bun.file(file).text();
+  if (!BAKED_FOOTER.test(html)) return { body: Bun.file(file) };
+  try {
+    const footer = await footerHtml(footerOptions);
+    return { body: html.replace(BAKED_FOOTER, () => footer), type: "text/html; charset=utf-8" };
+  } catch {
+    return { body: Bun.file(file) };
+  }
 }
 
 function cacheFor(path: string): string {
@@ -111,8 +137,10 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
 
       const accountPage = file === join(dist, "account", "index.html") || url.pathname === "/admin";
       const privatePage = accountPage || sharedPage || url.pathname === "/viewer";
-      return new Response(Bun.file(file), {
+      const page = privatePage ? { body: Bun.file(file) } : await pageBody(file);
+      return new Response(page.body, {
         headers: {
+          ...(page.type ? { "content-type": page.type } : {}),
           "cache-control": privatePage ? "no-store" : cacheFor(file),
           "x-content-type-options": "nosniff",
           "referrer-policy": privatePage ? "no-referrer" : "strict-origin-when-cross-origin",

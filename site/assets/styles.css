@@ -346,7 +346,7 @@ pre.tree { color: var(--fg); }
 /* ---------------------------------------------------------------- foot -- */
 
 .foot-ad { max-width: 72rem; margin: 0 auto; padding: 0 1rem 2rem; color: var(--page-dim); font-size: 0.88rem; text-align: center; }
-/* After the footer package CSS (appended at build), so more specific than .pfs-footer. */
+/* More specific than the footer package's own .pfs-footer rules, which come later in the page. */
 footer.pfs-footer { --pfs-footer-muted: var(--page-dim); border-top-color: var(--page-line); }
 
 /* --------------------------------------------------------------- narrow -- */
