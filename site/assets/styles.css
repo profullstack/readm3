@@ -345,17 +345,9 @@ pre.tree { color: var(--fg); }
 
 /* ---------------------------------------------------------------- foot -- */
 
-.foot {
-  max-width: var(--measure);
-  margin: 0 auto;
-  padding: 2rem 1.5rem 3rem;
-  border-top: 1px solid var(--page-line);
-  color: var(--page-dim);
-  font-size: 0.88rem;
-}
-.foot-links { display: flex; flex-wrap: wrap; gap: 0.75rem 2rem; justify-content: space-between; }
-.foot .webring { display: inline-flex; gap: 0.75rem; }
-.foot aside:not(:empty) { margin-top: 1.5rem; }
+.foot-ad { max-width: 72rem; margin: 0 auto; padding: 0 1rem 2rem; color: var(--page-dim); font-size: 0.88rem; text-align: center; }
+/* After the footer package CSS (appended at build), so more specific than .pfs-footer. */
+footer.pfs-footer { --pfs-footer-muted: var(--page-dim); border-top-color: var(--page-line); }
 
 /* --------------------------------------------------------------- narrow -- */
 

@@ -16,6 +16,7 @@ import { escape, toHtml } from "./html.ts";
 import { createHash } from "node:crypto";
 import { flatten, type Entry } from "../src/tree.ts";
 import { VERSION } from "../src/cli.ts";
+import { footerHtml, latestTemplate } from "@profullstack/footer";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -27,6 +28,26 @@ const NPM = "https://www.npmjs.com/package/@profullstack/readm3";
 const HQTUI = "https://hqtui.com";
 const CP_PROJECT = "528372c9-c79a-425f-9f80-f9fe44c5865e";
 const CP_SLOT = "b918cc2d-4bd9-45e4-9b9e-52955b4e2e54";
+
+/*
+ * The shared Profullstack footer (@profullstack/footer): links, copyright and the
+ * webring, from the @latest template at build time. The site's CSP allows no
+ * inline <style>, so the template's CSS goes into styles.css instead (css: false).
+ */
+const FOOTER_TEMPLATE = await latestTemplate();
+const FOOTER_OPTIONS = {
+  template: FOOTER_TEMPLATE,
+  site: "https://readm3.com/",
+  links: [
+    { label: "Source", href: REPO },
+    { label: "npm", href: NPM },
+    { label: "HQTUI", href: HQTUI },
+  ],
+  tagline: `MIT licensed · v${VERSION}`,
+};
+const FOOTER = await footerHtml({ ...FOOTER_OPTIONS, css: false });
+/** The template's CSS, sanitized by the package, lifted out of its inline <style>. */
+const FOOTER_CSS = /<style>([\s\S]*?)<\/style>/.exec(await footerHtml(FOOTER_OPTIONS))?.[1] ?? "";
 
 /* -------------------------------------------------------------- colors --- */
 
@@ -190,19 +211,8 @@ function shell(options: { title: string; description: string; path: string; main
 <main id="main">
 ${options.main}
 </main>
-<footer class="foot">
-  <div class="foot-links">
-    <span>MIT. Built by <a href="https://profullstack.com">Profullstack</a> on <a href="${HQTUI}">HQTUI</a>.</span>
-    <span><a href="${REPO}">Source</a> · <a href="${NPM}">npm</a> · v${VERSION}</span>
-    <nav class="webring" aria-label="Profullstack webring">
-      <a href="https://rssamplifier.com/ring/profullstack/previous?from=https%3A%2F%2Freadm3.com%2F" rel="prev" title="Previous site">&lt;&lt;</a>
-      <a href="https://rssamplifier.com/ring/profullstack">Profullstack</a>
-      <a href="https://rssamplifier.com/ring/profullstack/next?from=https%3A%2F%2Freadm3.com%2F" rel="next" title="Next site">&gt;&gt;</a>
-      <a href="https://rssamplifier.com/ring/profullstack/random?from=https%3A%2F%2Freadm3.com%2F" title="Random site" aria-label="Random site">&#x2684;</a>
-    </nav>
-  </div>
-  <aside data-cp-ad data-slot="${CP_SLOT}" data-format="text_link"></aside>
-</footer>
+${FOOTER}
+<div class="foot-ad"><aside data-cp-ad data-slot="${CP_SLOT}" data-format="text_link"></aside></div>
 <script src="/app.js" defer></script>
 <script data-site="${CP_PROJECT}" src="https://crawlproof.com/stats.js" async></script>
 <script src="https://crawlproof.com/ad.js" async></script>
@@ -465,7 +475,7 @@ mkdirSync(out, { recursive: true });
 const css = readFileSync(join(here, "assets", "styles.css"), "utf8").replace(
   "/* THEMES */",
   themeBlocks(),
-);
+) + "\n" + FOOTER_CSS;
 
 write("index.html", home());
 write("docs/index.html", docs());
