@@ -31,6 +31,15 @@ a terminal that gets restored no matter how the process dies.
 
 ## Install
 
+One line. It uses bun if you have it, otherwise npm with Node 22.6+, and never
+asks for sudo:
+
+```sh
+curl -fsSL https://readm3.com/install.sh | sh
+```
+
+Or with a package manager:
+
 ```bash
 bun add -g @profullstack/readm3     # Bun is the default runtime
 npm  install -g @profullstack/readm3 # Node 22.6+ works too

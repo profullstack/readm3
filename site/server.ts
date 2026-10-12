@@ -63,7 +63,7 @@ async function pageBody(file: string): Promise<{ body: BodyInit; type?: string }
 }
 
 function cacheFor(path: string): string {
-  if (path.endsWith("viewer-sw.js") || path.endsWith(".webmanifest")) return "no-cache";
+  if (path.endsWith("viewer-sw.js") || path.endsWith(".webmanifest") || path.endsWith("/install.sh")) return "no-cache";
   if (/\/viewer-assets\/[^/]+-[a-f0-9]{12}\./.test(path)) return "public, max-age=31536000, immutable";
   if (path.endsWith(".html")) return "public, max-age=0, must-revalidate";
   return "public, max-age=300";
