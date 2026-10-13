@@ -51,6 +51,8 @@ const footerOptions = existsSync(footerOptionsFile)
 const BAKED_FOOTER = /<footer class="pfs-footer"[\s\S]*?<\/footer>/;
 
 async function pageBody(file: string): Promise<{ body: BodyInit; type?: string }> {
+  // The curl installer reads as text in a browser instead of downloading.
+  if (file.endsWith(".sh")) return { body: Bun.file(file), type: "text/plain; charset=utf-8" };
   if (!footerOptions || !file.endsWith(".html")) return { body: Bun.file(file) };
   const html = await Bun.file(file).text();
   if (!BAKED_FOOTER.test(html)) return { body: Bun.file(file) };
