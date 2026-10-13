@@ -221,7 +221,7 @@ ${FOOTER}
 
 /* ----------------------------------------------------------------- copy --- */
 
-const INSTALL = `bun add -g @profullstack/readm3`;
+const INSTALL = `curl -fsSL ${SITE}/install.sh | sh`;
 
 /** The README embeds a 90-column ASCII screenshot; render wider or it truncates. */
 const README_WIDTH = 100;
@@ -422,6 +422,11 @@ matter.
 
 ## Install
 
+    curl -fsSL ${SITE}/install.sh | sh
+
+The script uses bun if present, otherwise npm with Node 22.6+, and never asks for sudo.
+Or install the package directly:
+
     bun add -g @profullstack/readm3
     npm install -g @profullstack/readm3
 
@@ -497,6 +502,8 @@ write(".well-known/openwebring.json", JSON.stringify({
   rings: [{ ring: "https://rssamplifier.com/ring/profullstack", slug: "readm3-com" }],
 }, null, 2) + "\n");
 cpSync(join(here, "assets", "app.js"), join(out, "app.js"));
+// The CLI installer: curl -fsSL https://readm3.com/install.sh | sh
+cpSync(join(here, "assets", "install.sh"), join(out, "install.sh"));
 
 // Browser assets are content-addressed so existing workers and open tabs stay
 // coherent across deploys. Local document contents never enter this cache.
