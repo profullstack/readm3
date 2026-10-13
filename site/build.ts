@@ -424,7 +424,7 @@ matter.
 
     curl -fsSL ${SITE}/install.sh | sh
 
-The script uses bun if present, otherwise npm with Node 22.6+, and never asks for sudo.
+The script installs under ~/.local, never asks for sudo, and fetches a private Node if needed.
 Or install the package directly:
 
     bun add -g @profullstack/readm3

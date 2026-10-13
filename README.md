@@ -31,12 +31,14 @@ a terminal that gets restored no matter how the process dies.
 
 ## Install
 
-One line. It uses bun if you have it, otherwise npm with Node 22.6+, and never
-asks for sudo:
+One line. It installs under `~/.local` and never asks for sudo; with no Node 22+
+on the machine it fetches a private official Node first:
 
 ```sh
 curl -fsSL https://readm3.com/install.sh | sh
 ```
+
+Run it again to update; remove with `sh ~/.local/share/readm3/uninstall.sh`.
 
 Or with a package manager:
 
