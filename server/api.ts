@@ -3,6 +3,11 @@ import { type CoinPay, isCoinPayToken } from "./coinpay.ts";
 import { operate } from "./operations.ts";
 import { createPaste, deletePaste, readPaste } from "./pastes.ts";
 import { binaryType } from "../src/code.ts";
+import type { Billing } from "./billing.ts";
+import { PACKS_USD, type Payments } from "./payments.ts";
+
+/** Paid AI summaries and the CoinPay top-ups that fund them. */
+export type Money = { billing: Billing; payments: Payments };
 
 const MAX_BODY = 1100 * 1024;
 const headers = {
@@ -84,6 +89,7 @@ export function createApi(
   store: Store,
   configuredOrigin?: string,
   coinpay?: CoinPay,
+  money?: Money,
 ) {
   return async (request: Request, ip = "local"): Promise<Response | null> => {
     const url = new URL(request.url);
@@ -112,6 +118,13 @@ export function createApi(
       if (user) store.ensureWorkspace(user);
       const path = url.pathname.slice(8);
       if (path === "me" && request.method === "GET") return json({ user });
+      // CoinPay's webhook: no session, the signature over the raw body is the credential.
+      if (path === "billing/coinpay/webhook" && request.method === "POST") {
+        if (!money) throw new HttpError(404, "API route not found.");
+        limit(`coinpay-webhook:${ip}`, 120);
+        const signature = request.headers.get("x-coinpay-signature") ?? request.headers.get("coinpay-signature") ?? request.headers.get("x-webhook-signature");
+        return json(money.payments.webhook(await request.text(), signature));
+      }
       if (path.startsWith("auth/"))
         throw new HttpError(410, "Sign in with a verified email at /account.");
       if (path.startsWith("coinpay/")) {
@@ -256,6 +269,25 @@ export function createApi(
           403,
           "Browser writes require a same-origin Origin header.",
         );
+      if (money && path.startsWith("billing")) {
+        if (path === "billing" && request.method === "GET")
+          return json({ ...money.billing.account(user), topups: money.payments.enabled, packs: PACKS_USD });
+        if (path === "billing/topups" && request.method === "POST") {
+          limit(`topup:${user.id}`, 10);
+          return json(await money.payments.topup(user, await body(request), origin), 201);
+        }
+        const topup = path.match(/^billing\/topups\/([A-Za-z0-9_-]{1,64})$/);
+        if (topup && request.method === "GET") return json(money.payments.status(user, topup[1]!));
+        if (path === "billing/experiment" && request.method === "GET") {
+          if (!user.admin) throw new HttpError(403, "Admins only.");
+          return json({ arms: money.billing.experiment() });
+        }
+        throw new HttpError(404, "API route not found.");
+      }
+      if (money && path === "summaries" && request.method === "POST") {
+        limit(`summary:${user.id}`, 30);
+        return json(await money.billing.summary(user, await body(request)));
+      }
       if (path === "actions" && request.method === "POST") {
         const data = await body(request);
         const args = data.args ?? {};

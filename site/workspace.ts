@@ -21,9 +21,15 @@ const IGNORED = new Set(["node_modules", "dist", "build", "out", "target", "vend
 /** Files that are never text and never viewable, so they are skipped without being read. */
 const NEVER = /\.(?:zip|gz|tgz|bz2|xz|7z|rar|tar|exe|dll|so|dylib|o|a|class|jar|war|wasm|bin|dat|db|sqlite|sqlite3|mp3|mp4|m4a|mov|avi|mkv|webm|ogg|wav|flac|woff2?|ttf|otf|eot|psd|ai|doc|docx|xls|xlsx|ppt|pptx|iso|dmg|pkg|deb|rpm|apk|lock)$/i;
 
-/** Whether a path may enter the workspace: not hidden, not build output, not a known binary blob. */
+/**
+ * Whether a path may enter the workspace: not hidden, not build output, not a known
+ * binary blob. The first segment of a folder import is the folder the person chose,
+ * so it is never skipped: opening `dist/` or `.config/` on purpose works.
+ */
 export function accepts(path: string): boolean {
-  return !NEVER.test(path) && path.split("/").every((part) => part && !part.startsWith(".") && !IGNORED.has(part));
+  const parts = path.split("/");
+  const inside = parts.length > 1 ? parts.slice(1) : parts;
+  return !NEVER.test(path) && parts.every(Boolean) && inside.every((part) => !part.startsWith(".") && !IGNORED.has(part));
 }
 
 /** What a document is on screen: rendered Markdown, highlighted code, or a browser-viewed binary. */

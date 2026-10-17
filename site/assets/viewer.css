@@ -192,3 +192,27 @@ html, body.reader-app { height: 100%; overflow: hidden; }
 .palette li[aria-selected="true"] { background: var(--selection); color: var(--selection-text); }
 .palette li[aria-selected="true"] small { color: inherit; }
 .palette .palette-empty { color: var(--muted); cursor: default; }
+/* File history: versions newest first, what changed, and an AI abstract on request. */
+.reader-app .history-dialog { width: min(760px, calc(100vw - 32px)); max-height: 82vh; padding: 0 0 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--fg); }
+.reader-app .history-dialog .dialog-header { position: sticky; top: 0; z-index: 1; background: var(--surface); padding: 14px 18px 8px; }
+.reader-app .history-dialog > p, .reader-app .history-dialog form { padding: 0 18px; }
+.reader-app .history-account { font-size: 12px; color: var(--muted); }
+.reader-app .history-account button, .reader-app .history-actions button { padding: 3px 10px; font-size: 12px; }
+.reader-app .history-list { display: grid; gap: 10px; padding: 4px 18px; }
+.reader-app .history-item { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; background: var(--bg); min-width: 0; }
+.reader-app .history-item header { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; font: 12px var(--mono); }
+.reader-app .history-reason { color: var(--muted); }
+.reader-app .history-stat { margin-left: auto; color: var(--info); }
+.reader-app .history-summary { margin: 8px 0 0; font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
+.reader-app .history-snippet { margin: 8px 0 0; padding: 8px 10px; overflow-x: auto; border-radius: 4px; background: color-mix(in srgb, var(--fg) 4%, transparent); font: 12px/1.5 var(--mono); }
+.reader-app .history-snippet .added { color: var(--success); }
+.reader-app .history-snippet .removed { color: var(--danger); }
+.reader-app .history-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.reader-app .history-actions small { color: var(--muted); }
+.reader-app .history-error { color: var(--danger); font-size: 12px; }
+.reader-app .history-empty { color: var(--muted); font-size: 13px; }
+.reader-app .topup-packs { display: flex; gap: 10px; margin: 8px 0 12px; }
+.reader-app .topup-pack { display: flex; gap: 6px; align-items: center; padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px; font: 14px var(--mono); }
+.reader-app .topup-dialog select { margin-left: 6px; }
+.reader-app .topup-dialog .primary-action { margin-top: 10px; }
+.reader-app .history-actions:empty { display: none; }
