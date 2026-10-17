@@ -11,6 +11,8 @@
 #
 #   sh -s -- --version X    install a specific release
 #   sh -s -- --prefix DIR   install root (default: ~/.local)
+#   sh -s -- --desktop      also install the desktop app (Linux x64 AppImage, checksum
+#                           verified) as `readm3-desktop`, with a menu entry
 #
 # Listed in the W3BS catalog (https://w3bs.org/packages): `w3bs install readm3` runs
 # this same script and `w3bs update` re-runs it.
@@ -27,12 +29,14 @@ main() {
   PREFIX="${INSTALL_PREFIX:-$HOME/.local}"
   VERSION=""
   NODE_CHOICE="${INSTALL_NODE:-auto}"
+  DESKTOP=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
       --version) VERSION="${2:?--version needs a value}"; shift ;;
       --prefix) PREFIX="${2:?--prefix needs a value}"; shift ;;
-      -h | --help) echo "Usage: curl -fsSL $URL | sh [-s -- --version X --prefix DIR]"; return 0 ;;
+      --desktop) DESKTOP=1 ;;
+      -h | --help) echo "Usage: curl -fsSL $URL | sh [-s -- --version X --prefix DIR --desktop]"; return 0 ;;
       *) echo "$TOOL installer: unknown option $1" >&2; return 64 ;;
     esac
     shift
@@ -130,6 +134,37 @@ $BIN/$name"
     NAMES="$NAMES $name"
   done
   IFS="$OLDIFS"
+
+  # The desktop app: the release AppImage, its launcher command, and a menu entry.
+  if [ "$DESKTOP" = 1 ]; then
+    [ "$OS-$ARCH" = linux-x64 ] || fail "the desktop app is built for Linux x64; this is $OS-$ARCH"
+    RELEASE="https://github.com/profullstack/readm3/releases/latest/download"
+    [ -n "$VERSION" ] && RELEASE="https://github.com/profullstack/readm3/releases/download/v$VERSION"
+    APPIMAGE="readm3-linux-x86_64.AppImage"
+    DTMP="$(mktemp -d)"
+    say "Downloading the readm3 desktop app ..."
+    fetch "$RELEASE/SHA256SUMS" "$DTMP/SHA256SUMS" || fail "no desktop build for this release yet"
+    fetch "$RELEASE/$APPIMAGE" "$DTMP/$APPIMAGE" || fail "cannot download $APPIMAGE"
+    (cd "$DTMP" && grep " $APPIMAGE\$" SHA256SUMS | sha256sum -c - >/dev/null) || fail "checksum mismatch for $APPIMAGE"
+    mv "$DTMP/$APPIMAGE" "$SHARE/readm3.AppImage" && chmod 0755 "$SHARE/readm3.AppImage"
+    rm -rf "$DTMP"
+    printf '#!/bin/sh\nexec "%s" "$@"\n' "$SHARE/readm3.AppImage" > "$BIN/readm3-desktop"
+    chmod 0755 "$BIN/readm3-desktop"
+    APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+    ICONS="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps"
+    mkdir -p "$APPS" "$ICONS"
+    fetch "https://readm3.com/viewer-assets/icon-512.png" "$ICONS/readm3.png" || true
+    printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=readm3' 'GenericName=Text Editor' \
+      "Exec=$BIN/readm3-desktop %F" 'Icon=readm3' 'Categories=Development;TextEditor;Utility;' \
+      'MimeType=text/plain;text/markdown;application/json;text/x-python;text/javascript;text/css;text/html;application/xml;text/x-shellscript;' \
+      'StartupWMClass=readm3' 'Terminal=false' > "$APPS/readm3.desktop"
+    command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPS" >/dev/null 2>&1 || true
+    PATHS="$PATHS
+$BIN/readm3-desktop
+$APPS/readm3.desktop
+$ICONS/readm3.png"
+    NAMES="$NAMES readm3-desktop"
+  fi
 
   INSTALLED="$("$NODE" -p "require('$PKG_DIR/package.json').version" 2>/dev/null || echo unknown)"
   {

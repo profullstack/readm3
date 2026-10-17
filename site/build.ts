@@ -16,6 +16,7 @@ import { escape, toHtml } from "./html.ts";
 import { createHash } from "node:crypto";
 import { flatten, type Entry } from "../src/tree.ts";
 import { VERSION } from "../src/cli.ts";
+import { LANGUAGES } from "../src/code.ts";
 import { footerHtml } from "@profullstack/footer";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -257,7 +258,8 @@ function home(): string {
     <div class="card"><h3>“Can view” or “can edit.”</h3><p>Share a link with a reviewer or invite someone to make changes. You own your files and decide who gets access.</p></div>
     <div class="card"><h3>Keep the story of the document.</h3><p>Every online save creates a version. See who changed it, share a specific version, or restore an earlier draft without losing the history.</p></div>
     <div class="card"><h3>A workspace for your team.</h3><p>Organize people into organizations and teams. Share with a whole group, a few collaborators, or anyone with your link.</p></div>
-    <div class="card"><h3>Take the editor with you.</h3><p>Install readm3 as an app. Local files work offline; shared documents stay connected so permissions and saves are checked.</p></div>
+    <div class="card"><h3>A plain text editor.</h3><p>Line numbers, multiple cursors, find and replace, folding, <code>Ctrl+P</code> to any file and <code>Ctrl+Shift+P</code> for every command. Open a folder from disk and <code>Ctrl+S</code> saves back to it. <a href="/viewer">Open the editor</a>.</p></div>
+    <div class="card"><h3>Take the editor with you.</h3><p>Install readm3 from your browser, or get the desktop app for Linux as an <a href="${REPO}/releases/latest/download/readm3-linux-x86_64.AppImage">AppImage</a> or a <a href="${REPO}/releases/latest/download/readm3-linux-x86_64.flatpak">Flatpak</a>. Local files work offline; shared documents stay connected.</p></div>
     <div class="card"><h3>Use the tools you already use.</h3><p>The web editor, CLI, API, and MCP work with the same documents and permissions. Your terminal and your agents can join the workflow.</p></div>
   </div>
 </section>`;
@@ -447,7 +449,8 @@ terminal.
 
 ## Links
 
-- Web reader: ${SITE}/viewer (installable, offline Markdown reader and editor)
+- Editor: ${SITE}/viewer (installable, offline text editor for Markdown and code: multiple cursors, find and replace, Ctrl+P quick open, command palette, saves back to files on disk)
+- Desktop app: ${REPO}/releases/latest (Linux AppImage and Flatpak of the same editor)
 - Paste: ${SITE}/paste (anonymous pastes of any text, PDF or image behind an expiring secret link; CLI, curl, API and MCP examples)
 - Site: ${SITE}
 - Source: ${REPO}
@@ -523,9 +526,22 @@ const seed = asset("documents.json", JSON.stringify({
     { path: "examples/demo.md", source: readFileSync(join(here, "content/demo.md"), "utf8") },
   ],
 }));
-const bundled = await Bun.build({ entrypoints: [join(here, "viewer.ts")], target: "browser", minify: true });
+// Split: the editor (CodeMirror) and each language grammar are chunks fetched on first
+// use, so reading a document never downloads them. Chunks import the entry back by its
+// name, so Bun names (and hashes) every file itself and the seed URL goes in by define.
+const bundled = await Bun.build({
+  entrypoints: [join(here, "viewer.ts")], target: "browser", minify: true, splitting: true,
+  naming: { entry: "[name]-[hash].[ext]", chunk: "chunk-[hash].[ext]" },
+  define: { __SEED_URL__: JSON.stringify(seed) },
+});
 if (!bundled.success) throw new AggregateError(bundled.logs, "Viewer build failed");
-const script = asset("viewer.js", (await bundled.outputs[0].text()).replace("__SEED_URL__", seed));
+const chunks: string[] = [];
+let script = "";
+for (const output of bundled.outputs) {
+  const path = `/viewer-assets/${output.path.replace(/^\.\//, "")}`;
+  write(path.slice(1), await output.text());
+  if (output.kind === "entry-point") script = path; else chunks.push(path);
+}
 const viewerCss = asset("viewer.css", readFileSync(join(here, "assets/viewer.css"), "utf8"));
 const accountBundle = await Bun.build({ entrypoints: [join(here, "account.ts")], target: "browser", minify: true });
 if (!accountBundle.success) throw new AggregateError(accountBundle.logs, "Account build failed");
@@ -669,13 +685,19 @@ function pastePage(): string {
 write("paste/index.html", pastePage());
 for (const size of [192, 512]) cpSync(join(here, `assets/icon-${size}.png`), join(out, `viewer-assets/icon-${size}.png`));
 write("viewer.webmanifest", JSON.stringify({
-  id: "/viewer", name: "readm3 — Markdown editor", short_name: "readm3",
-  description: "Your Markdown, in a quiet reading window. Read and edit offline.",
+  id: "/viewer", name: "readm3 — text editor", short_name: "readm3",
+  description: "A plain, fast text editor for Markdown and code. Opens files from disk, saves back to them, and works offline.",
   start_url: "/viewer", scope: "/", display: "standalone",
   background_color: "#05070a", theme_color: "#05070a", lang: "en",
   icons: [192, 512].map((size) => ({ src: `/viewer-assets/icon-${size}.png`, sizes: `${size}x${size}`, type: "image/png", purpose: "any" })),
+  // Installed, readm3 is offered in the system's "Open with" for every text kind it knows.
+  file_handlers: [{
+    action: "/viewer",
+    accept: { "text/plain": [...new Set(LANGUAGES.flatMap((language) => language.extensions.map((extension) => `.${extension}`)))] },
+    launch_type: "single-client",
+  }],
 }));
-const precache = ["/viewer", script, viewerCss, sharedCss, adminCss, seed, "/viewer.webmanifest", "/favicon.svg", "/viewer-assets/icon-192.png", "/viewer-assets/icon-512.png"];
+const precache = ["/viewer", script, ...chunks, viewerCss, sharedCss, adminCss, seed, "/viewer.webmanifest", "/favicon.svg", "/viewer-assets/icon-192.png", "/viewer-assets/icon-512.png"];
 const cacheVersion = createHash("sha256").update(viewerHtml + precache.join("|")).digest("hex").slice(0, 16);
 write("viewer-sw.js", readFileSync(join(here, "assets/viewer-sw.js"), "utf8")
   .replace("__CACHE_NAME__", `readm3-viewer-${cacheVersion}`).replace("__PRECACHE__", JSON.stringify(precache)));

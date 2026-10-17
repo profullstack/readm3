@@ -5,13 +5,18 @@ import { renderMarkdown } from "../src/markdown.ts";
 import type { Flavor } from "../src/flavors.ts";
 import { toHtml } from "./html.ts";
 import { renderCode, type CodeView } from "./code-view.ts";
+import type { SourceEditor } from "./code-editor.ts";
+import * as disk from "./disk.ts";
+import { openPalette, rank, type PaletteItem } from "./palette.ts";
 import { binaryType, detectLanguage, languageForName, looksBinary, MARKDOWN } from "../src/code.ts";
 import { accepts, bytesOf, comparePaths, kindOf, MAX_FILE_BYTES, MAX_FILES, MAX_WORKSPACE_BYTES, persist, rawUrl, restore, toBase64, type Document, type Workspace } from "./workspace.ts";
 
+/** The starter workspace's content-addressed URL, defined by the build. */
+declare const __SEED_URL__: string;
 const element = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const reader = element("reader");
 const content = element("document-content");
-const editor = element<HTMLTextAreaElement>("editor");
+const editor = element("editor");
 const filter = element<HTMLInputElement>("filter");
 const fileList = element("file-list");
 const theme = element<HTMLSelectElement>("theme");
@@ -33,11 +38,20 @@ let cloudSaving = false;
 const codeContent = element("code-content");
 const mediaContent = element("media-content");
 let codeView: CodeView | null = null;
+/** CodeMirror, downloaded the first time anything is edited, then kept for every file. */
+let sourceEditor: SourceEditor | null = null;
+let editorLoading: Promise<SourceEditor> | undefined;
+let editorPath = "";
+/** Files opened from disk that Ctrl+S writes back to, by workspace path. */
+let diskEntries = new Map<string, disk.DiskEntry>();
+/** Whether the file has a place on disk and differs from what was last read or written there. */
+const unsavedOnDisk = (doc: Document) => { const entry = diskEntries.get(doc.path); return !!entry && disk.fingerprint(doc.source) !== entry.saved; };
 let mediaUrl: string | null = null;
 /** What the active document is on screen: Markdown, code in some language, or a PDF or image. */
 const kind = () => kindOf(current());
 const isCode = () => kind().kind === "code";
 const isBinary = () => kind().kind === "binary";
+const isMarkdown = () => kind().kind === "markdown";
 const formatBytes = (n: number) => n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
 
 /** Shows the controls that make sense for the active document's kind. */
@@ -49,6 +63,11 @@ function applyKind() {
   element("copy").hidden = current.kind === "binary";
   element("file-mark").textContent = current.kind === "markdown" ? "M↓" : current.kind === "code" ? current.language.extensions[0]!.toUpperCase() : current.binary.label.split(" ")[0]!.toUpperCase();
   element<HTMLButtonElement>("edit-mode").disabled = current.kind === "binary" || !!pasteDocument || (!!cloudDocument && !cloudDocument.canEdit);
+}
+
+/** Whether the active file may be edited here: not a paste, not a view-only link, not a PDF or image. */
+function canEdit(): boolean {
+  return !pasteDocument && !isBinary() && (!cloudDocument || cloudDocument.canEdit);
 }
 
 function cloudControls() {
@@ -145,7 +164,9 @@ async function save() {
     if (revision === savingRevision) {
       pendingSave = false;
       saveFailed = false;
-      saveStatus.textContent = "Saved on this device";
+      const unsaved = unsavedOnDisk(current());
+      saveStatus.textContent = unsaved ? "Saved on this device · Ctrl+S writes it to disk" : diskEntries.has(current().path) ? "Saved to disk" : "Saved on this device";
+      markUnsaved();
     }
   } catch {
     saveFailed = true;
@@ -160,6 +181,96 @@ function changed() {
   saveStatus.textContent = "Saving on this device…";
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => void save(), 300);
+}
+
+/** The dot on the active file's row, tab and heading when its disk copy is behind. */
+function markUnsaved() {
+  const unsaved = unsavedOnDisk(current());
+  element("document-name").classList.toggle("unsaved", unsaved);
+  fileList.querySelector(`[aria-current="page"]`)?.classList.toggle("unsaved", unsaved);
+  tabBar.querySelector(`[aria-selected="true"]`)?.classList.toggle("unsaved", unsaved);
+}
+
+/** Files opened this session, left to right, as in any editor; closing a tab keeps the file. */
+const tabBar = element("tabs");
+let tabs: string[] = [];
+function renderTabs() {
+  const local = !cloudDocument && !pasteDocument;
+  tabs = tabs.filter((path) => workspace.documents.some((doc) => doc.path === path));
+  if (local && !tabs.includes(workspace.active)) tabs.push(workspace.active);
+  tabBar.hidden = !local;
+  tabBar.replaceChildren(...tabs.map((path) => {
+    const tab = document.createElement("div");
+    tab.className = "tab";
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", String(path === workspace.active));
+    tab.title = path;
+    if (unsavedOnDisk(workspace.documents.find((doc) => doc.path === path)!)) tab.classList.add("unsaved");
+    const open = document.createElement("button");
+    open.className = "tab-name";
+    open.textContent = path.split("/").at(-1)!;
+    open.onclick = () => { if (path !== workspace.active) openDocument(path); };
+    open.onauxclick = (event) => { if (event.button === 1) closeTab(path); };
+    const close = document.createElement("button");
+    close.className = "tab-close";
+    close.textContent = "×";
+    close.setAttribute("aria-label", `Close ${path}`);
+    close.disabled = tabs.length === 1;
+    close.onclick = () => closeTab(path);
+    tab.append(open, close);
+    return tab;
+  }));
+  tabBar.querySelector(`[aria-selected="true"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  // The active file goes with the tabs: the workspace record saves 300 ms later, and a
+  // quick reload would otherwise reopen the old file and bring back a closed tab.
+  if (local) storePreference("tabs", JSON.stringify({ tabs, active: workspace.active }));
+}
+
+function closeTab(path: string) {
+  if (tabs.length < 2) return;
+  const index = tabs.indexOf(path);
+  tabs = tabs.filter((tab) => tab !== path);
+  if (path === workspace.active) openDocument(tabs[Math.min(index, tabs.length - 1)]!);
+  else renderTabs();
+}
+
+function showPalette(initial: string) {
+  const files = (): PaletteItem[] => workspace.documents.map((doc) => ({ label: doc.path, detail: kindOf(doc).kind === "binary" ? "view" : undefined, run: () => openDocument(doc.path) }));
+  openPalette({
+    placeholder: "Go to file… (type > for commands)",
+    initial,
+    items: (query) => query.startsWith(">") ? rank(query.slice(1), commands()) : cloudDocument || pasteDocument ? [] : rank(query, files()),
+  });
+}
+
+/** Everything the toolbar and keys do, by name, for the command palette. */
+function commands(): PaletteItem[] {
+  const command = (label: string, run: () => void, detail?: string): PaletteItem => ({ label, run, detail });
+  const local = !cloudDocument && !pasteDocument;
+  const withEditor = (run: (ready: SourceEditor) => void) => () => { if (!canEdit()) { notice("This file is read-only here."); return; } setMode(true); void loadEditor().then(run); };
+  return [
+    ...local ? [
+      command("File: Open folder…", () => void openFromDisk(true)),
+      command("File: Open files…", () => void openFromDisk(false)),
+      command("File: Open URL…", () => urlDialog.showModal()),
+      command("File: New note", () => element("new-file").click()),
+      command("File: Save", () => void saveFile(), "Ctrl+S"),
+      command("File: Save As…", () => void saveFile(true), "Ctrl+Shift+S"),
+      command("File: Close tab", () => closeTab(workspace.active)),
+      command("Sync: Sync this workspace to your account", () => element("sync-workspace").click()),
+    ] : [],
+    ...cloudDocument?.canEdit ? [command("File: Save version", () => void saveCloud(), "Ctrl+S")] : [],
+    command("File: Download", download),
+    command("View: Read", () => setMode(false), "Esc"),
+    ...canEdit() ? [command("View: Edit", () => setMode(true), "e")] : [],
+    command("View: Toggle sidebar", () => document.body.classList.toggle("sidebar-hidden")),
+    command("View: Toggle word wrap", () => element("wrap").click()),
+    command("Edit: Find and replace", withEditor((ready) => ready.find()), "Ctrl+F"),
+    command("Edit: Fold all", () => element("fold-all").click()),
+    command("Edit: Unfold all", () => element("unfold-all").click()),
+    ...[...theme.options].map((option) => command(`Theme: ${option.text}`, () => { theme.value = option.value; theme.dispatchEvent(new Event("change")); })),
+    command("Help: Keyboard shortcuts", () => helpDialog.showModal(), "?"),
+  ];
 }
 
 function setFilesOpen(open: boolean) {
@@ -205,6 +316,7 @@ function fileRow(path: string, name: string, depth: number, directory: boolean) 
   row.style.paddingLeft = `${10 + depth * 15}px`;
   row.title = path;
   if (!directory && path === workspace.active) row.setAttribute("aria-current", "page");
+  if (!directory && unsavedOnDisk(workspace.documents.find((doc) => doc.path === path)!)) row.classList.add("unsaved");
   const icon = document.createElement("span");
   icon.className = "file-icon";
   icon.setAttribute("aria-hidden", "true");
@@ -224,7 +336,7 @@ function fileRow(path: string, name: string, depth: number, directory: boolean) 
 }
 
 function progress() {
-  const pane = editing ? editor : reader;
+  const pane = editing && sourceEditor ? sourceEditor.view.scrollDOM : reader;
   const range = pane.scrollHeight - pane.clientHeight;
   element("reading-progress").textContent = `${range <= 0 ? 100 : Math.round(pane.scrollTop / range * 100)}%`;
 }
@@ -305,7 +417,32 @@ function renderDocument() {
   progress();
 }
 
-function setMode(edit: boolean, focus = true) {
+function loadEditor(): Promise<SourceEditor> {
+  return editorLoading ??= import("./code-editor.ts").then(({ createEditor }) => {
+    sourceEditor = createEditor(editor, (text) => { current().source = text; documentInfo(); changed(); });
+    sourceEditor.view.scrollDOM.addEventListener("scroll", progress);
+    return sourceEditor;
+  });
+}
+
+/** Puts the active file in the editor, keeping its undo history when it is already there. */
+async function showEditor(focus: boolean, atEnd: boolean) {
+  const path = workspace.active;
+  let ready: SourceEditor;
+  try { ready = await loadEditor(); }
+  catch { editorLoading = undefined; notice("The editor could not load. Check your connection and try again."); setMode(false); return; }
+  if (!editing || workspace.active !== path) return;
+  if (editorPath !== path || ready.text() !== current().source) {
+    ready.load(current().source, path, current().language);
+    editorPath = path;
+  }
+  ready.setWrap(kind().kind === "markdown" || element("wrap").getAttribute("aria-pressed") === "true");
+  if (atEnd) ready.view.dispatch({ selection: { anchor: ready.view.state.doc.length }, scrollIntoView: true });
+  if (focus) ready.focus();
+  progress();
+}
+
+function setMode(edit: boolean, focus = true, atEnd = false) {
   if (edit && cloudDocument && !cloudDocument.canEdit) { notice("You have view-only access to this document."); return; }
   if (edit && pasteDocument) { notice("A private link is read-only. Copy or download the file to edit it."); return; }
   if (edit && isBinary()) { notice("A PDF or image cannot be edited here. Download it to change it elsewhere."); return; }
@@ -314,10 +451,8 @@ function setMode(edit: boolean, focus = true) {
   reader.hidden = edit;
   element("read-mode").setAttribute("aria-pressed", String(!edit));
   element("edit-mode").setAttribute("aria-pressed", String(edit));
-  if (edit) {
-    editor.value = current().source;
-    if (focus) editor.focus();
-  } else {
+  if (edit) void showEditor(focus, atEnd);
+  else {
     renderDocument();
     if (focus) reader.focus();
   }
@@ -345,16 +480,19 @@ function openDocument(path: string, focus = true) {
   element("document-name").textContent = path;
   document.title = `${path.split("/").at(-1)} — readm3`;
   renderFiles();
+  renderTabs();
   applyKind();
   documentInfo();
-  setMode(false, focus);
+  // Code opens ready to type, as in any text editor; Markdown opens rendered, as in a reader.
+  setMode(isCode() && canEdit(), focus);
   reader.scrollTop = 0;
   progress();
   setFilesOpen(false);
   if (!cloudDocument) changed();
 }
 
-function addDocuments(incoming: Document[], name?: string) {
+/** Adds files, renaming any that would replace an open draft; returns them in the order given. */
+function addDocuments(incoming: Document[], name?: string): Document[] {
   const map = new Map(workspace.documents.map((doc) => [doc.path, doc]));
   let total = workspace.documents.reduce((sum, doc) => sum + encoder.encode(doc.source).length, 0);
   const added: Document[] = [];
@@ -376,31 +514,33 @@ function addDocuments(incoming: Document[], name?: string) {
     added.push(next);
     total += size;
   }
-  if (!added.length) return;
+  if (!added.length) return added;
   workspace.documents = [...map.values()].sort((a, b) => comparePaths(a.path, b.path));
   if (name) workspace.name = name;
   filter.value = "";
   collapsed.clear();
   const first = added.find((doc) => /^readme\b/i.test(doc.path.split("/").at(-1)!)) ?? added[0];
   openDocument(first.path);
+  return added;
 }
 
-async function importFiles(files: File[]) {
+async function importFiles(files: disk.Picked[], name = "Your workspace") {
   if (importBusy) return;
   importBusy = true;
   try {
     const incoming: Document[] = [];
+    const handles: (FileSystemFileHandle | undefined)[] = [];
     let bytes = 0;
     let skipped = 0;
     let unreadable = 0;
-    for (const file of files) {
-      const path = file.webkitRelativePath || file.name;
+    for (const { file, path, handle } of files) {
       if (!accepts(path)) continue;
       // A PDF or image is kept as base64, a third larger than the file; the limits apply to what is stored.
       const cost = binaryType(path) ? Math.ceil(file.size * 4 / 3) : file.size;
       if (cost > MAX_FILE_BYTES || bytes + cost > MAX_WORKSPACE_BYTES || incoming.length >= MAX_FILES) { skipped++; continue; }
       if (binaryType(path)) {
         incoming.push({ path, source: toBase64(new Uint8Array(await file.arrayBuffer())) });
+        handles.push(handle);
         bytes += cost;
         continue;
       }
@@ -413,14 +553,53 @@ async function importFiles(files: File[]) {
         if (language !== MARKDOWN) doc.language = language;
       }
       incoming.push(doc);
+      handles.push(handle);
       bytes += cost;
     }
-    if (incoming.length) addDocuments(incoming, "Your workspace");
+    if (incoming.length) {
+      const added = addDocuments(incoming, name);
+      added.forEach((doc, i) => { const handle = handles[i]; if (handle) diskEntries.set(doc.path, { handle, saved: disk.fingerprint(doc.source) }); });
+      if (handles.some(Boolean)) { void disk.storeEntries(diskEntries); renderFiles(); void save(); }
+    }
     else notice("No readable files found. Open text files (Markdown, JSON, code, config), PDFs or images up to 4 MB.");
     if (skipped) notice(`${skipped} file(s) skipped because of size or workspace limits.`);
     if (unreadable) notice(`${unreadable} file(s) skipped: not text, PDF or image.`);
   } catch { notice("A file could not be read. Try selecting it again."); }
   finally { importBusy = false; filesInput.value = ""; folderInput.value = ""; }
+}
+
+/** What an input or a drop hands over: files with their relative paths, no way back to disk. */
+const copies = (files: Iterable<File>): disk.Picked[] => [...files].map((file) => ({ file, path: file.webkitRelativePath || file.name }));
+
+async function openFromDisk(folder: boolean) {
+  if (!disk.supported()) { (folder ? folderInput : filesInput).click(); return; }
+  try {
+    if (folder) { const picked = await disk.pickFolder(); if (picked) await importFiles(picked.files, picked.name); }
+    else { const picked = await disk.pickFiles(); if (picked) await importFiles(picked); }
+  } catch (error) { notice(error instanceof Error ? error.message : "Could not open from disk."); }
+}
+
+/**
+ * Ctrl+S: a shared document saves a version; a file from disk is written back to it; a file
+ * that has no place on disk yet asks where to put it (Save As), or downloads where the
+ * browser cannot write files at all.
+ */
+async function saveFile(saveAs = false) {
+  if (cloudDocument) { await saveCloud(); return; }
+  if (pasteDocument || !disk.supported()) { download(); return; }
+  const doc = current();
+  let handle = saveAs ? undefined : diskEntries.get(doc.path)?.handle;
+  try {
+    handle ??= await disk.saveAs(doc.path.split("/").at(-1)!) ?? undefined;
+    if (!handle) return;
+    await disk.write(handle, isBinary() ? bytesOf(doc) : doc.source);
+    diskEntries.set(doc.path, { handle, saved: disk.fingerprint(doc.source) });
+    await disk.storeEntries(diskEntries);
+    markUnsaved();
+    saveStatus.textContent = `Saved to disk · ${handle.name}`;
+  } catch (error) {
+    notice(`${error instanceof Error ? error.message : "Could not write the file."} Use Download to keep a copy.`);
+  }
 }
 
 function download() {
@@ -489,23 +668,24 @@ function bindEvents() {
     try { await navigator.clipboard.writeText(text); notice(`Copied ${current().path} to the clipboard.`); }
     catch { notice("The browser refused clipboard access. Select the text and copy it, or use Download."); }
   };
-  element("fold-all").onclick = () => codeView?.foldAll();
-  element("unfold-all").onclick = () => codeView?.unfoldAll();
+  element("fold-all").onclick = () => editing ? sourceEditor?.foldAll() : codeView?.foldAll();
+  element("unfold-all").onclick = () => editing ? sourceEditor?.unfoldAll() : codeView?.unfoldAll();
   element("wrap").onclick = () => {
     const on = element("wrap").getAttribute("aria-pressed") !== "true";
     element("wrap").setAttribute("aria-pressed", String(on));
     codeView?.setWrap(on);
+    if (editing && !isMarkdown()) sourceEditor?.setWrap(on);
   };
   element("history").onclick = () => {
     if (!cloudDocument) return;
     if (pendingSave) { notice("Save or download your draft before restoring a version."); return; }
     void versionHistory(cloudDocument, adoptCloud).catch(error => notice(error instanceof Error ? error.message : "Could not load history."));
   };
-  element("open-files").onclick = () => filesInput.click();
-  element("open-folder").onclick = () => folderInput.click();
-  filesInput.onchange = () => void importFiles([...filesInput.files ?? []]);
-  folderInput.onchange = () => void importFiles([...folderInput.files ?? []]);
-  element("new-file").onclick = () => { addDocuments([{ path: "Untitled.md", source: "# Untitled\n\n" }]); setMode(true); editor.setSelectionRange(editor.value.length, editor.value.length); };
+  element("open-files").onclick = () => void openFromDisk(false);
+  element("open-folder").onclick = () => void openFromDisk(true);
+  filesInput.onchange = () => void importFiles(copies(filesInput.files ?? []));
+  folderInput.onchange = () => void importFiles(copies(folderInput.files ?? []));
+  element("new-file").onclick = () => { addDocuments([{ path: "Untitled.md", source: "# Untitled\n\n" }]); setMode(true, true, true); };
   filter.oninput = () => renderFiles();
   element("read-mode").onclick = () => setMode(false);
   element("edit-mode").onclick = () => setMode(true);
@@ -513,8 +693,6 @@ function bindEvents() {
   element("toggle-files").onclick = () => setFilesOpen(!document.body.classList.contains("files-open"));
   reader.addEventListener("click", () => setFilesOpen(false));
   reader.onscroll = progress;
-  editor.onscroll = progress;
-  editor.oninput = () => { current().source = editor.value; documentInfo(); changed(); };
   theme.onchange = () => { document.documentElement.dataset.theme = theme.value; storePreference("theme", theme.value); };
   flavor.onchange = () => { storePreference("flavor", flavor.value); renderDocument(); };
   element("spoilers").onclick = () => { spoilers = !spoilers; element("spoilers").setAttribute("aria-pressed", String(spoilers)); renderDocument(); };
@@ -535,16 +713,20 @@ function bindEvents() {
   document.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove("dragging"); } });
   document.addEventListener("drop", (event) => {
     event.preventDefault(); dragDepth = 0; document.body.classList.remove("dragging");
-    if (!cloudDocument && event.dataTransfer) void importFiles([...event.dataTransfer.files]);
+    if (!cloudDocument && event.dataTransfer) void importFiles(copies(event.dataTransfer.files));
   });
   new ResizeObserver(() => renderDocument()).observe(reader);
 }
 
 function onKey(event: KeyboardEvent) {
-  if (document.querySelector("dialog[open]") || event.isComposing) return;
+  // The editor's own keys (Escape closing find, Ctrl+D, Ctrl+/) are already handled.
+  if (document.querySelector("dialog[open]") || event.isComposing || event.defaultPrevented) return;
   const target = event.target as HTMLElement;
   const typing = target.matches("input, textarea, select, [contenteditable]");
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); if (cloudDocument) void saveCloud(); else download(); return; }
+  if (((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p") || event.key === "F1") {
+    event.preventDefault(); showPalette(event.shiftKey || event.key === "F1" ? ">" : ""); return;
+  }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); void saveFile(event.shiftKey); return; }
   if (event.altKey || event.ctrlKey || event.metaKey) return;
   if (event.key === "Escape") {
     if (editing) setMode(false);
@@ -662,6 +844,27 @@ async function fetchDocument(input: string) {
 }
 
 interface InstallPrompt extends Event { prompt(): Promise<void>; userChoice: Promise<{ outcome: string }>; }
+interface LaunchQueue { setConsumer(consumer: (params: { files: readonly FileSystemHandle[] }) => void): void; }
+/** "Open with readm3" from the operating system, once the app is installed. */
+function receiveLaunches() {
+  const queue = (window as unknown as { launchQueue?: LaunchQueue }).launchQueue;
+  queue?.setConsumer((params) => {
+    if (!params.files.length || cloudDocument || pasteDocument) return;
+    void disk.launched(params.files).then((files) => importFiles(files)).catch(() => notice("The file could not be opened."));
+  });
+  // The desktop app: files from the command line or "Open with", now and while running.
+  if (disk.desktop && !cloudDocument && !pasteDocument) {
+    const open = (files: disk.DesktopFile[]) => { if (files.length) void importFiles(disk.fromDesktop(files)); };
+    void disk.desktop.takeLaunchFiles().then(open);
+    disk.desktop.onOpenFiles(open);
+  }
+  // The desktop menu runs the palette's commands by name; "" and ">" open the palette itself.
+  (window as unknown as { readm3Command?: (label: string) => void }).readm3Command = (label) => {
+    if (label === "" || label === ">") showPalette(label);
+    else commands().find((command) => command.label === label)?.run();
+  };
+}
+
 async function setupPwa() {
   const connection = element("connection");
   const connectionStatus = () => { connection.textContent = navigator.onLine ? "Browser workspace" : "Offline · local workspace"; };
@@ -729,11 +932,19 @@ async function start() {
     }
   }
   try { workspace = (await restore())!; } catch { /* A fresh in-memory workspace still works. */ }
+  diskEntries = await disk.loadEntries();
+  let savedActive: string | undefined;
+  try {
+    const saved = JSON.parse(localStorage.getItem("readm3:tabs") ?? "{}") as { tabs?: string[]; active?: string };
+    tabs = Array.isArray(saved.tabs) ? saved.tabs : [];
+    savedActive = saved.active;
+  } catch { /* A fresh tab bar. */ }
   if (!workspace?.documents?.length || !workspace.documents.some((doc) => doc.path === workspace.active)) {
-    const seed = await fetch("__SEED_URL__");
+    const seed = await fetch(__SEED_URL__);
     if (!seed.ok) throw new Error("Could not load the starter documents. Reload to try again.");
     workspace = await seed.json() as Workspace;
   }
+  if (savedActive && workspace.documents.some((doc) => doc.path === savedActive)) workspace.active = savedActive;
   workspace.documents.sort((a, b) => comparePaths(a.path, b.path));
   openDocument(workspace.active, false);
   bindEvents();
@@ -742,6 +953,7 @@ async function start() {
   if (params.has("new")) { element("new-file").click(); history.replaceState(null, "", "/viewer"); }
   const remote = params.get("url")?.trim();
   if (remote) await openUrlParam(remote);
+  receiveLaunches();
   void setupPwa();
 }
 

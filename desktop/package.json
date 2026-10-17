@@ -1,0 +1,67 @@
+{
+  "name": "readm3-desktop",
+  "productName": "readm3",
+  "version": "0.11.0",
+  "private": true,
+  "description": "readm3 as a desktop app: a plain, fast text editor for Markdown and code.",
+  "author": "Profullstack, Inc. <hello@profullstack.com>",
+  "homepage": "https://readm3.com",
+  "license": "MIT",
+  "main": "main.cjs",
+  "desktopName": "readm3.desktop",
+  "scripts": {
+    "start": "electron .",
+    "dist": "node build.mjs"
+  },
+  "build": {
+    "appId": "com.readm3.Editor",
+    "productName": "readm3",
+    "executableName": "readm3-desktop",
+    "copyright": "Copyright (c) 2026 Profullstack, Inc.",
+    "directories": {
+      "output": "release",
+      "buildResources": "resources"
+    },
+    "files": ["main.cjs", "preload.cjs", "package.json"],
+    "extraResources": [{
+      "from": "../site/dist",
+      "to": "site",
+      "filter": ["viewer/**", "viewer-assets/**", "viewer.webmanifest", "favicon.svg"]
+    }],
+    "artifactName": "readm3-linux-${arch}.${ext}",
+    "linux": {
+      "target": ["AppImage", "flatpak"],
+      "syncDesktopName": true,
+      "icon": "../site/assets/icon-512.png",
+      "category": "Development",
+      "synopsis": "A plain, fast text editor for Markdown and code.",
+      "description": "readm3 is a quiet text editor: line numbers, multiple cursors, find and replace, folding, quick open and a command palette, with Markdown rendered as a document. It opens folders from disk and saves back to them, and works offline.",
+      "mimeTypes": ["text/plain", "text/markdown", "application/json", "text/x-python", "text/javascript", "text/css", "text/html", "application/xml", "text/x-shellscript", "application/x-yaml", "text/x-c", "text/x-c++", "text/x-go", "text/x-rust", "text/x-java"],
+      "desktop": {
+        "entry": {
+          "Name": "readm3",
+          "GenericName": "Text Editor",
+          "Keywords": "text;editor;markdown;code;",
+          "StartupWMClass": "readm3"
+        }
+      }
+    },
+    "flatpak": {
+      "runtimeVersion": "24.08",
+      "baseVersion": "24.08",
+      "finishArgs": [
+        "--socket=wayland",
+        "--socket=fallback-x11",
+        "--share=ipc",
+        "--share=network",
+        "--device=dri",
+        "--filesystem=home",
+        "--talk-name=org.freedesktop.portal.FileChooser"
+      ]
+    }
+  },
+  "devDependencies": {
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3"
+  }
+}

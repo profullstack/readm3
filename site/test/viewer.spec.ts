@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { editorInput, editorText } from "./editor.ts";
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/viewer");
@@ -40,20 +41,88 @@ test("imports safely, edits, downloads exact source, and restores the draft afte
   await expect(page.locator("#document-content script, #document-content img")).toHaveCount(0);
   expect(await page.evaluate(() => "hacked" in window)).toBe(false);
   await page.locator("#reader").press("e");
-  await expect(page.locator("#editor")).toHaveValue(source);
+  await expect.poll(() => editorText(page)).toBe(source);
   const edited = "# Edited privately\n\n- [x] Saved offline\n";
-  await page.locator("#editor").fill(edited);
+  await editorInput(page).fill(edited);
   await page.keyboard.press("Escape");
   await expect(page.locator("#document-content")).toContainText("Edited privately");
   await expect(page.locator("#save-status")).toHaveText("Saved on this device");
   const downloading = page.waitForEvent("download");
-  await page.keyboard.press("Control+s");
+  await page.locator("#download").click();
   const download = await downloading;
   expect(download.suggestedFilename()).toBe("private.md");
   expect(await readFile((await download.path())!, "utf8")).toBe(edited);
   await page.reload();
   await expect(page.locator("#document-name")).toHaveText("private.md");
   await expect(page.locator("#document-content")).toContainText("Edited privately");
+});
+
+test("opens a folder from disk, marks unsaved files, and writes them back with Ctrl+S", async ({ page }) => {
+  // Fake File System Access handles: the real pickers cannot be driven headless.
+  await page.addInitScript(() => {
+    const written: Record<string, string> = {};
+    (window as unknown as { written: typeof written }).written = written;
+    const file = (name: string, text: string) => ({
+      kind: "file", name, getFile: async () => new File([text], name), queryPermission: async () => "granted",
+      createWritable: async () => { let out = ""; return { write: async (data: string | Blob) => { out += typeof data === "string" ? data : await data.text(); }, close: async () => { written[name] = out; } }; },
+    });
+    const directory = (name: string, entries: unknown[]) => ({ kind: "directory", name, values: async function* () { yield* entries; } });
+    Object.assign(window, {
+      showDirectoryPicker: async () => directory("project", [
+        file("app.ts", "const answer = 41;\n"),
+        directory("node_modules", [file("ignored.js", "")]),
+        directory("src", [file("util.py", "def f():\n    return 1\n")]),
+      ]),
+      showOpenFilePicker: async () => [file("notes.txt", "hello\n")],
+      showSaveFilePicker: async ({ suggestedName }: { suggestedName: string }) => file(`saved-${suggestedName}`, ""),
+    });
+  });
+  await page.reload();
+  await page.locator("#open-folder").click();
+  await expect(page.locator("#workspace-name")).toHaveText("project");
+  await expect(page.locator('#file-list button[title="project/src/util.py"]')).toBeVisible();
+  await expect(page.locator('#file-list button[title*="node_modules"]')).toHaveCount(0);
+  await expect(page.locator("#document-name")).toHaveText("project/app.ts");
+  await expect(page.locator("#save-status")).toHaveText("Saved to disk");
+  await editorInput(page).fill("const answer = 42;\n");
+  await expect(page.locator("#save-status")).toHaveText("Saved on this device · Ctrl+S writes it to disk");
+  await expect(page.locator('#file-list button[title="project/app.ts"]')).toHaveClass(/unsaved/);
+  await page.keyboard.press("Control+s");
+  await expect(page.locator("#save-status")).toHaveText("Saved to disk · app.ts");
+  expect(await page.evaluate(() => (window as unknown as { written: Record<string, string> }).written["app.ts"])).toBe("const answer = 42;\n");
+  await expect(page.locator('#file-list button[title="project/app.ts"]')).not.toHaveClass(/unsaved/);
+  // A file with no place on disk yet asks where to save it.
+  await page.locator('#file-list button[title="Welcome.md"]').click();
+  await page.locator("#reader").press("Control+s");
+  await expect(page.locator("#save-status")).toHaveText("Saved to disk · saved-Welcome.md");
+  expect(await page.evaluate(() => (window as unknown as { written: Record<string, string> }).written["saved-Welcome.md"])).toContain("Your docs. Your space.");
+});
+
+test("goes to files with Ctrl+P, runs commands with Ctrl+Shift+P, and keeps open files as tabs", async ({ page }) => {
+  await page.locator("#reader").press("Control+p");
+  await expect(page.locator("#palette")).toBeVisible();
+  // Fuzzy, Sublime style: "exdm" is examples/demo.md.
+  await page.keyboard.type("exdm");
+  await expect(page.locator("#palette li").first()).toHaveText("examples/demo.md");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#palette")).toBeHidden();
+  await expect(page.locator("#document-name")).toHaveText("examples/demo.md");
+  await expect(page.locator("#tabs .tab")).toHaveCount(2);
+  await expect(page.locator('#tabs [aria-selected="true"]')).toHaveAttribute("title", "examples/demo.md");
+  // Commands: a theme change and the sidebar, without touching the toolbar.
+  await page.locator("#reader").press("Control+Shift+P");
+  await page.keyboard.type("toggle sidebar");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#file-pane")).toBeHidden();
+  await page.keyboard.press("F1");
+  await expect(page.locator("#palette input")).toHaveValue(">");
+  await page.keyboard.press("Escape");
+  // Closing a tab moves to its neighbour and leaves the file in the workspace.
+  await page.locator('#tabs [aria-label="Close examples/demo.md"]').click();
+  await expect(page.locator("#document-name")).toHaveText("Welcome.md");
+  await expect(page.locator("#tabs .tab")).toHaveCount(1);
+  await page.reload();
+  await expect(page.locator("#tabs .tab")).toHaveCount(1);
 });
 
 test("imports a pruned directory with README ordering and retains existing drafts", async ({ page }) => {
@@ -82,7 +151,7 @@ test("imports a pruned directory with README ordering and retains existing draft
     expect(names).not.toContain("build.tar.gz");
     expect(names.indexOf("README.md")).toBeLessThan(names.indexOf("zebra.md"));
     await page.locator("#edit-mode").click();
-    await page.locator("#editor").fill("# My unsaved-to-disk draft");
+    await editorInput(page).fill("# My unsaved-to-disk draft");
     await page.locator("#folder-input").setInputFiles(root);
     await page.locator("#filter").fill("README");
     await page.locator('#file-list button[title$="docs/README.md"]').click();
@@ -213,25 +282,31 @@ test("opens JSON as editable highlighted code, sniffs an unnamed file, and shows
   expect(names).toEqual(expect.arrayContaining(["config.json", "deploy", "spec.pdf"]));
   await page.locator('#file-list button[title="config.json"]').click();
   await expect(page.locator("#document-name")).toHaveText("config.json");
-  await expect(page.locator("#code-content")).toBeVisible();
+  // Code opens in the editor, as in any text editor: line numbers, grammar colors, a caret.
+  await expect(page.locator("#editor .cm-lineNumbers")).toBeVisible();
+  await expect(page.locator("#editor .tok-propertyName").first()).toBeVisible();
+  await expect(page.locator("#edit-mode")).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator("#document-content")).toBeHidden();
-  await expect(page.locator("#code-content .hljs-attr").first()).toBeVisible();
   await expect(page.locator("#document-info")).toContainText("JSON");
   await expect(page.locator("#file-mark")).toHaveText("JSON");
   await expect(page.locator("#code-tools")).toBeVisible();
   await expect(page.locator("#flavor-label")).toBeHidden();
-  // Code is a note like any other: edit it and the highlighted view follows.
-  await expect(page.locator("#edit-mode")).toBeEnabled();
-  await page.locator("#edit-mode").click();
-  await page.locator("#editor").fill('{\n  "name": "berlin"\n}\n');
+  await editorInput(page).fill('{\n  "name": "berlin"\n}\n');
+  // Escape is the read view: highlighted, foldable, and following the edit.
   await page.keyboard.press("Escape");
+  await expect(page.locator("#code-content")).toBeVisible();
+  await expect(page.locator("#code-content .hljs-attr").first()).toBeVisible();
   await expect(page.locator("#code-content")).toContainText('"berlin"');
   await expect(page.locator("#code-content .code-line")).toHaveCount(3);
   await expect(page.locator("#save-status")).toHaveText("Saved on this device");
+  // e returns to the same editor with the text still there.
+  await page.locator("#reader").press("e");
+  await expect.poll(() => editorText(page)).toBe('{\n  "name": "berlin"\n}\n');
+  await page.keyboard.press("Escape");
   // No extension: the shebang decides, and the decision survives a reload.
   await page.locator('#file-list button[title="deploy"]').click();
   await expect(page.locator("#document-info")).toContainText("Shell");
-  await expect(page.locator("#code-content .hljs-meta").first()).toBeVisible();
+  await expect(page.locator("#editor .tok-meta, #editor .tok-comment").first()).toBeVisible();
   await page.reload();
   await page.locator('#file-list button[title="deploy"]').click();
   await expect(page.locator("#document-info")).toContainText("Shell");
@@ -270,7 +345,7 @@ test("installs a complete offline shell and restores edited documents after an o
   expect(manifest.display).toBe("standalone");
   for (const icon of manifest.icons) expect((await request.get(icon.src)).ok()).toBe(true);
   await page.locator("#new-file").click();
-  await page.locator("#editor").fill("# An offline draft\n\nStill here.");
+  await editorInput(page).fill("# An offline draft\n\nStill here.");
   await page.keyboard.press("Escape");
   await expect(page.locator("#save-status")).toHaveText("Saved on this device");
   await page.evaluate(async () => { await navigator.serviceWorker.ready; });
@@ -281,7 +356,7 @@ test("installs a complete offline shell and restores edited documents after an o
   await expect(page.locator("#connection")).toContainText("Offline");
   await page.locator("#theme").selectOption("nord");
   await page.locator("#edit-mode").click();
-  await page.locator("#editor").fill("# Edited offline too");
+  await editorInput(page).fill("# Edited offline too");
   await page.keyboard.press("Escape");
   await expect(page.locator("#save-status")).toHaveText("Saved on this device");
   await page.reload();
@@ -319,7 +394,7 @@ test("storage failure still permits reading, editing, and downloading", async ({
   await expect(page.locator("#document-content")).toContainText("Your docs. Your space.");
   await expect(page.locator("#save-status")).toContainText("storage unavailable");
   await page.locator("#edit-mode").click();
-  await page.locator("#editor").fill("# Keep this draft");
+  await editorInput(page).fill("# Keep this draft");
   const downloading = page.waitForEvent("download");
   await page.locator("#download").click();
   expect(await readFile((await (await downloading).path())!, "utf8")).toBe("# Keep this draft");

@@ -33,6 +33,8 @@ html, body.reader-app { height: 100%; overflow: hidden; }
 .file-row .file-icon { width: 18px; flex: none; color: var(--muted); font-size: 10px; }
 .reader-app .file-row[aria-current="page"] { color: var(--selection-text); background: var(--selection); }
 .file-row[aria-current="page"] .file-icon { color: inherit; }
+/* A file from disk with edits Ctrl+S has not written back yet, as in any editor's tab. */
+.file-row.unsaved .row-name::after, #document-name.unsaved::after { content: " ●"; color: var(--warning); }
 .reader-app .file-row.folder-row { color: var(--primary); }
 .empty-files { padding: 10px; color: var(--muted); }
 .local-note { display: flex; gap: 2px; padding: 16px 20px 20px; color: var(--muted); border-top: 1px solid var(--border); font-size: 11px; line-height: 1.8; }
@@ -54,7 +56,44 @@ html, body.reader-app { height: 100%; overflow: hidden; }
 .reader-app #spoilers[aria-pressed="true"] { color: var(--primary); border-color: var(--primary); }
 #reader { flex: 1; min-height: 0; overflow: auto; padding: 27px clamp(20px, 4vw, 64px) 50px; outline-offset: -3px; }
 #document-content { width: fit-content; max-width: none; margin: 0; padding: 0; font: 14px/1.85 var(--mono); color: var(--fg); white-space: pre; tab-size: 2; }
-#editor { flex: 1; width: 100%; min-height: 0; resize: none; padding: 27px clamp(20px, 4vw, 64px) 50px; background: var(--bg); border: 0; border-radius: 0; font: 14px/1.85 var(--mono); tab-size: 2; outline-offset: -3px; }
+#editor { flex: 1; min-height: 0; display: flex; background: var(--bg); }
+#editor[hidden] { display: none; }
+#editor .cm-editor { flex: 1; min-width: 0; height: 100%; font: 14px/1.7 var(--mono); color: var(--fg); background: var(--bg); }
+#editor .cm-editor.cm-focused { outline: none; }
+#editor .cm-scroller { font-family: var(--mono); line-height: 1.7; }
+#editor .cm-content { padding: 18px 0 50px; caret-color: var(--primary); tab-size: 2; }
+#editor .cm-line { padding: 0 24px 0 6px; }
+#editor .cm-gutters { background: var(--bg); color: var(--muted); border-right: 1px solid var(--border); }
+#editor .cm-lineNumbers .cm-gutterElement { padding: 0 10px 0 16px; min-width: 3ch; }
+#editor .cm-foldGutter .cm-gutterElement { padding: 0 6px; cursor: pointer; }
+#editor .cm-activeLine { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+#editor .cm-activeLineGutter { background: color-mix(in srgb, var(--fg) 5%, transparent); color: var(--fg); }
+#editor .cm-cursor, #editor .cm-dropCursor { border-left: 2px solid var(--primary); }
+#editor .cm-selectionBackground, #editor .cm-content ::selection { background: color-mix(in srgb, var(--primary) 28%, transparent) !important; }
+#editor .cm-selectionMatch { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+#editor .cm-matchingBracket { background: color-mix(in srgb, var(--success) 22%, transparent); outline: 1px solid color-mix(in srgb, var(--success) 50%, transparent); }
+#editor .cm-searchMatch { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+#editor .cm-searchMatch-selected { background: color-mix(in srgb, var(--primary) 40%, transparent); }
+#editor .cm-foldPlaceholder { background: color-mix(in srgb, var(--primary) 15%, transparent); border: 0; color: var(--fg); padding: 0 6px; }
+#editor .cm-panels { background: var(--surface); color: var(--fg); border-color: var(--border); }
+#editor .cm-panel.cm-search { padding: 8px 12px; font: 13px var(--mono); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+#editor .cm-panel.cm-search input, #editor .cm-panel.cm-search button { font: inherit; margin: 0; }
+#editor .cm-panel.cm-search input[type=checkbox] { margin-right: 4px; }
+#editor .cm-panel.cm-search label { font-size: 12px; color: var(--muted); }
+#editor .cm-panel.cm-search [name=close] { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 18px; cursor: pointer; }
+#editor .cm-tooltip { background: var(--surface); border: 1px solid var(--border); color: var(--fg); }
+.tok-comment { color: var(--muted); font-style: italic; }
+.tok-keyword, .tok-meta { color: var(--primary); }
+.tok-string, .tok-string2, .tok-inserted { color: var(--success); }
+.tok-number, .tok-bool, .tok-atom, .tok-literal, .tok-propertyName, .tok-attributeName, .tok-url, .tok-link { color: var(--accent); }
+.tok-className, .tok-definition, .tok-heading, .tok-tagName, .tok-labelName { color: var(--title); }
+.tok-typeName, .tok-namespace, .tok-macroName, .tok-variableName2 { color: var(--info); }
+.tok-operator, .tok-punctuation { color: var(--secondary); }
+.tok-invalid, .tok-deleted { color: var(--danger); }
+.tok-heading { font-weight: 700; }
+.tok-emphasis { font-style: italic; }
+.tok-strong { font-weight: 700; }
+.tok-strikethrough { text-decoration: line-through; }
 .document-footer { display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid var(--border); padding: 9px 25px; color: var(--muted); font: 10px/1.5 var(--mono); }
 .app-status { display: flex; justify-content: space-between; gap: 16px; padding: 9px 20px max(9px, env(safe-area-inset-bottom)); border-top: 1px solid var(--border); background: var(--surface); color: var(--muted); font: 10px/1.5 var(--mono); }
 .app-status kbd { color: var(--fg); margin-left: 10px; font: inherit; }
@@ -79,7 +118,7 @@ html, body.reader-app { height: 100%; overflow: hidden; }
 .media-note a { color: var(--primary); }
 .reader-app.dragging::after { content: "Drop files here"; position: fixed; inset: 12px; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 95%, transparent); border: 2px dashed var(--primary); border-radius: 12px; color: var(--primary); font: 20px var(--mono); pointer-events: none; z-index: 10; }
 [data-theme="light"] { color-scheme: light; }
-@media (min-width: 1600px) { #reader, #editor { padding-left: 90px; } }
+@media (min-width: 1600px) { #reader { padding-left: 90px; } }
 @media (max-width: 900px) { .file-pane { flex-basis: 230px; } .connection, .app-status > span:last-child, #document-info { display: none; } .reader-options { justify-content: flex-end; } .app-header { padding: 12px 18px; } }
 @media (max-width: 680px) {
   .app-header { min-height: 58px; padding: 10px 14px; } .app-label, .wide-label { display: none; } .header-actions { gap: 6px; }
@@ -89,7 +128,7 @@ html, body.reader-app { height: 100%; overflow: hidden; }
   .document-toolbar { padding: 10px; gap: 8px; min-height: 57px; } .file-heading { flex: 1; gap: 6px; } .file-mark { display: none; }
   .document-actions { gap: 6px; } .reader-app .document-actions button { padding: 5px 7px; font-size: 11px; }
   .reader-options { padding: 10px 12px; } .reader-selects { width: 100%; justify-content: space-between; gap: 6px; flex-wrap: wrap; } .reader-selects label { gap: 4px; }
-  #reader, #editor { padding: 20px 16px 40px; } #document-content, #editor { font-size: 12px; line-height: 1.8; }
+  #reader { padding: 20px 16px 40px; } #document-content, #editor .cm-editor { font-size: 12px; line-height: 1.8; }
   .document-footer { padding: 8px 14px; } .app-status { padding: 8px 12px max(8px, env(safe-area-inset-bottom)); font-size: 9px; }
   .app-status kbd { margin-left: 4px; } .reader-app dialog { padding: 20px; } .shortcut-list { gap: 10px 14px; font-size: 11px; }
 }
@@ -129,3 +168,27 @@ html, body.reader-app { height: 100%; overflow: hidden; }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 700; }
 @media (max-width: 680px) { .code-view { font-size: 12px; line-height: 1.8; } .code-gutter { width: calc(var(--gutter-digits, 3) * 1ch + 28px); padding-right: 10px; } .raw-link { padding: 5px 7px; font-size: 11px; } }
+
+/* Tabs: the files open this session, as in any editor. */
+.tab-bar { display: flex; overflow-x: auto; scrollbar-width: thin; border-bottom: 1px solid var(--border); background: var(--surface); }
+.tab-bar[hidden] { display: none; }
+.tab { display: flex; align-items: center; flex: none; max-width: 220px; border-right: 1px solid var(--border); font: 12px var(--mono); color: var(--muted); }
+.tab[aria-selected="true"] { color: var(--fg); background: var(--bg); box-shadow: inset 0 2px 0 var(--primary); }
+.reader-app .tab button { border: 0; background: none; color: inherit; font: inherit; border-radius: 0; }
+.reader-app .tab-name { padding: 8px 4px 8px 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reader-app .tab-close { padding: 8px 10px 8px 6px; opacity: .5; }
+.reader-app .tab-close:hover:not(:disabled) { opacity: 1; color: var(--danger); }
+.reader-app .tab-close:disabled { visibility: hidden; }
+.tab.unsaved .tab-name::after { content: " ●"; color: var(--warning); }
+.sidebar-hidden .file-pane { display: none; }
+/* The palette: Ctrl+P for files, Ctrl+Shift+P for commands. */
+.palette { position: fixed; inset: 12vh auto auto 50%; transform: translateX(-50%); margin: 0; width: min(620px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--fg); box-shadow: 0 24px 70px #0008; }
+.palette::backdrop { background: #0004; }
+.palette input { width: 100%; box-sizing: border-box; padding: 14px 16px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--fg); font: 14px var(--mono); outline: none; }
+.palette ul { list-style: none; margin: 0; padding: 6px; max-height: 50vh; overflow-y: auto; }
+.palette li { display: flex; justify-content: space-between; gap: 16px; padding: 7px 10px; border-radius: 4px; font: 13px var(--mono); cursor: pointer; }
+.palette li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette li small { color: var(--muted); flex: none; }
+.palette li[aria-selected="true"] { background: var(--selection); color: var(--selection-text); }
+.palette li[aria-selected="true"] small { color: inherit; }
+.palette .palette-empty { color: var(--muted); cursor: default; }

@@ -1,4 +1,5 @@
 import { test, expect, type BrowserContext, type Page } from "@playwright/test";
+import { editorInput, editorText } from "./editor.ts";
 const testOrigin = process.env.READM3_TEST_URL || `http://127.0.0.1:${process.env.READM3_TEST_PORT || 4318}`;
 const testMailbox = `http://127.0.0.1:${Number(new URL(testOrigin).port) + 1}`;
 const suffix = () => Math.random().toString(36).slice(2, 10);
@@ -78,7 +79,7 @@ test("verified email signup returns to the workspace and saves a private documen
     .fill("# My draft\n\nPrivate writing.");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.locator("#editor")).toBeVisible();
-  await page.locator("#editor").fill("# My draft\n\nAn improved draft.");
+  await editorInput(page).fill("# My draft\n\nAn improved draft.");
   await page.locator("#cloud-save").click();
   await expect(page.locator("#save-status")).toHaveText("Version saved online");
   await page.locator("#read-mode").click();
@@ -127,9 +128,7 @@ test("share dialog creates default read-only links and explicit edit links; edit
     await guestPage.goto(editUrl);
     await expect(guestPage.locator("#reader")).toBeVisible();
     await guestPage.locator("#edit-mode").click();
-    await guestPage
-      .locator("#editor")
-      .fill("# Project plan\n\nEdited by a collaborator.");
+    await editorInput(guestPage).fill("# Project plan\n\nEdited by a collaborator.");
     await guestPage.locator("#cloud-save").click();
     await expect(guestPage.locator("#save-status")).toHaveText(
       "Version saved online",
@@ -162,7 +161,7 @@ test("concurrent editor saves reject stale versions and preserve the unsaved tex
   const doc = await create(context);
   await page.goto(`/viewer?doc=${doc.id}`);
   await page.locator("#edit-mode").click();
-  await page.locator("#editor").fill("# My still-open draft");
+  await editorInput(page).fill("# My still-open draft");
   await action(context, "documents_update", {
     documentId: doc.id,
     baseVersion: doc.currentVersion,
@@ -172,7 +171,7 @@ test("concurrent editor saves reject stale versions and preserve the unsaved tex
   await expect(page.locator("#notice")).toContainText(
     "changed since you opened",
   );
-  await expect(page.locator("#editor")).toHaveValue("# My still-open draft");
+  await expect.poll(() => editorText(page)).toBe("# My still-open draft");
   await expect(page.locator("#save-status")).toContainText("Not saved");
 });
 
@@ -252,7 +251,7 @@ test("super-admin setup grants the account administration of another user's priv
     await expect(page.locator("#edit-mode")).toBeEnabled();
     await expect(page.locator("#share")).toBeVisible();
     await page.locator("#edit-mode").click();
-    await page.locator("#editor").fill("# Super-admin correction");
+    await editorInput(page).fill("# Super-admin correction");
     await page.locator("#cloud-save").click();
     await expect(page.locator("#save-status")).toHaveText(
       "Version saved online",
