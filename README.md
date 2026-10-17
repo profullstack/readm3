@@ -39,6 +39,12 @@ curl -fsSL https://readm3.com/install.sh | sh
 ```
 
 Run it again to update; remove with `sh ~/.local/share/readm3/uninstall.sh`.
+Add `--desktop` to install the desktop editor as well (Linux x64; see
+[Desktop app](#desktop-app)):
+
+```sh
+curl -fsSL https://readm3.com/install.sh | sh -s -- --desktop
+```
 
 Or with a package manager:
 
@@ -293,9 +299,26 @@ JSON without saying so; `--language` (or `language` in the API) forces one. The 
 and `DELETE /api/v1/pastes/<token>`, and the `paste_create`, `paste_get` and
 `paste_delete` MCP tools; each answer carries `language` and `mime`.
 
-## Web reader
+## Editor
 
-Open https://readm3.com/viewer for the same two-pane Markdown reader in your browser.
+Open https://readm3.com/viewer for a plain, fast text editor in your browser, with the
+same two-pane Markdown reader as the terminal. It is deliberately small: the editing
+basics of Sublime Text and nothing that needs a plugin.
+
+- **Editing**: line numbers, syntax colors for about a hundred languages (each grammar
+  loads the first time it is needed), multiple cursors (`Ctrl+click`, `Ctrl+D` for the
+  next match, `Alt+drag` for a column), find and replace (`Ctrl+F`), folding, bracket
+  matching, auto-closing brackets, `Ctrl+/` to comment, `Tab` to indent.
+- **Quick open**: `Ctrl+P` and a few letters of any path (`exdm` finds `examples/demo.md`).
+- **Command palette**: `Ctrl+Shift+P` or `F1` (or `>` in quick open) runs anything:
+  open, save, Save As, word wrap, the sidebar, any theme.
+- **Tabs** for the files you opened, kept across reloads.
+- **Real files**: in Chrome, Edge, the installed app and the desktop app, Open folder
+  and Open files work on the files themselves. `Ctrl+S` writes the change back to disk,
+  `Ctrl+Shift+S` is Save As, and a `●` marks a file whose disk copy is behind. Other
+  browsers open a copy and `Ctrl+S` downloads it.
+
+Code opens straight into the editor; Markdown opens rendered, and `e` edits it.
 Open local files or a folder, drop files into the window, open a raw URL or GitHub
 file link, or start a new note. The explorer filters files, prunes hidden and build
 directories, and sorts README first. All nine themes and Markdown flavors use the
@@ -303,16 +326,16 @@ same renderer as the terminal.
 
 Any file a browser can show opens, not only Markdown. Markdown renders as a document.
 Every other text file (JSON, JavaScript, Python, YAML, SQL, config, logs, some thirty
-languages) is shown as highlighted, numbered, foldable code, and `e` edits it in
-place like a note. The language comes from the extension when there is a known one and
+languages) opens in the editor, and `Escape` shows it as highlighted, numbered,
+foldable code. The language comes from the extension when there is a known one and
 is sniffed from the content otherwise. PDFs and images open in the browser's own
 viewer. Archives, executables, media and office files are skipped on import, and so
 is anything that turns out to be binary. Copy puts the current file on the clipboard;
 Download saves it with its own type.
 
 Press `/` to filter, `e` to edit, `Escape` to return to reading, and `?` for shortcuts.
-`Ctrl+S` / `⌘S` downloads the current file. Files and edits are saved in IndexedDB
-on this device; originals on disk are never overwritten. Reopening a file adds a copy
+Edits are also kept in IndexedDB on this device as you type, so nothing is lost
+offline; a file reaches the disk only when you save it. Reopening a file adds a copy
 so an existing draft is preserved. Clearing browser site data removes the workspace.
 
 A link can open a document too: `https://readm3.com/viewer?url=https://host/doc.md`
@@ -322,11 +345,37 @@ cross-origin reads (`Access-Control-Allow-Origin: *`); when the fetch fails, the
 Open URL dialog opens with the address and the reason filled in.
 
 Install through your browser’s app menu, or Share → Add to Home Screen on iOS.
-After the first visit, the application and saved workspace work offline. Remote URLs
+Installed from Chrome or Edge, readm3 appears in the system's "Open with" for text
+files. After the first visit, the application, every grammar and the saved workspace
+work offline. Remote URLs
 need a connection and a host that permits browser access (CORS); files are fetched
 directly with no credentials or server proxy. Local files are uploaded only when you explicitly choose Share → Save online.
 
 Imports are limited to 4 MB per file, 20 MB per workspace, and 1,000 files.
+
+### Desktop app
+
+The same editor in its own window, for Linux x64, from the
+[latest release](https://github.com/profullstack/readm3/releases/latest):
+`readm3-linux-x86_64.AppImage` (`chmod +x`, run it) or `readm3-linux-x86_64.flatpak`
+(`flatpak install --user readm3-linux-x86_64.flatpak`), checksums in `SHA256SUMS`.
+`install.sh --desktop` installs the AppImage with a menu entry.
+
+```sh
+readm3-desktop notes.md src/app.ts   # opens them as tabs; Ctrl+S saves back
+```
+
+Files named on the command line or opened with "Open with" go straight into the
+editor, and a second launch hands its files to the window already open. The window
+loads readm3.com, so sign-in, sync and sharing work as on the web; a copy of the
+editor ships inside the app for a first launch with no connection. The Flatpak keeps
+Chromium's sandbox; on Ubuntu 24.04 and newer an AppImage cannot have one (AppArmor
+restricts user namespaces and a FUSE mount is `nosuid`), so its launcher starts it
+without and says so. Prefer the Flatpak there.
+
+The app lives in `desktop/` (Electron). `cd desktop && bun install && node build.mjs`
+builds both packages (the Flatpak needs `flatpak-builder` and the Flathub remote);
+`.github/workflows/desktop.yml` attaches them to every release.
 
 ## The website
 
