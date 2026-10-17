@@ -147,8 +147,17 @@ $BIN/$name"
     fetch "$RELEASE/$APPIMAGE" "$DTMP/$APPIMAGE" || fail "cannot download $APPIMAGE"
     (cd "$DTMP" && grep " $APPIMAGE\$" SHA256SUMS | sha256sum -c - >/dev/null) || fail "checksum mismatch for $APPIMAGE"
     mv "$DTMP/$APPIMAGE" "$SHARE/readm3.AppImage" && chmod 0755 "$SHARE/readm3.AppImage"
-    rm -rf "$DTMP"
-    printf '#!/bin/sh\nexec "%s" "$@"\n' "$SHARE/readm3.AppImage" > "$BIN/readm3-desktop"
+    rm -rf "$DTMP" "$SHARE/desktop"
+    DESKTOP_EXEC="$SHARE/readm3.AppImage"
+    # An AppImage mounts itself with libfuse 2, which newer distributions (Ubuntu 26.04)
+    # no longer install. Without it, unpack the app once and run it from the folder.
+    if ! { ldconfig -p 2>/dev/null || true; } | grep -q 'libfuse\.so\.2'; then
+      say "No libfuse2 here; unpacking the app instead of mounting it ..."
+      (cd "$SHARE" && ./readm3.AppImage --appimage-extract >/dev/null) || fail "cannot unpack $APPIMAGE"
+      mv "$SHARE/squashfs-root" "$SHARE/desktop" && rm -f "$SHARE/readm3.AppImage"
+      DESKTOP_EXEC="$SHARE/desktop/readm3-desktop"
+    fi
+    printf '#!/bin/sh\nexec "%s" "$@"\n' "$DESKTOP_EXEC" > "$BIN/readm3-desktop"
     chmod 0755 "$BIN/readm3-desktop"
     APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
     ICONS="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps"
