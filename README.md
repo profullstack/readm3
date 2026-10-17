@@ -359,7 +359,10 @@ The same editor in its own window, for Linux x64, from the
 [latest release](https://github.com/profullstack/readm3/releases/latest):
 `readm3-linux-x86_64.AppImage` (`chmod +x`, run it) or `readm3-linux-x86_64.flatpak`
 (`flatpak install --user readm3-linux-x86_64.flatpak`), checksums in `SHA256SUMS`.
-`install.sh --desktop` installs the AppImage with a menu entry.
+`install.sh --desktop` installs the AppImage with a menu entry; on a system without
+libfuse2 (Ubuntu 26.04 ships only fuse3), it unpacks the app instead, since an AppImage
+cannot mount itself there. Running a downloaded AppImage by hand on such a system needs
+`--appimage-extract-and-run` or `sudo apt install libfuse2t64`.
 
 ```sh
 readm3-desktop notes.md src/app.ts   # opens them as tabs; Ctrl+S saves back
