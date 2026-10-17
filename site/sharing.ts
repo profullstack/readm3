@@ -8,17 +8,21 @@ import {
   type CloudUser,
 } from "./cloud.ts";
 import { escape } from "./html.ts";
+import { sensitiveGate, type SensitiveGate } from "./sensitive.ts";
 /**
  * A paste: the current file behind a secret link, no account, anonymous whether or not
  * the reader is signed in. The same POST the CLI and readm3.com/paste use.
  */
 export function pasteDialog(title: string, source: string) {
   const box = modal("Paste");
-  box.body.innerHTML = `<form class="cloud-form" id="paste-form"><p>A private link with no account. Anyone with the link can read this file; nobody can list or search for it, and it is gone when the link expires. Markdown renders, code is highlighted, a PDF or image shows as itself.</p><label>File name<input name="title" value="${escape(title)}" required maxlength="200"></label><label>Link expires in<select name="expiresIn"><option value="1h">1 hour</option><option value="1d">1 day</option><option value="7d" selected>7 days</option><option value="30d">30 days</option></select></label><p class="error"></p><button class="primary-action">Create private link</button></form><div id="paste-link"></div><p>Pasting from a terminal? <code>readm3 paste FILE</code>, or see <a href="/paste">readm3.com/paste</a> for curl and the API. To keep a file online with editors and history, <a href="/admin?next=%2Fviewer">sign in</a> and use Share instead.</p>`;
+  box.body.innerHTML = `<form class="cloud-form" id="paste-form"><p>A private link with no account. Anyone with the link can read this file; nobody can list or search for it, and it is gone when the link expires. Markdown renders, code is highlighted, a PDF or image shows as itself.</p><label>File name<input name="title" value="${escape(title)}" required maxlength="200"></label><label>Link expires in<select name="expiresIn"><option value="1h">1 hour</option><option value="1d">1 day</option><option value="7d" selected>7 days</option><option value="30d">30 days</option></select></label><div class="sensitive" role="status" hidden></div><p class="error"></p><button class="primary-action">Create private link</button></form><div id="paste-link"></div><p>Pasting from a terminal? <code>readm3 paste FILE</code>, or see <a href="/paste">readm3.com/paste</a> for curl and the API. To keep a file online with editors and history, <a href="/admin?next=%2Fviewer">sign in</a> and use Share instead.</p>`;
   const form = box.body.querySelector("form")!;
+  const gate = sensitiveGate(form.querySelector<HTMLElement>(".sensitive")!, form.querySelector("button")!);
+  gate.check(source);
   form.onsubmit = async (e) => {
     e.preventDefault();
     const button = form.querySelector("button")!;
+    if (gate.blocked()) return;
     button.disabled = true;
     try {
       const data = new FormData(form);
@@ -38,7 +42,7 @@ export function pasteDialog(title: string, source: string) {
       target.append(raw);
     } catch (error) {
       showError(form.querySelector<HTMLElement>(".error")!, error);
-      button.disabled = false;
+      button.disabled = gate.blocked();
     }
   };
 }
@@ -96,13 +100,14 @@ export async function sharing(
     }).catch(() => []),
   ]);
   const box = modal(`Share ${doc.title}`);
-  box.body.innerHTML = `<p class="permission-note">Viewers can read. Editors can save new versions. Only you and the super admin can change permissions or delete the file.</p><form id="link-form" class="cloud-form"><label>Anyone with the link<select name="role"><option value="view">Can view</option><option value="edit">Can edit</option></select></label><label>Version<select name="version"><option value="">Latest version (follows future saves)</option><option value="${doc.version.id}">This version only (view only)</option></select></label><button class="primary-action">Create share link</button></form><div id="new-link"></div><div id="existing-links"></div><h3>People</h3><form id="person-form" class="cloud-form"><label>Email or username<input name="username" required placeholder="name@example.com"></label><label>Permission<select name="role"><option value="view">Can view</option><option value="edit">Can edit</option></select></label><button>Add collaborator</button></form><div id="existing-people"></div><h3>Organization and team access</h3><form id="group-form" class="cloud-form"><label>Group<select name="teamId"><option value="">Whole organization</option>${teams.map((t) => `<option value="${t.id}"${doc.teamId === t.id ? " selected" : ""}>${escape(t.name)}</option>`).join("")}</select></label><label>Permission<select name="access">${["private", "view", "edit"].map((v) => `<option value="${v}"${doc.access === v ? " selected" : ""}>${v === "private" ? "No group access" : v === "view" ? "Can view" : "Can edit"}</option>`).join("")}</select></label><button>Update group access</button></form><h3>Ownership</h3><form id="transfer-form" class="cloud-form"><label>New owner’s email or username<input name="username" required></label><button class="danger-action">Transfer ownership</button></form><p class="error" role="alert"></p>`;
+  box.body.innerHTML = `<p class="permission-note">Viewers can read. Editors can save new versions. Only you and the super admin can change permissions or delete the file.</p><form id="link-form" class="cloud-form"><label>Anyone with the link<select name="role"><option value="view">Can view</option><option value="edit">Can edit</option></select></label><label>Version<select name="version"><option value="">Latest version (follows future saves)</option><option value="${doc.version.id}">This version only (view only)</option></select></label><div class="sensitive" role="status" hidden></div><button class="primary-action">Create share link</button></form><div id="new-link"></div><div id="existing-links"></div><h3>People</h3><form id="person-form" class="cloud-form"><label>Email or username<input name="username" required placeholder="name@example.com"></label><label>Permission<select name="role"><option value="view">Can view</option><option value="edit">Can edit</option></select></label><button>Add collaborator</button></form><div id="existing-people"></div><h3>Organization and team access</h3><form id="group-form" class="cloud-form"><label>Group<select name="teamId"><option value="">Whole organization</option>${teams.map((t) => `<option value="${t.id}"${doc.teamId === t.id ? " selected" : ""}>${escape(t.name)}</option>`).join("")}</select></label><label>Permission<select name="access">${["private", "view", "edit"].map((v) => `<option value="${v}"${doc.access === v ? " selected" : ""}>${v === "private" ? "No group access" : v === "view" ? "Can view" : "Can edit"}</option>`).join("")}</select></label><button>Update group access</button></form><h3>Ownership</h3><form id="transfer-form" class="cloud-form"><label>New owner’s email or username<input name="username" required></label><button class="danger-action">Transfer ownership</button></form><p class="error" role="alert"></p>`;
   const error = box.body.querySelector<HTMLElement>(".error")!;
-  function bind(selector: string, fn: (data: FormData) => Promise<void>) {
+  function bind(selector: string, fn: (data: FormData) => Promise<void>, gate?: SensitiveGate) {
     const form = box.body.querySelector<HTMLFormElement>(selector)!;
     form.onsubmit = async (e) => {
       e.preventDefault();
       const button = form.querySelector("button")!;
+      if (gate?.blocked()) return;
       button.disabled = true;
       error.textContent = "";
       try {
@@ -110,7 +115,7 @@ export async function sharing(
       } catch (cause) {
         showError(error, cause);
       } finally {
-        button.disabled = false;
+        button.disabled = gate?.blocked() ?? false;
       }
     };
   }
@@ -135,6 +140,10 @@ export async function sharing(
     };
     parent.append(b);
   }
+  // Anyone with the link sees what the document holds; warn about it here.
+  const linkForm = box.body.querySelector<HTMLFormElement>("#link-form")!;
+  const linkGate = sensitiveGate(linkForm.querySelector<HTMLElement>(".sensitive")!, linkForm.querySelector("button")!);
+  linkGate.check(doc.version.source);
   bind("#link-form", async (data) => {
     const link = await action<{ url: string; id: string }>("shares_create", {
       documentId: doc.id,
@@ -153,7 +162,7 @@ export async function sharing(
       () => action("shares_revoke", { documentId: doc.id, shareId: link.id }),
       target,
     );
-  });
+  }, linkGate);
   for (const link of links) {
     const row = document.createElement("p");
     row.textContent = `${link.label} · ${link.role}${link.versionId ? " · pinned version" : ""} `;

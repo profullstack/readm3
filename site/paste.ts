@@ -8,6 +8,7 @@
  */
 import { binaryType, detectLanguage, languageOf, looksBinary } from "../src/code.ts";
 import { outputLink, request, showError } from "./cloud.ts";
+import { sensitiveGate } from "./sensitive.ts";
 
 const PASTE_MAX_BYTES = 256 * 1024;
 const element = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -22,12 +23,14 @@ const submit = element<HTMLButtonElement>("paste-submit");
 const result = element("paste-result");
 const drop = element("paste-drop");
 const encoder = new TextEncoder();
+const gate = sensitiveGate(element("paste-sensitive"), submit);
 /** A chosen PDF or image: its base64 travels as the source while the textarea explains itself. */
 let binary: { name: string; source: string; bytes: number } | null = null;
 
 const formatBytes = (n: number) => n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`;
 
 function describe() {
+  gate.check(binary ? null : sourceInput.value);
   if (binary) {
     meta.textContent = `${binary.name} (${formatBytes(binary.bytes)}) will be pasted as a file. Clear the box to start over.`;
     return;
@@ -119,6 +122,7 @@ form.onsubmit = async (event) => {
   const source = binary ? binary.source : sourceInput.value;
   if (!source.trim()) { error.textContent = "Paste something first."; sourceInput.focus(); return; }
   if (encoder.encode(source).length > PASTE_MAX_BYTES) { error.textContent = "That is over the 256 KB limit for a paste."; return; }
+  if (gate.blocked()) { element("paste-sensitive").querySelector("input")?.focus(); return; }
   submit.disabled = true;
   submit.textContent = "Creating…";
   try {
@@ -131,7 +135,7 @@ form.onsubmit = async (event) => {
   } catch (cause) {
     showError(error, cause);
   } finally {
-    submit.disabled = false;
+    submit.disabled = gate.blocked();
     submit.textContent = "Create private link";
   }
 };

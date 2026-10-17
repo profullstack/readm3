@@ -218,6 +218,7 @@ export function createApi(
               createdAt: created.createdAt,
               expiresAt: created.expiresAt,
               bytes: created.bytes,
+              sensitive: created.sensitive,
             },
             201,
           );

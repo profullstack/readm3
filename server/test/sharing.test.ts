@@ -633,3 +633,37 @@ test("document search and pagination apply permissions before slicing results", 
     f.store.close();
   }
 });
+
+test("a share link reports what it exposes: the pinned version, or the latest", async () => {
+  const f = fixture();
+  try {
+    const owner = await f.account();
+    const doc = (
+      await owner.action("documents_create", {
+        orgId: owner.org.id,
+        title: "Deploy.md",
+        source: "# Deploy\n\nAsk ops@acme.io for access.\n",
+      })
+    ).data;
+    const link = (await owner.action("shares_create", { documentId: doc.id })).data;
+    expect(link.sensitive.level).toBe("personal");
+    expect(link.sensitive.findings[0]).toMatchObject({ label: "an email address", line: 3 });
+    const pinned = (
+      await owner.action("shares_create", { documentId: doc.id, versionId: doc.version.id })
+    ).data;
+    expect(pinned.sensitive.level).toBe("personal");
+    const updated = (
+      await owner.action("documents_update", {
+        documentId: doc.id,
+        baseVersion: doc.version.id,
+        source: "# Deploy\n\nAWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI7K7MDENGbPxRfiCY9EXAMPLE1\n",
+      })
+    ).data;
+    expect(updated.version.id).not.toBe(doc.version.id);
+    const latest = (await owner.action("shares_create", { documentId: doc.id })).data;
+    expect(latest.sensitive.level).toBe("secret");
+    expect(JSON.stringify(latest)).not.toContain("wJalrXUtnFEMI7K7MDENGbPxRfiCY9EXAMPLE1");
+  } finally {
+    f.store.close();
+  }
+});

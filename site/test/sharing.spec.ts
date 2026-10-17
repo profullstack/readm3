@@ -498,3 +498,26 @@ test("workspace remains scrollable on narrow screens with long team and organiza
     page.getByRole("heading", { name: "API tokens", exact: true }),
   ).toBeVisible();
 });
+
+test("the share dialog stops a link to a document that holds a secret until it is ticked", async ({ page, context }) => {
+  await register(context);
+  const orgs = await action(context, "organizations_list");
+  const doc = await action(context, "documents_create", {
+    orgId: orgs[0].id,
+    title: "Deploy.md",
+    source: "# Deploy\n\nDATABASE_URL=postgres://app:s3cr3tpass@db.internal:5432/app\n",
+  });
+  await page.goto(`/viewer?doc=${doc.id}`);
+  await page.locator("#share").click();
+  const form = page.locator("#link-form");
+  await expect(form.locator(".sensitive")).toContainText("Not safe to share");
+  await expect(form.locator(".sensitive")).toContainText("A password in a URL on line 3");
+  await expect(form.locator(".sensitive")).not.toContainText("s3cr3tpass");
+  const create = page.getByRole("button", { name: "Create share link", exact: true });
+  await expect(create).toBeDisabled();
+  await form.getByLabel("I know, share it anyway").check();
+  await create.click();
+  await expect(page.getByRole("textbox", { name: "Copy link", exact: true })).toHaveValue(/\/s\//);
+  // The people and group forms are not links to anyone, so they never wait on it.
+  await expect(page.getByRole("button", { name: "Add collaborator" })).toBeEnabled();
+});

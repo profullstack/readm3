@@ -8,7 +8,7 @@ import { cloudAction, cloudRequest, pasteLocation, sharedLocation } from "./clou
 const string = { type: "string" };
 const role = { type: "string", enum: ["view", "edit"] };
 const definitions: [string, string, Record<string, unknown>, string[]][] = [
-  ["paste_create", "Create an anonymous paste: any text file behind a secret link, no account needed. Markdown renders as a document; code (JSON, JavaScript, Python, YAML, SQL and 30 more) is highlighted with folding. The language is detected from the title's extension, else from the content; pass language to force one. Expires after 7 days by default (1h, 1d, 7d or 30d), 256 KB at most. Returns the URL and a raw URL; keep them, the server cannot show them again.", { source: string, title: { type: "string", description: "A file name; its extension decides the language." }, language: { type: "string", description: "A highlight.js name such as json, javascript, python, bash, yaml or markdown. Detected when omitted." }, expiresIn: { type: "string", enum: ["1h", "1d", "7d", "30d"] } }, ["source"]],
+  ["paste_create", "Create an anonymous paste: any text file behind a secret link, no account needed. Markdown renders as a document; code (JSON, JavaScript, Python, YAML, SQL and 30 more) is highlighted with folding. The language is detected from the title's extension, else from the content; pass language to force one. Expires after 7 days by default (1h, 1d, 7d or 30d), 256 KB at most. Returns the URL and a raw URL; keep them, the server cannot show them again. The result's sensitive field lists any key, token, password, email address, public IP or named home directory in what the link exposes (secrets masked); when its level is \"secret\", tell the user before passing the link on.", { source: string, title: { type: "string", description: "A file name; its extension decides the language." }, language: { type: "string", description: "A highlight.js name such as json, javascript, python, bash, yaml or markdown. Detected when omitted." }, expiresIn: { type: "string", enum: ["1h", "1d", "7d", "30d"] } }, ["source"]],
   ["paste_get", "Read an anonymous paste by its URL. Returns the source with its title, language and mime type.", { url: string }, ["url"]],
   ["paste_delete", "Delete an anonymous paste by its URL. The link stops working for everyone.", { url: string }, ["url"]],
   ["settings_get", "Read the verified account's latest settings and Markdown workspace snapshot, including its revision.", {}, []],
@@ -188,7 +188,7 @@ const definitions: [string, string, Record<string, unknown>, string[]][] = [
   ],
   [
     "shares_create",
-    "Create a bearer link granting view (default) or edit access. Owners only. Pinned versions are view-only.",
+    "Create a bearer link granting view (default) or edit access. Owners only. Pinned versions are view-only. The result's sensitive field lists any key, token, password, email address, public IP or named home directory in what the link exposes (secrets masked); when its level is \"secret\", tell the user before passing the link on.",
     {
       documentId: string,
       role,
