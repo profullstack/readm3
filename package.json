@@ -50,6 +50,7 @@
     "marked": "^18.0.11"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
     "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/language": "^6.13.1",

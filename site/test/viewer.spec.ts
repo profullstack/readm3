@@ -98,6 +98,56 @@ test("opens a folder from disk, marks unsaved files, and writes them back with C
   expect(await page.evaluate(() => (window as unknown as { written: Record<string, string> }).written["saved-Welcome.md"])).toContain("Your docs. Your space.");
 });
 
+test("keeps a rolling history: opened, saved, changed on disk, with snippets and restore", async ({ page }) => {
+  // A fake disk whose file can change under the editor, as a regenerated output.json does.
+  await page.addInitScript(() => {
+    const disk = { text: '{\n  "status": "ok",\n  "count": 1\n}\n', modified: 1 };
+    Object.assign(window, { disk });
+    const handle = {
+      kind: "file", name: "output.json", queryPermission: async () => "granted",
+      getFile: async () => new File([disk.text], "output.json", { lastModified: disk.modified }),
+      createWritable: async () => { let out = ""; return { write: async (data: string) => { out += data; }, close: async () => { disk.text = out; disk.modified++; } }; },
+    };
+    Object.assign(window, {
+      showDirectoryPicker: async () => ({ kind: "directory", name: "build", values: async function* () { yield handle; } }),
+      showOpenFilePicker: async () => [handle],
+      showSaveFilePicker: async () => handle,
+    });
+  });
+  await page.reload();
+  await expect(page.locator("#save-status")).toHaveText("Saved on this device");
+  // The folder is named build on purpose: the folder chosen is never skipped as build output.
+  await page.locator("#open-folder").click();
+  await expect(page.locator("#document-name")).toHaveText("build/output.json");
+  await expect(page.locator("#history")).toBeVisible();
+  await editorInput(page).fill('{\n  "status": "ok",\n  "count": 2\n}\n');
+  await page.keyboard.press("Control+s");
+  await expect(page.locator("#save-status")).toHaveText("Saved to disk · output.json");
+  // Regenerated behind the editor's back: reloaded, and recorded.
+  await page.evaluate(() => {
+    const disk = (window as unknown as { disk: { text: string; modified: number } }).disk;
+    disk.text = '{\n  "status": "failed",\n  "count": 2,\n  "error": "timeout"\n}\n';
+    disk.modified += 10;
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(page.locator("#notice")).toContainText("changed on disk and was reloaded");
+  await expect.poll(() => editorText(page)).toContain('"error": "timeout"');
+  await page.locator("#history").click();
+  const items = page.locator("#file-history-dialog .history-item");
+  await expect(items).toHaveCount(3);
+  await expect(items.nth(0).locator(".history-reason")).toHaveText("changed on disk");
+  await expect(items.nth(0).locator(".history-stat")).toHaveText("+3 −2");
+  await expect(items.nth(0).locator(".history-snippet .added").first()).toContainText('"status": "failed"');
+  await expect(items.nth(1).locator(".history-reason")).toHaveText("saved");
+  await expect(items.nth(2).locator(".history-stat")).toHaveText("first version");
+  // Signed out: the paid summary says how to get it, and nothing is charged.
+  await expect(page.locator("#file-history-dialog .history-account")).toContainText("Sign in");
+  await expect(page.locator("#file-history-dialog").getByRole("button", { name: "Summarize with AI" })).toHaveCount(0);
+  await items.nth(2).getByRole("button", { name: "Restore" }).click();
+  await expect.poll(() => editorText(page)).toContain('"count": 1');
+  await expect(page.locator("#notice")).toContainText("Restored");
+});
+
 test("goes to files with Ctrl+P, runs commands with Ctrl+Shift+P, and keeps open files as tabs", async ({ page }) => {
   await page.locator("#reader").press("Control+p");
   await expect(page.locator("#palette")).toBeVisible();

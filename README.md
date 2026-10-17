@@ -353,6 +353,39 @@ directly with no credentials or server proxy. Local files are uploaded only when
 
 Imports are limited to 4 MB per file, 20 MB per workspace, and 1,000 files.
 
+### File history and AI summaries
+
+Every file on the device keeps a rolling history (History in the toolbar, or
+`File: History` in the palette): a version each time it is opened, saved, restored,
+or **changes on disk underneath the editor**. A file opened from disk is checked
+every few seconds and on window focus, so a generated file (a build's `output.json`,
+a log, a lockfile) that is rewritten by something else shows up as a new version; with
+no local edits it is reloaded, with local edits the disk version waits in History. The
+newest 50 versions are kept, up to 8 MB per file. Each version shows when and why it
+was recorded, `+added −removed` against the one before, and the changed lines, and can
+be restored. All of that is free and never leaves the device.
+
+**AI summaries** are the paid part: one click writes a short abstract of a version's
+change plus the specific edits. They are pay as you go from a prepaid balance (top up
+$5, $10 or $25 through CoinPay, in USDC, USDT, BTC, ETH, SOL or POL; the balance never
+expires). Only the changed lines are sent, never the whole file. Each summary is charged
+at a multiple of what the model call cost; the multiple is a two-arm price experiment
+(2x or 4x), assigned once per account. A refused or failed call is not charged.
+
+| Endpoint | |
+| --- | --- |
+| `GET /api/v1/billing` | balance, price arm and multiplier, recent ledger |
+| `POST /api/v1/billing/topups` `{ amountUsd, chain? }` | starts a CoinPay payment, returns `payUrl` |
+| `GET /api/v1/billing/topups/<id>` | `pending` or `paid` |
+| `POST /api/v1/summaries` `{ path, before, after }` | the abstract, `chargedMicros`, new balance |
+| `GET /api/v1/billing/experiment` | admins: per arm accounts, payers, top-ups, summaries, revenue, model cost |
+| `POST /api/v1/billing/coinpay/webhook` | CoinPay's signed webhook (`t=…,v1=` HMAC-SHA256) |
+
+Server configuration: `ANTHROPIC_API_KEY` turns summaries on (`READM3_SUMMARY_MODEL`,
+default `claude-opus-5-5`, run at low effort); `COINPAY_API_KEY`, `COINPAY_BUSINESS_ID`
+and `COINPAY_WEBHOOK_SECRET` open top-ups (`COINPAY_API_URL` defaults to
+coinpayportal.com). Without them the history still works and the paid parts say so.
+
 ### Desktop app
 
 The same editor in its own window, for Linux x64, from the

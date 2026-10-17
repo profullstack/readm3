@@ -7,6 +7,8 @@ import { toHtml } from "./html.ts";
 import { renderCode, type CodeView } from "./code-view.ts";
 import type { SourceEditor } from "./code-editor.ts";
 import * as disk from "./disk.ts";
+import * as fileHistory from "./history.ts";
+import { awaitTopUp, showHistory, showTopUp } from "./history-panel.ts";
 import { openPalette, rank, type PaletteItem } from "./palette.ts";
 import { binaryType, detectLanguage, languageForName, looksBinary, MARKDOWN } from "../src/code.ts";
 import { accepts, bytesOf, comparePaths, kindOf, MAX_FILE_BYTES, MAX_FILES, MAX_WORKSPACE_BYTES, persist, rawUrl, restore, toBase64, type Document, type Workspace } from "./workspace.ts";
@@ -63,6 +65,7 @@ function applyKind() {
   element("copy").hidden = current.kind === "binary";
   element("file-mark").textContent = current.kind === "markdown" ? "M↓" : current.kind === "code" ? current.language.extensions[0]!.toUpperCase() : current.binary.label.split(" ")[0]!.toUpperCase();
   element<HTMLButtonElement>("edit-mode").disabled = current.kind === "binary" || !!pasteDocument || (!!cloudDocument && !cloudDocument.canEdit);
+  if (!cloudDocument && !pasteDocument) element("history").hidden = current.kind === "binary";
 }
 
 /** Whether the active file may be edited here: not a paste, not a view-only link, not a PDF or image. */
@@ -257,6 +260,8 @@ function commands(): PaletteItem[] {
       command("File: Save", () => void saveFile(), "Ctrl+S"),
       command("File: Save As…", () => void saveFile(true), "Ctrl+Shift+S"),
       command("File: Close tab", () => closeTab(workspace.active)),
+      command("File: History", openHistory),
+      command("Billing: Top up AI summaries", () => void showTopUp()),
       command("Sync: Sync this workspace to your account", () => element("sync-workspace").click()),
     ] : [],
     ...cloudDocument?.canEdit ? [command("File: Save version", () => void saveCloud(), "Ctrl+S")] : [],
@@ -559,6 +564,7 @@ async function importFiles(files: disk.Picked[], name = "Your workspace") {
     if (incoming.length) {
       const added = addDocuments(incoming, name);
       added.forEach((doc, i) => { const handle = handles[i]; if (handle) diskEntries.set(doc.path, { handle, saved: disk.fingerprint(doc.source) }); });
+      for (const doc of added) if (!binaryType(doc.path)) void fileHistory.record(doc.path, doc.source, "opened");
       if (handles.some(Boolean)) { void disk.storeEntries(diskEntries); renderFiles(); void save(); }
     }
     else notice("No readable files found. Open text files (Markdown, JSON, code, config), PDFs or images up to 4 MB.");
@@ -566,6 +572,53 @@ async function importFiles(files: disk.Picked[], name = "Your workspace") {
     if (unreadable) notice(`${unreadable} file(s) skipped: not text, PDF or image.`);
   } catch { notice("A file could not be read. Try selecting it again."); }
   finally { importBusy = false; filesInput.value = ""; folderInput.value = ""; }
+}
+
+function openHistory() {
+  if (cloudDocument || pasteDocument || isBinary()) return;
+  const path = workspace.active;
+  void showHistory(path, (source) => {
+    if (workspace.active !== path) return;
+    current().source = source;
+    previousRender = "";
+    documentInfo();
+    setMode(editing, false);
+    changed();
+    void fileHistory.record(path, source, "restored");
+    notice("Restored. Save to write it back to disk; the version you left is in History too.");
+  }, () => void showTopUp());
+}
+
+/** When each disk file was last seen to change, so the watcher reads it only when it moves. */
+const diskSeen = new Map<string, number>();
+/**
+ * A file from disk that changes underneath the editor (regenerated output, a git
+ * checkout, another editor) gets a version in History. With no local edits it is
+ * reloaded; with local edits it is left alone and the disk version waits in History.
+ */
+async function checkDisk() {
+  if (!workspace || cloudDocument || pasteDocument || document.hidden || isBinary()) return;
+  const doc = current();
+  const entry = diskEntries.get(doc.path);
+  if (!entry) return;
+  let file: File;
+  try { file = await entry.handle.getFile(); } catch { return; }
+  if (diskSeen.get(doc.path) === file.lastModified) return;
+  diskSeen.set(doc.path, file.lastModified);
+  const text = await file.text();
+  if (disk.fingerprint(text) === entry.saved || workspace.active !== doc.path) return;
+  const name = doc.path.split("/").at(-1);
+  const edited = unsavedOnDisk(doc);
+  await fileHistory.record(doc.path, text, "changed on disk");
+  if (edited) { notice(`${name} changed on disk. Your unsaved edits are kept; the disk version is in History.`); return; }
+  entry.saved = disk.fingerprint(text);
+  void disk.storeEntries(diskEntries);
+  doc.source = text;
+  previousRender = "";
+  documentInfo();
+  setMode(editing, false);
+  changed();
+  notice(`${name} changed on disk and was reloaded. History has both versions.`);
 }
 
 /** What an input or a drop hands over: files with their relative paths, no way back to disk. */
@@ -597,6 +650,7 @@ async function saveFile(saveAs = false) {
     await disk.storeEntries(diskEntries);
     markUnsaved();
     saveStatus.textContent = `Saved to disk · ${handle.name}`;
+    if (!isBinary()) void fileHistory.record(doc.path, doc.source, "saved");
   } catch (error) {
     notice(`${error instanceof Error ? error.message : "Could not write the file."} Use Download to keep a copy.`);
   }
@@ -677,7 +731,7 @@ function bindEvents() {
     if (editing && !isMarkdown()) sourceEditor?.setWrap(on);
   };
   element("history").onclick = () => {
-    if (!cloudDocument) return;
+    if (!cloudDocument) { openHistory(); return; }
     if (pendingSave) { notice("Save or download your draft before restoring a version."); return; }
     void versionHistory(cloudDocument, adoptCloud).catch(error => notice(error instanceof Error ? error.message : "Could not load history."));
   };
@@ -954,6 +1008,10 @@ async function start() {
   const remote = params.get("url")?.trim();
   if (remote) await openUrlParam(remote);
   receiveLaunches();
+  setInterval(() => void checkDisk(), 5000);
+  window.addEventListener("focus", () => void checkDisk());
+  const topup = params.get("topup");
+  if (topup) { history.replaceState(null, "", "/viewer"); void awaitTopUp(topup, notice); }
   void setupPwa();
 }
 
