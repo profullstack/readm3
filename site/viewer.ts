@@ -221,7 +221,9 @@ function renderTabs() {
     return tab;
   }));
   tabBar.querySelector(`[aria-selected="true"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  if (local) storePreference("tabs", JSON.stringify(tabs));
+  // The active file goes with the tabs: the workspace record saves 300 ms later, and a
+  // quick reload would otherwise reopen the old file and bring back a closed tab.
+  if (local) storePreference("tabs", JSON.stringify({ tabs, active: workspace.active }));
 }
 
 function closeTab(path: string) {
@@ -931,12 +933,18 @@ async function start() {
   }
   try { workspace = (await restore())!; } catch { /* A fresh in-memory workspace still works. */ }
   diskEntries = await disk.loadEntries();
-  try { tabs = JSON.parse(localStorage.getItem("readm3:tabs") ?? "[]"); } catch { /* A fresh tab bar. */ }
+  let savedActive: string | undefined;
+  try {
+    const saved = JSON.parse(localStorage.getItem("readm3:tabs") ?? "{}") as { tabs?: string[]; active?: string };
+    tabs = Array.isArray(saved.tabs) ? saved.tabs : [];
+    savedActive = saved.active;
+  } catch { /* A fresh tab bar. */ }
   if (!workspace?.documents?.length || !workspace.documents.some((doc) => doc.path === workspace.active)) {
     const seed = await fetch(__SEED_URL__);
     if (!seed.ok) throw new Error("Could not load the starter documents. Reload to try again.");
     workspace = await seed.json() as Workspace;
   }
+  if (savedActive && workspace.documents.some((doc) => doc.path === savedActive)) workspace.active = savedActive;
   workspace.documents.sort((a, b) => comparePaths(a.path, b.path));
   openDocument(workspace.active, false);
   bindEvents();
