@@ -98,6 +98,33 @@ test("opens a folder from disk, marks unsaved files, and writes them back with C
   expect(await page.evaluate(() => (window as unknown as { written: Record<string, string> }).written["saved-Welcome.md"])).toContain("Your docs. Your space.");
 });
 
+test("goes to files with Ctrl+P, runs commands with Ctrl+Shift+P, and keeps open files as tabs", async ({ page }) => {
+  await page.locator("#reader").press("Control+p");
+  await expect(page.locator("#palette")).toBeVisible();
+  // Fuzzy, Sublime style: "exdm" is examples/demo.md.
+  await page.keyboard.type("exdm");
+  await expect(page.locator("#palette li").first()).toHaveText("examples/demo.md");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#palette")).toBeHidden();
+  await expect(page.locator("#document-name")).toHaveText("examples/demo.md");
+  await expect(page.locator("#tabs .tab")).toHaveCount(2);
+  await expect(page.locator('#tabs [aria-selected="true"]')).toHaveAttribute("title", "examples/demo.md");
+  // Commands: a theme change and the sidebar, without touching the toolbar.
+  await page.locator("#reader").press("Control+Shift+P");
+  await page.keyboard.type("toggle sidebar");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#file-pane")).toBeHidden();
+  await page.keyboard.press("F1");
+  await expect(page.locator("#palette input")).toHaveValue(">");
+  await page.keyboard.press("Escape");
+  // Closing a tab moves to its neighbour and leaves the file in the workspace.
+  await page.locator('#tabs [aria-label="Close examples/demo.md"]').click();
+  await expect(page.locator("#document-name")).toHaveText("Welcome.md");
+  await expect(page.locator("#tabs .tab")).toHaveCount(1);
+  await page.reload();
+  await expect(page.locator("#tabs .tab")).toHaveCount(1);
+});
+
 test("imports a pruned directory with README ordering and retains existing drafts", async ({ page }) => {
   const root = await mkdtemp(join(tmpdir(), "readm3-folder-"));
   try {

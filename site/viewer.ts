@@ -7,6 +7,7 @@ import { toHtml } from "./html.ts";
 import { renderCode, type CodeView } from "./code-view.ts";
 import type { SourceEditor } from "./code-editor.ts";
 import * as disk from "./disk.ts";
+import { openPalette, rank, type PaletteItem } from "./palette.ts";
 import { binaryType, detectLanguage, languageForName, looksBinary, MARKDOWN } from "../src/code.ts";
 import { accepts, bytesOf, comparePaths, kindOf, MAX_FILE_BYTES, MAX_FILES, MAX_WORKSPACE_BYTES, persist, rawUrl, restore, toBase64, type Document, type Workspace } from "./workspace.ts";
 
@@ -182,11 +183,92 @@ function changed() {
   saveTimer = setTimeout(() => void save(), 300);
 }
 
-/** The dot on the active file's row and heading when its disk copy is behind. */
+/** The dot on the active file's row, tab and heading when its disk copy is behind. */
 function markUnsaved() {
   const unsaved = unsavedOnDisk(current());
   element("document-name").classList.toggle("unsaved", unsaved);
   fileList.querySelector(`[aria-current="page"]`)?.classList.toggle("unsaved", unsaved);
+  tabBar.querySelector(`[aria-selected="true"]`)?.classList.toggle("unsaved", unsaved);
+}
+
+/** Files opened this session, left to right, as in any editor; closing a tab keeps the file. */
+const tabBar = element("tabs");
+let tabs: string[] = [];
+function renderTabs() {
+  const local = !cloudDocument && !pasteDocument;
+  tabs = tabs.filter((path) => workspace.documents.some((doc) => doc.path === path));
+  if (local && !tabs.includes(workspace.active)) tabs.push(workspace.active);
+  tabBar.hidden = !local;
+  tabBar.replaceChildren(...tabs.map((path) => {
+    const tab = document.createElement("div");
+    tab.className = "tab";
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", String(path === workspace.active));
+    tab.title = path;
+    if (unsavedOnDisk(workspace.documents.find((doc) => doc.path === path)!)) tab.classList.add("unsaved");
+    const open = document.createElement("button");
+    open.className = "tab-name";
+    open.textContent = path.split("/").at(-1)!;
+    open.onclick = () => { if (path !== workspace.active) openDocument(path); };
+    open.onauxclick = (event) => { if (event.button === 1) closeTab(path); };
+    const close = document.createElement("button");
+    close.className = "tab-close";
+    close.textContent = "×";
+    close.setAttribute("aria-label", `Close ${path}`);
+    close.disabled = tabs.length === 1;
+    close.onclick = () => closeTab(path);
+    tab.append(open, close);
+    return tab;
+  }));
+  tabBar.querySelector(`[aria-selected="true"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  if (local) storePreference("tabs", JSON.stringify(tabs));
+}
+
+function closeTab(path: string) {
+  if (tabs.length < 2) return;
+  const index = tabs.indexOf(path);
+  tabs = tabs.filter((tab) => tab !== path);
+  if (path === workspace.active) openDocument(tabs[Math.min(index, tabs.length - 1)]!);
+  else renderTabs();
+}
+
+function showPalette(initial: string) {
+  const files = (): PaletteItem[] => workspace.documents.map((doc) => ({ label: doc.path, detail: kindOf(doc).kind === "binary" ? "view" : undefined, run: () => openDocument(doc.path) }));
+  openPalette({
+    placeholder: "Go to file… (type > for commands)",
+    initial,
+    items: (query) => query.startsWith(">") ? rank(query.slice(1), commands()) : cloudDocument || pasteDocument ? [] : rank(query, files()),
+  });
+}
+
+/** Everything the toolbar and keys do, by name, for the command palette. */
+function commands(): PaletteItem[] {
+  const command = (label: string, run: () => void, detail?: string): PaletteItem => ({ label, run, detail });
+  const local = !cloudDocument && !pasteDocument;
+  const withEditor = (run: (ready: SourceEditor) => void) => () => { if (!canEdit()) { notice("This file is read-only here."); return; } setMode(true); void loadEditor().then(run); };
+  return [
+    ...local ? [
+      command("File: Open folder…", () => void openFromDisk(true)),
+      command("File: Open files…", () => void openFromDisk(false)),
+      command("File: Open URL…", () => urlDialog.showModal()),
+      command("File: New note", () => element("new-file").click()),
+      command("File: Save", () => void saveFile(), "Ctrl+S"),
+      command("File: Save As…", () => void saveFile(true), "Ctrl+Shift+S"),
+      command("File: Close tab", () => closeTab(workspace.active)),
+      command("Sync: Sync this workspace to your account", () => element("sync-workspace").click()),
+    ] : [],
+    ...cloudDocument?.canEdit ? [command("File: Save version", () => void saveCloud(), "Ctrl+S")] : [],
+    command("File: Download", download),
+    command("View: Read", () => setMode(false), "Esc"),
+    ...canEdit() ? [command("View: Edit", () => setMode(true), "e")] : [],
+    command("View: Toggle sidebar", () => document.body.classList.toggle("sidebar-hidden")),
+    command("View: Toggle word wrap", () => element("wrap").click()),
+    command("Edit: Find and replace", withEditor((ready) => ready.find()), "Ctrl+F"),
+    command("Edit: Fold all", () => element("fold-all").click()),
+    command("Edit: Unfold all", () => element("unfold-all").click()),
+    ...[...theme.options].map((option) => command(`Theme: ${option.text}`, () => { theme.value = option.value; theme.dispatchEvent(new Event("change")); })),
+    command("Help: Keyboard shortcuts", () => helpDialog.showModal(), "?"),
+  ];
 }
 
 function setFilesOpen(open: boolean) {
@@ -396,6 +478,7 @@ function openDocument(path: string, focus = true) {
   element("document-name").textContent = path;
   document.title = `${path.split("/").at(-1)} — readm3`;
   renderFiles();
+  renderTabs();
   applyKind();
   documentInfo();
   // Code opens ready to type, as in any text editor; Markdown opens rendered, as in a reader.
@@ -638,6 +721,9 @@ function onKey(event: KeyboardEvent) {
   if (document.querySelector("dialog[open]") || event.isComposing || event.defaultPrevented) return;
   const target = event.target as HTMLElement;
   const typing = target.matches("input, textarea, select, [contenteditable]");
+  if (((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p") || event.key === "F1") {
+    event.preventDefault(); showPalette(event.shiftKey || event.key === "F1" ? ">" : ""); return;
+  }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); void saveFile(event.shiftKey); return; }
   if (event.altKey || event.ctrlKey || event.metaKey) return;
   if (event.key === "Escape") {
@@ -834,6 +920,7 @@ async function start() {
   }
   try { workspace = (await restore())!; } catch { /* A fresh in-memory workspace still works. */ }
   diskEntries = await disk.loadEntries();
+  try { tabs = JSON.parse(localStorage.getItem("readm3:tabs") ?? "[]"); } catch { /* A fresh tab bar. */ }
   if (!workspace?.documents?.length || !workspace.documents.some((doc) => doc.path === workspace.active)) {
     const seed = await fetch(__SEED_URL__);
     if (!seed.ok) throw new Error("Could not load the starter documents. Reload to try again.");

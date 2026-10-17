@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#05070a">
   <meta name="description" content="Write and share Markdown with readm3. Open local files offline or collaborate online with view/edit links, private workspaces, and version history.">
-  <title>readm3 — web reader</title>
+  <title>readm3 — editor</title>
   <link rel="canonical" href="https://readm3.com/viewer">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/viewer-assets/icon-192.png">
@@ -18,7 +18,7 @@
 <body class="reader-app">
   <a class="skip" href="#reader">Skip to document</a>
   <header class="app-header">
-    <a class="brand" href="/">readm3<span class="app-label"> / web reader</span></a>
+    <a class="brand" href="/">readm3<span class="app-label"> / editor</span></a>
     <div class="header-actions">
       <a href="/admin">Workspaces</a>
       <button id="sync-workspace">Sync</button>
@@ -61,6 +61,7 @@
           <button id="download" title="Download this file (Ctrl or ⌘ S)">Download</button>
         </div>
       </div>
+      <nav id="tabs" class="tab-bar" role="tablist" aria-label="Open files" hidden></nav>
       <div class="reader-options">
         <span id="document-info">Markdown</span>
         <div class="reader-selects">
@@ -80,7 +81,7 @@
   <dialog id="help-dialog" aria-labelledby="help-title">
     <form method="dialog"><div class="dialog-header"><h2 id="help-title">Make yourself at home.</h2><button aria-label="Close help">×</button></div>
     <p>The readm3 terminal reader, in your browser. Open a folder or a few files to get started: Markdown renders as a document, any other text file (JSON, code, config, logs) is shown as highlighted, foldable code you can edit, and PDFs and images open in the browser's own viewer.</p>
-    <dl class="shortcut-list"><dt>↑ / ↓ or j / k</dt><dd>Move through files or scroll the reader</dd><dt>← / →</dt><dd>Collapse or expand a folder</dd><dt>Enter</dt><dd>Open the focused file</dd><dt>/</dt><dd>Filter files</dd><dt>Tab</dt><dd>Move between controls and panes</dd><dt>e / i · Escape</dt><dd>Edit source · return to reading</dd><dt>Ctrl / ⌘ S · Shift</dt><dd>Save the file back to disk · Save As</dd><dt>Ctrl / ⌘ F · D</dt><dd>Find and replace · select the next match (another cursor)</dd><dt>Ctrl / ⌘ click · Alt drag</dt><dd>Add a cursor · select a column</dd><dt>Ctrl / ⌘ /</dt><dd>Toggle comment</dd><dt>g / G · Space / b</dt><dd>Top / bottom · page down / up</dd><dt>s · ?</dt><dd>Reveal spoilers · open help</dd></dl>
+    <dl class="shortcut-list"><dt>↑ / ↓ or j / k</dt><dd>Move through files or scroll the reader</dd><dt>← / →</dt><dd>Collapse or expand a folder</dd><dt>Enter</dt><dd>Open the focused file</dd><dt>/</dt><dd>Filter files</dd><dt>Tab</dt><dd>Move between controls and panes</dd><dt>e / i · Escape</dt><dd>Edit source · return to reading</dd><dt>Ctrl / ⌘ P</dt><dd>Go to any file by typing part of its name</dd><dt>Ctrl / ⌘ Shift P · F1</dt><dd>Run any command: open, save, themes, wrap, sidebar</dd><dt>Ctrl / ⌘ S · Shift</dt><dd>Save the file back to disk · Save As</dd><dt>Ctrl / ⌘ F · D</dt><dd>Find and replace · select the next match (another cursor)</dd><dt>Ctrl / ⌘ click · Alt drag</dt><dd>Add a cursor · select a column</dd><dt>Ctrl / ⌘ /</dt><dd>Toggle comment</dd><dt>g / G · Space / b</dt><dd>Top / bottom · page down / up</dd><dt>s · ?</dt><dd>Reveal spoilers · open help</dd></dl>
     <p>Edits are kept in this browser as you type, so nothing is lost offline. In Chrome, Edge and the installed app, Open folder and Open files work on the real files: Ctrl / ⌘ S writes your changes back, and a dot marks a file whose disk copy is behind. Other browsers open a copy, and Ctrl / ⌘ S downloads it.</p>
     <p>Install from your browser’s install menu, or on iPhone and iPad use Share → Add to Home Screen. After your first visit, the reader works offline. URLs need an internet connection and a host that allows browser access.</p>
     <button class="primary-action">Got it</button></form>
@@ -91,6 +92,6 @@
     <label for="url-input">File URL</label><input id="url-input" type="url" placeholder="https://raw.githubusercontent.com/…/README.md" required>
     <p id="url-error" role="alert"></p><button id="load-url" class="primary-action">Open document</button></form>
   </dialog>
-  <noscript><div class="no-script">The web reader needs JavaScript to open and render files. You can still <a href="/docs">read the docs</a> or use the terminal app.</div></noscript>
+  <noscript><div class="no-script">The editor needs JavaScript to open and edit files. You can still <a href="/docs">read the docs</a> or use the terminal app.</div></noscript>
 </body>
 </html>

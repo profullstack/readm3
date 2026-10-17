@@ -168,3 +168,27 @@ html, body.reader-app { height: 100%; overflow: hidden; }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 700; }
 @media (max-width: 680px) { .code-view { font-size: 12px; line-height: 1.8; } .code-gutter { width: calc(var(--gutter-digits, 3) * 1ch + 28px); padding-right: 10px; } .raw-link { padding: 5px 7px; font-size: 11px; } }
+
+/* Tabs: the files open this session, as in any editor. */
+.tab-bar { display: flex; overflow-x: auto; scrollbar-width: thin; border-bottom: 1px solid var(--border); background: var(--surface); }
+.tab-bar[hidden] { display: none; }
+.tab { display: flex; align-items: center; flex: none; max-width: 220px; border-right: 1px solid var(--border); font: 12px var(--mono); color: var(--muted); }
+.tab[aria-selected="true"] { color: var(--fg); background: var(--bg); box-shadow: inset 0 2px 0 var(--primary); }
+.reader-app .tab button { border: 0; background: none; color: inherit; font: inherit; border-radius: 0; }
+.reader-app .tab-name { padding: 8px 4px 8px 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reader-app .tab-close { padding: 8px 10px 8px 6px; opacity: .5; }
+.reader-app .tab-close:hover:not(:disabled) { opacity: 1; color: var(--danger); }
+.reader-app .tab-close:disabled { visibility: hidden; }
+.tab.unsaved .tab-name::after { content: " ●"; color: var(--warning); }
+.sidebar-hidden .file-pane { display: none; }
+/* The palette: Ctrl+P for files, Ctrl+Shift+P for commands. */
+.palette { position: fixed; inset: 12vh auto auto 50%; transform: translateX(-50%); margin: 0; width: min(620px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--fg); box-shadow: 0 24px 70px #0008; }
+.palette::backdrop { background: #0004; }
+.palette input { width: 100%; box-sizing: border-box; padding: 14px 16px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--fg); font: 14px var(--mono); outline: none; }
+.palette ul { list-style: none; margin: 0; padding: 6px; max-height: 50vh; overflow-y: auto; }
+.palette li { display: flex; justify-content: space-between; gap: 16px; padding: 7px 10px; border-radius: 4px; font: 13px var(--mono); cursor: pointer; }
+.palette li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette li small { color: var(--muted); flex: none; }
+.palette li[aria-selected="true"] { background: var(--selection); color: var(--selection-text); }
+.palette li[aria-selected="true"] small { color: inherit; }
+.palette .palette-empty { color: var(--muted); cursor: default; }
