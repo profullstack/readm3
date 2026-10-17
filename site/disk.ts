@@ -65,6 +65,35 @@ export async function launched(handles: readonly FileSystemHandle[]): Promise<Pi
   return Promise.all(files.map(async (handle) => ({ file: await handle.getFile(), path: handle.name, handle })));
 }
 
+/** A file the desktop app opened for the page: its path, its name and its bytes. */
+export interface DesktopFile { path: string; name: string; data: Uint8Array; }
+interface DesktopBridge {
+  takeLaunchFiles(): Promise<DesktopFile[]>;
+  onOpenFiles(callback: (files: DesktopFile[]) => void): void;
+  writeFile(path: string, data: string | Uint8Array): Promise<void>;
+}
+/** Present only inside the readm3 desktop app (desktop/preload.cjs). */
+export const desktop = typeof window === "undefined" ? undefined : (window as unknown as { readm3Desktop?: DesktopBridge }).readm3Desktop;
+
+/**
+ * A desktop file as a file handle, so the rest of the editor treats it like one from a
+ * picker. It lasts for the session: it cannot be stored, and that is fine, because the
+ * desktop hands the file over again the next time it is opened.
+ */
+export function fromDesktop(files: DesktopFile[]): Picked[] {
+  return files.map((entry) => {
+    const handle = {
+      kind: "file", name: entry.name,
+      getFile: async () => new File([entry.data.buffer as ArrayBuffer], entry.name),
+      createWritable: async () => {
+        const parts: BlobPart[] = [];
+        return { write: async (data: BlobPart) => { parts.push(data); }, close: async () => { await desktop!.writeFile(entry.path, new Uint8Array(await new Blob(parts).arrayBuffer())); } };
+      },
+    } as unknown as FileSystemFileHandle;
+    return { file: new File([entry.data.buffer as ArrayBuffer], entry.name), path: entry.name, handle };
+  });
+}
+
 /** Writes the file, asking for write access first if this session has not been granted it. */
 export async function write(handle: FileSystemFileHandle, data: string | Uint8Array): Promise<void> {
   const permissioned = handle as FileSystemFileHandle & Partial<Permissioned>;

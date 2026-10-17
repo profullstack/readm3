@@ -850,6 +850,17 @@ function receiveLaunches() {
     if (!params.files.length || cloudDocument || pasteDocument) return;
     void disk.launched(params.files).then((files) => importFiles(files)).catch(() => notice("The file could not be opened."));
   });
+  // The desktop app: files from the command line or "Open with", now and while running.
+  if (disk.desktop && !cloudDocument && !pasteDocument) {
+    const open = (files: disk.DesktopFile[]) => { if (files.length) void importFiles(disk.fromDesktop(files)); };
+    void disk.desktop.takeLaunchFiles().then(open);
+    disk.desktop.onOpenFiles(open);
+  }
+  // The desktop menu runs the palette's commands by name; "" and ">" open the palette itself.
+  (window as unknown as { readm3Command?: (label: string) => void }).readm3Command = (label) => {
+    if (label === "" || label === ">") showPalette(label);
+    else commands().find((command) => command.label === label)?.run();
+  };
 }
 
 async function setupPwa() {

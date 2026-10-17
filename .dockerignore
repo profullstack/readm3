@@ -9,3 +9,4 @@ playwright-report
 data
 *.sqlite*
 server/test
+desktop
