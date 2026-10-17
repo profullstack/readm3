@@ -1,4 +1,5 @@
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
+import { editorInput, editorText } from "./editor.ts";
 
 const origin = process.env.READM3_TEST_URL || `http://127.0.0.1:${process.env.READM3_TEST_PORT || 4318}`;
 const mailOrigin = `http://127.0.0.1:${Number(new URL(origin).port) + 1}`;
@@ -81,7 +82,7 @@ test("PWA and API exchange snapshots, preserve local conflicts, and keep recover
     await other.getByRole("checkbox", { name: /Replace conflicting changes/ }).uncheck();
     await other.getByRole("dialog").getByRole("button", { name: "Close dialog" }).click();
     await other.locator("#edit-mode").click();
-    await other.locator("#editor").fill("# Edited on second device\n");
+    await editorInput(other).fill("# Edited on second device\n");
     await openSync(other);
     await other.getByRole("button", { name: "Save to account", exact: true }).click();
     await expect(other.getByRole("dialog")).toContainText("Saved revision 2");

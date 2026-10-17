@@ -523,9 +523,22 @@ const seed = asset("documents.json", JSON.stringify({
     { path: "examples/demo.md", source: readFileSync(join(here, "content/demo.md"), "utf8") },
   ],
 }));
-const bundled = await Bun.build({ entrypoints: [join(here, "viewer.ts")], target: "browser", minify: true });
+// Split: the editor (CodeMirror) and each language grammar are chunks fetched on first
+// use, so reading a document never downloads them. Chunks import the entry back by its
+// name, so Bun names (and hashes) every file itself and the seed URL goes in by define.
+const bundled = await Bun.build({
+  entrypoints: [join(here, "viewer.ts")], target: "browser", minify: true, splitting: true,
+  naming: { entry: "[name]-[hash].[ext]", chunk: "chunk-[hash].[ext]" },
+  define: { __SEED_URL__: JSON.stringify(seed) },
+});
 if (!bundled.success) throw new AggregateError(bundled.logs, "Viewer build failed");
-const script = asset("viewer.js", (await bundled.outputs[0].text()).replace("__SEED_URL__", seed));
+const chunks: string[] = [];
+let script = "";
+for (const output of bundled.outputs) {
+  const path = `/viewer-assets/${output.path.replace(/^\.\//, "")}`;
+  write(path.slice(1), await output.text());
+  if (output.kind === "entry-point") script = path; else chunks.push(path);
+}
 const viewerCss = asset("viewer.css", readFileSync(join(here, "assets/viewer.css"), "utf8"));
 const accountBundle = await Bun.build({ entrypoints: [join(here, "account.ts")], target: "browser", minify: true });
 if (!accountBundle.success) throw new AggregateError(accountBundle.logs, "Account build failed");
@@ -675,7 +688,7 @@ write("viewer.webmanifest", JSON.stringify({
   background_color: "#05070a", theme_color: "#05070a", lang: "en",
   icons: [192, 512].map((size) => ({ src: `/viewer-assets/icon-${size}.png`, sizes: `${size}x${size}`, type: "image/png", purpose: "any" })),
 }));
-const precache = ["/viewer", script, viewerCss, sharedCss, adminCss, seed, "/viewer.webmanifest", "/favicon.svg", "/viewer-assets/icon-192.png", "/viewer-assets/icon-512.png"];
+const precache = ["/viewer", script, ...chunks, viewerCss, sharedCss, adminCss, seed, "/viewer.webmanifest", "/favicon.svg", "/viewer-assets/icon-192.png", "/viewer-assets/icon-512.png"];
 const cacheVersion = createHash("sha256").update(viewerHtml + precache.join("|")).digest("hex").slice(0, 16);
 write("viewer-sw.js", readFileSync(join(here, "assets/viewer-sw.js"), "utf8")
   .replace("__CACHE_NAME__", `readm3-viewer-${cacheVersion}`).replace("__PRECACHE__", JSON.stringify(precache)));

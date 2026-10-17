@@ -5,13 +5,16 @@ import { renderMarkdown } from "../src/markdown.ts";
 import type { Flavor } from "../src/flavors.ts";
 import { toHtml } from "./html.ts";
 import { renderCode, type CodeView } from "./code-view.ts";
+import type { SourceEditor } from "./code-editor.ts";
 import { binaryType, detectLanguage, languageForName, looksBinary, MARKDOWN } from "../src/code.ts";
 import { accepts, bytesOf, comparePaths, kindOf, MAX_FILE_BYTES, MAX_FILES, MAX_WORKSPACE_BYTES, persist, rawUrl, restore, toBase64, type Document, type Workspace } from "./workspace.ts";
 
+/** The starter workspace's content-addressed URL, defined by the build. */
+declare const __SEED_URL__: string;
 const element = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const reader = element("reader");
 const content = element("document-content");
-const editor = element<HTMLTextAreaElement>("editor");
+const editor = element("editor");
 const filter = element<HTMLInputElement>("filter");
 const fileList = element("file-list");
 const theme = element<HTMLSelectElement>("theme");
@@ -33,11 +36,16 @@ let cloudSaving = false;
 const codeContent = element("code-content");
 const mediaContent = element("media-content");
 let codeView: CodeView | null = null;
+/** CodeMirror, downloaded the first time anything is edited, then kept for every file. */
+let sourceEditor: SourceEditor | null = null;
+let editorLoading: Promise<SourceEditor> | undefined;
+let editorPath = "";
 let mediaUrl: string | null = null;
 /** What the active document is on screen: Markdown, code in some language, or a PDF or image. */
 const kind = () => kindOf(current());
 const isCode = () => kind().kind === "code";
 const isBinary = () => kind().kind === "binary";
+const isMarkdown = () => kind().kind === "markdown";
 const formatBytes = (n: number) => n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
 
 /** Shows the controls that make sense for the active document's kind. */
@@ -49,6 +57,11 @@ function applyKind() {
   element("copy").hidden = current.kind === "binary";
   element("file-mark").textContent = current.kind === "markdown" ? "M↓" : current.kind === "code" ? current.language.extensions[0]!.toUpperCase() : current.binary.label.split(" ")[0]!.toUpperCase();
   element<HTMLButtonElement>("edit-mode").disabled = current.kind === "binary" || !!pasteDocument || (!!cloudDocument && !cloudDocument.canEdit);
+}
+
+/** Whether the active file may be edited here: not a paste, not a view-only link, not a PDF or image. */
+function canEdit(): boolean {
+  return !pasteDocument && !isBinary() && (!cloudDocument || cloudDocument.canEdit);
 }
 
 function cloudControls() {
@@ -224,7 +237,7 @@ function fileRow(path: string, name: string, depth: number, directory: boolean) 
 }
 
 function progress() {
-  const pane = editing ? editor : reader;
+  const pane = editing && sourceEditor ? sourceEditor.view.scrollDOM : reader;
   const range = pane.scrollHeight - pane.clientHeight;
   element("reading-progress").textContent = `${range <= 0 ? 100 : Math.round(pane.scrollTop / range * 100)}%`;
 }
@@ -305,7 +318,32 @@ function renderDocument() {
   progress();
 }
 
-function setMode(edit: boolean, focus = true) {
+function loadEditor(): Promise<SourceEditor> {
+  return editorLoading ??= import("./code-editor.ts").then(({ createEditor }) => {
+    sourceEditor = createEditor(editor, (text) => { current().source = text; documentInfo(); changed(); });
+    sourceEditor.view.scrollDOM.addEventListener("scroll", progress);
+    return sourceEditor;
+  });
+}
+
+/** Puts the active file in the editor, keeping its undo history when it is already there. */
+async function showEditor(focus: boolean, atEnd: boolean) {
+  const path = workspace.active;
+  let ready: SourceEditor;
+  try { ready = await loadEditor(); }
+  catch { editorLoading = undefined; notice("The editor could not load. Check your connection and try again."); setMode(false); return; }
+  if (!editing || workspace.active !== path) return;
+  if (editorPath !== path || ready.text() !== current().source) {
+    ready.load(current().source, path, current().language);
+    editorPath = path;
+  }
+  ready.setWrap(kind().kind === "markdown" || element("wrap").getAttribute("aria-pressed") === "true");
+  if (atEnd) ready.view.dispatch({ selection: { anchor: ready.view.state.doc.length }, scrollIntoView: true });
+  if (focus) ready.focus();
+  progress();
+}
+
+function setMode(edit: boolean, focus = true, atEnd = false) {
   if (edit && cloudDocument && !cloudDocument.canEdit) { notice("You have view-only access to this document."); return; }
   if (edit && pasteDocument) { notice("A private link is read-only. Copy or download the file to edit it."); return; }
   if (edit && isBinary()) { notice("A PDF or image cannot be edited here. Download it to change it elsewhere."); return; }
@@ -314,10 +352,8 @@ function setMode(edit: boolean, focus = true) {
   reader.hidden = edit;
   element("read-mode").setAttribute("aria-pressed", String(!edit));
   element("edit-mode").setAttribute("aria-pressed", String(edit));
-  if (edit) {
-    editor.value = current().source;
-    if (focus) editor.focus();
-  } else {
+  if (edit) void showEditor(focus, atEnd);
+  else {
     renderDocument();
     if (focus) reader.focus();
   }
@@ -347,7 +383,8 @@ function openDocument(path: string, focus = true) {
   renderFiles();
   applyKind();
   documentInfo();
-  setMode(false, focus);
+  // Code opens ready to type, as in any text editor; Markdown opens rendered, as in a reader.
+  setMode(isCode() && canEdit(), focus);
   reader.scrollTop = 0;
   progress();
   setFilesOpen(false);
@@ -489,12 +526,13 @@ function bindEvents() {
     try { await navigator.clipboard.writeText(text); notice(`Copied ${current().path} to the clipboard.`); }
     catch { notice("The browser refused clipboard access. Select the text and copy it, or use Download."); }
   };
-  element("fold-all").onclick = () => codeView?.foldAll();
-  element("unfold-all").onclick = () => codeView?.unfoldAll();
+  element("fold-all").onclick = () => editing ? sourceEditor?.foldAll() : codeView?.foldAll();
+  element("unfold-all").onclick = () => editing ? sourceEditor?.unfoldAll() : codeView?.unfoldAll();
   element("wrap").onclick = () => {
     const on = element("wrap").getAttribute("aria-pressed") !== "true";
     element("wrap").setAttribute("aria-pressed", String(on));
     codeView?.setWrap(on);
+    if (editing && !isMarkdown()) sourceEditor?.setWrap(on);
   };
   element("history").onclick = () => {
     if (!cloudDocument) return;
@@ -505,7 +543,7 @@ function bindEvents() {
   element("open-folder").onclick = () => folderInput.click();
   filesInput.onchange = () => void importFiles([...filesInput.files ?? []]);
   folderInput.onchange = () => void importFiles([...folderInput.files ?? []]);
-  element("new-file").onclick = () => { addDocuments([{ path: "Untitled.md", source: "# Untitled\n\n" }]); setMode(true); editor.setSelectionRange(editor.value.length, editor.value.length); };
+  element("new-file").onclick = () => { addDocuments([{ path: "Untitled.md", source: "# Untitled\n\n" }]); setMode(true, true, true); };
   filter.oninput = () => renderFiles();
   element("read-mode").onclick = () => setMode(false);
   element("edit-mode").onclick = () => setMode(true);
@@ -513,8 +551,6 @@ function bindEvents() {
   element("toggle-files").onclick = () => setFilesOpen(!document.body.classList.contains("files-open"));
   reader.addEventListener("click", () => setFilesOpen(false));
   reader.onscroll = progress;
-  editor.onscroll = progress;
-  editor.oninput = () => { current().source = editor.value; documentInfo(); changed(); };
   theme.onchange = () => { document.documentElement.dataset.theme = theme.value; storePreference("theme", theme.value); };
   flavor.onchange = () => { storePreference("flavor", flavor.value); renderDocument(); };
   element("spoilers").onclick = () => { spoilers = !spoilers; element("spoilers").setAttribute("aria-pressed", String(spoilers)); renderDocument(); };
@@ -541,7 +577,8 @@ function bindEvents() {
 }
 
 function onKey(event: KeyboardEvent) {
-  if (document.querySelector("dialog[open]") || event.isComposing) return;
+  // The editor's own keys (Escape closing find, Ctrl+D, Ctrl+/) are already handled.
+  if (document.querySelector("dialog[open]") || event.isComposing || event.defaultPrevented) return;
   const target = event.target as HTMLElement;
   const typing = target.matches("input, textarea, select, [contenteditable]");
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); if (cloudDocument) void saveCloud(); else download(); return; }
@@ -730,7 +767,7 @@ async function start() {
   }
   try { workspace = (await restore())!; } catch { /* A fresh in-memory workspace still works. */ }
   if (!workspace?.documents?.length || !workspace.documents.some((doc) => doc.path === workspace.active)) {
-    const seed = await fetch("__SEED_URL__");
+    const seed = await fetch(__SEED_URL__);
     if (!seed.ok) throw new Error("Could not load the starter documents. Reload to try again.");
     workspace = await seed.json() as Workspace;
   }

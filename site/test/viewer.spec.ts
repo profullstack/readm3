@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { editorInput, editorText } from "./editor.ts";
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/viewer");
@@ -40,9 +41,9 @@ test("imports safely, edits, downloads exact source, and restores the draft afte
   await expect(page.locator("#document-content script, #document-content img")).toHaveCount(0);
   expect(await page.evaluate(() => "hacked" in window)).toBe(false);
   await page.locator("#reader").press("e");
-  await expect(page.locator("#editor")).toHaveValue(source);
+  await expect.poll(() => editorText(page)).toBe(source);
   const edited = "# Edited privately\n\n- [x] Saved offline\n";
-  await page.locator("#editor").fill(edited);
+  await editorInput(page).fill(edited);
   await page.keyboard.press("Escape");
   await expect(page.locator("#document-content")).toContainText("Edited privately");
   await expect(page.locator("#save-status")).toHaveText("Saved on this device");
@@ -82,7 +83,7 @@ test("imports a pruned directory with README ordering and retains existing draft
     expect(names).not.toContain("build.tar.gz");
     expect(names.indexOf("README.md")).toBeLessThan(names.indexOf("zebra.md"));
     await page.locator("#edit-mode").click();
-    await page.locator("#editor").fill("# My unsaved-to-disk draft");
+    await editorInput(page).fill("# My unsaved-to-disk draft");
     await page.locator("#folder-input").setInputFiles(root);
     await page.locator("#filter").fill("README");
     await page.locator('#file-list button[title$="docs/README.md"]').click();
@@ -213,25 +214,31 @@ test("opens JSON as editable highlighted code, sniffs an unnamed file, and shows
   expect(names).toEqual(expect.arrayContaining(["config.json", "deploy", "spec.pdf"]));
   await page.locator('#file-list button[title="config.json"]').click();
   await expect(page.locator("#document-name")).toHaveText("config.json");
-  await expect(page.locator("#code-content")).toBeVisible();
+  // Code opens in the editor, as in any text editor: line numbers, grammar colors, a caret.
+  await expect(page.locator("#editor .cm-lineNumbers")).toBeVisible();
+  await expect(page.locator("#editor .tok-propertyName").first()).toBeVisible();
+  await expect(page.locator("#edit-mode")).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator("#document-content")).toBeHidden();
-  await expect(page.locator("#code-content .hljs-attr").first()).toBeVisible();
   await expect(page.locator("#document-info")).toContainText("JSON");
   await expect(page.locator("#file-mark")).toHaveText("JSON");
   await expect(page.locator("#code-tools")).toBeVisible();
   await expect(page.locator("#flavor-label")).toBeHidden();
-  // Code is a note like any other: edit it and the highlighted view follows.
-  await expect(page.locator("#edit-mode")).toBeEnabled();
-  await page.locator("#edit-mode").click();
-  await page.locator("#editor").fill('{\n  "name": "berlin"\n}\n');
+  await editorInput(page).fill('{\n  "name": "berlin"\n}\n');
+  // Escape is the read view: highlighted, foldable, and following the edit.
   await page.keyboard.press("Escape");
+  await expect(page.locator("#code-content")).toBeVisible();
+  await expect(page.locator("#code-content .hljs-attr").first()).toBeVisible();
   await expect(page.locator("#code-content")).toContainText('"berlin"');
   await expect(page.locator("#code-content .code-line")).toHaveCount(3);
   await expect(page.locator("#save-status")).toHaveText("Saved on this device");
+  // e returns to the same editor with the text still there.
+  await page.locator("#reader").press("e");
+  await expect.poll(() => editorText(page)).toBe('{\n  "name": "berlin"\n}\n');
+  await page.keyboard.press("Escape");
   // No extension: the shebang decides, and the decision survives a reload.
   await page.locator('#file-list button[title="deploy"]').click();
   await expect(page.locator("#document-info")).toContainText("Shell");
-  await expect(page.locator("#code-content .hljs-meta").first()).toBeVisible();
+  await expect(page.locator("#editor .tok-meta, #editor .tok-comment").first()).toBeVisible();
   await page.reload();
   await page.locator('#file-list button[title="deploy"]').click();
   await expect(page.locator("#document-info")).toContainText("Shell");
@@ -270,7 +277,7 @@ test("installs a complete offline shell and restores edited documents after an o
   expect(manifest.display).toBe("standalone");
   for (const icon of manifest.icons) expect((await request.get(icon.src)).ok()).toBe(true);
   await page.locator("#new-file").click();
-  await page.locator("#editor").fill("# An offline draft\n\nStill here.");
+  await editorInput(page).fill("# An offline draft\n\nStill here.");
   await page.keyboard.press("Escape");
   await expect(page.locator("#save-status")).toHaveText("Saved on this device");
   await page.evaluate(async () => { await navigator.serviceWorker.ready; });
@@ -281,7 +288,7 @@ test("installs a complete offline shell and restores edited documents after an o
   await expect(page.locator("#connection")).toContainText("Offline");
   await page.locator("#theme").selectOption("nord");
   await page.locator("#edit-mode").click();
-  await page.locator("#editor").fill("# Edited offline too");
+  await editorInput(page).fill("# Edited offline too");
   await page.keyboard.press("Escape");
   await expect(page.locator("#save-status")).toHaveText("Saved on this device");
   await page.reload();
@@ -319,7 +326,7 @@ test("storage failure still permits reading, editing, and downloading", async ({
   await expect(page.locator("#document-content")).toContainText("Your docs. Your space.");
   await expect(page.locator("#save-status")).toContainText("storage unavailable");
   await page.locator("#edit-mode").click();
-  await page.locator("#editor").fill("# Keep this draft");
+  await editorInput(page).fill("# Keep this draft");
   const downloading = page.waitForEvent("download");
   await page.locator("#download").click();
   expect(await readFile((await (await downloading).path())!, "utf8")).toBe("# Keep this draft");
