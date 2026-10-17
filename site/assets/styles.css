@@ -106,7 +106,18 @@ main { max-width: var(--measure); margin: 0 auto; padding: 0 1.5rem 4rem; }
 .paste-meta { margin: 0; font: 0.8rem var(--mono); color: var(--page-dim); }
 .paste-form .error, .paste-open .error { margin: 0; color: #e5484d; font-size: 0.9rem; }
 .paste-form .error:empty, .paste-open .error:empty { display: none; }
+.sensitive { display: grid; gap: 0.45rem; padding: 0.8rem 1rem; border: 1px solid var(--sensitive-tone); border-left-width: 4px; border-radius: 8px; background: color-mix(in srgb, var(--sensitive-tone) 10%, transparent); font-size: 0.88rem; line-height: 1.5; }
+.sensitive[hidden] { display: none; }
+.sensitive-secret { --sensitive-tone: var(--danger, #e5484d); }
+.sensitive-personal { --sensitive-tone: var(--warning, var(--page-warm, #ffd75f)); }
+.sensitive strong { color: var(--sensitive-tone); }
+.sensitive p { margin: 0; }
+.sensitive ul { margin: 0; padding-left: 1.2rem; }
+.sensitive li.sensitive-secret { color: var(--danger, #e5484d); }
+.sensitive code { font: 0.82rem var(--mono); overflow-wrap: anywhere; }
+.sensitive label { display: flex; gap: 0.5rem; align-items: center; cursor: pointer; font-weight: 600; }
 .ghost.primary { color: var(--page-bg); background: var(--page-accent); border-color: var(--page-accent); font-weight: 600; }
+.ghost.primary:disabled, .primary-action:disabled { opacity: 0.45; cursor: not-allowed; }
 .paste-result { background: var(--page-panel); border: 1px solid var(--page-line); border-radius: 8px; padding: 1.4rem 1.5rem; display: grid; gap: 0.9rem; }
 .paste-result h2 { margin: 0; font-size: 1.15rem; }
 .paste-result p { margin: 0; color: var(--page-dim); }

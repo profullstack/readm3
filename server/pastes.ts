@@ -12,6 +12,7 @@
  * with the paste so the page, the CLI and the raw download all agree on what it is.
  */
 import { binaryType, detectLanguage, languageOf, MARKDOWN } from "../src/code.ts";
+import { scanSensitive, type SensitiveReport } from "../src/sensitive.ts";
 
 /** The language stored for a PDF or image paste, whose source is base64 rather than text. */
 export const BINARY = "binary";
@@ -72,7 +73,7 @@ export function purgePastes(store: Store) {
 export function createPaste(
   store: Store,
   args: Record<string, unknown>,
-): { id: string; token: string; title: string; language: string; mime: string; createdAt: string; expiresAt: string; bytes: number } {
+): { id: string; token: string; title: string; language: string; mime: string; createdAt: string; expiresAt: string; bytes: number; sensitive: SensitiveReport } {
   const source = args.source;
   if (typeof source !== "string" || !source.trim())
     throw new HttpError(400, "A source text is required.");
@@ -107,7 +108,10 @@ export function createPaste(
       expiresAt,
     );
   })();
-  return { id: pasteId, token, title, language, mime: pasteMime(title, language), createdAt, expiresAt, bytes };
+  // Reported, never refused: the page and the CLI ask before they send, and an API
+  // caller decides for itself. A PDF or image is base64, so there is nothing to read.
+  const sensitive = binary ? { level: null, findings: [] } : scanSensitive(source);
+  return { id: pasteId, token, title, language, mime: pasteMime(title, language), createdAt, expiresAt, bytes, sensitive };
 }
 
 /** The type of a paste's real bytes: the binary's own for a PDF or image, else the language's. */

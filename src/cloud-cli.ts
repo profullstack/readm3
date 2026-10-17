@@ -1,6 +1,7 @@
 import { pasteLocation } from "./cloud-client.ts";
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
+import { describeSensitive, scanSensitive, type SensitiveReport } from "./sensitive.ts";
 import {
   cloudAction,
   cloudConfig,
@@ -13,7 +14,7 @@ export const CLOUD_USAGE = `Shared Markdown
   readm3 login --token-stdin              Save a personal API token securely
   readm3 login --coinpay                  Sign in with CoinPay in the browser; saves a token
   readm3 logout                           Remove the local token
-  readm3 share FILE [--org ID] [--role view|edit]
+  readm3 share FILE [--org ID] [--role view|edit] [--force]
   readm3 docs list [--org ID] [--search TEXT] [--limit N] [--offset N]
   readm3 docs get ID [--raw]
   readm3 docs create FILE [--org ID] [--title NAME]
@@ -25,7 +26,7 @@ export const CLOUD_USAGE = `Shared Markdown
   readm3 docs revoke ID --share SHARE_ID
   readm3 docs transfer ID --username USERNAME
   readm3 shared get URL [--raw]
-  readm3 paste [FILE] [--title NAME] [--expires 1h|1d|7d|30d] [--language ID]
+  readm3 paste [FILE] [--title NAME] [--expires 1h|1d|7d|30d] [--language ID] [--force]
                                           Private link, no account; prints the URL.
                                           Any text: Markdown renders, code is highlighted.
                                           The language is detected from the name or content.
@@ -41,6 +42,8 @@ Without --org a document goes to your personal workspace.
 FILE may be - for stdin. --raw prints the source text; other results are JSON.
 READM3_URL selects a self-hosted server; READM3_TOKEN supplies an API token.
 View links cannot write. Edit links can save versions. Owners administer files.
+paste and share check the file first: a key, token or password stops them unless
+--force is given; an email, IP or home directory is only pointed out.
 Use readm3 cloud for the full API, including team membership and permissions.
 `;
 const commands = new Set([
@@ -76,7 +79,7 @@ export async function cloudMain(argv: string[]) {
     const value = argv[i]!;
     if (value.startsWith("--")) {
       const name = value.slice(2);
-      if (["raw", "token-stdin", "json", "coinpay"].includes(name)) flags[name] = "true";
+      if (["raw", "token-stdin", "json", "coinpay", "force"].includes(name)) flags[name] = "true";
       else {
         if (!argv[i + 1] || argv[i + 1]!.startsWith("--"))
           throw new Error(`${value} needs a value.`);
@@ -86,6 +89,17 @@ export async function cloudMain(argv: string[]) {
   }
   const output = (value: unknown) =>
     process.stdout.write(JSON.stringify(value, null, 2) + "\n");
+  // Is it safe to share? Asked before anything leaves the machine. A secret stops the
+  // command unless --force; personal details are only pointed out, on stderr.
+  const warn = (report: SensitiveReport) => {
+    for (const line of describeSensitive(report)) process.stderr.write(`readm3: ${line}\n`);
+  };
+  const checkSensitive = (source: string) => {
+    const report = scanSensitive(source);
+    warn(report);
+    if (report.level === "secret" && !flags.force)
+      throw new Error("This looks like it holds a secret, and anyone with the link could read it. Remove it, or pass --force to share anyway.");
+  };
   const fileSource = (file: string | undefined) => {
     if (!file) throw new Error("A Markdown file is required.");
     const value = readFileSync(file === "-" ? 0 : file, "utf8");
@@ -126,6 +140,7 @@ export async function cloudMain(argv: string[]) {
       throw new Error("Give a file, or pipe one in.");
     const file = positional[0] ?? "-";
     const source = fileSource(file);
+    checkSensitive(source);
     // The file name carries the language; stdin has none, so the server sniffs the content.
     const title = flags.title || (file === "-" ? undefined : basename(file));
     const paste = await cloudRequest<{ url: string }>(
@@ -182,20 +197,21 @@ export async function cloudMain(argv: string[]) {
     user: "userId",
   };
   for (const [name, value] of Object.entries(flags))
-    if (!["raw", "json", "coinpay"].includes(name)) args[names[name] || name] = value;
+    if (!["raw", "json", "coinpay", "force"].includes(name)) args[names[name] || name] = value;
   if (command === "share") {
     const file = positional[0];
+    const source = fileSource(file);
+    checkSensitive(source);
     const doc = await cloudAction<{ id: string }>("documents_create", {
       ...args,
       title: flags.title || basename(file || "Document.md"),
-      source: fileSource(file),
+      source,
     });
-    output(
-      await cloudAction("shares_create", {
-        documentId: doc.id,
-        role: flags.role || "view",
-      }),
-    );
+    const { sensitive: _, ...link } = await cloudAction<{ sensitive: SensitiveReport }>("shares_create", {
+      documentId: doc.id,
+      role: flags.role || "view",
+    });
+    output(link);
     return;
   }
   const [verb, identifier, file] = positional;
@@ -219,10 +235,14 @@ export async function cloudMain(argv: string[]) {
       args.title = flags.title || basename(identifier || "Document.md");
     } else if (verb !== "list") args.documentId = identifier;
     if (verb === "update") args.source = fileSource(file);
-    const result = await cloudAction<{ version?: { source: string } }>(
+    const result = await cloudAction<{ version?: { source: string }; sensitive?: SensitiveReport }>(
       op,
       args,
     );
+    if (result.sensitive?.level) {
+      warn(result.sensitive);
+      process.stderr.write("readm3: the link is live; readm3 docs revoke ID --share SHARE_ID takes it back.\n");
+    }
     if (flags.raw && result.version)
       process.stdout.write(result.version.source);
     else output(result);

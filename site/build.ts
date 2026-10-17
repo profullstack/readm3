@@ -647,6 +647,7 @@ function pastePage(): string {
         <label class="paste-file"><input type="file" id="paste-file" hidden><span class="ghost">Choose a file</span></label>
       </div>
       <p class="paste-meta" id="paste-meta">The language is detected from the name or the content. Up to 256 KB.</p>
+      <div id="paste-sensitive" role="status" aria-live="polite" hidden></div>
       <p class="error" id="paste-error" role="alert"></p>
       <div class="cta"><button class="ghost primary" id="paste-submit" type="submit">Create private link</button><span class="paste-meta">Ctrl / ⌘ Enter</span></div>
     </form>

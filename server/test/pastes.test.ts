@@ -190,4 +190,18 @@ describe("anonymous pastes", () => {
     expect(read.data.language).toBe("markdown");
     expect(read.data.mime).toBe("text/markdown");
   });
+
+  test("reports, never refuses, a paste that holds a secret or names its author", async () => {
+    const { call } = fixture();
+    const key = "ghp_" + "Q7".repeat(18);
+    const secret = await call("pastes", "POST", { source: `GITHUB_TOKEN=${key}\n`, title: ".env" });
+    expect(secret.status).toBe(201);
+    expect(secret.data.sensitive.level).toBe("secret");
+    expect(secret.data.sensitive.findings[0]).toMatchObject({ label: "a GitHub token", line: 1, sample: "ghp_…Q7" });
+    expect(JSON.stringify(secret.data)).not.toContain(key);
+    const personal = await call("pastes", "POST", { source: '{"cwd": "/home/jane/src"}' });
+    expect(personal.data.sensitive.level).toBe("personal");
+    const clean = await call("pastes", "POST", { source: "# Notes\n" });
+    expect(clean.data.sensitive).toEqual({ level: null, findings: [] });
+  });
 });

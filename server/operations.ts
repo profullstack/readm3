@@ -10,6 +10,7 @@ import {
   type Doc,
   type User,
 } from "./store.ts";
+import { scanSensitive } from "../src/sensitive.ts";
 
 type Args = Record<string, unknown>;
 const role = (value: unknown, allowed: string[]) => {
@@ -468,12 +469,18 @@ export function operate(
         normalized,
         now(),
       );
+      // What the link exposes, so the caller can warn: the pinned version, or the latest.
+      const shared = store.get<{ source: string }>(
+        "SELECT source FROM versions WHERE id=?",
+        versionId ?? doc.currentVersion,
+      );
       return {
         id: shareId,
         role: access,
         versionId,
         expiresAt: normalized,
         url: `${origin}/s/${token}`,
+        sensitive: scanSensitive(shared?.source ?? ""),
       };
     }
     case "shares_revoke":

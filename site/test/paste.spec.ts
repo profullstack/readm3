@@ -64,3 +64,31 @@ test("the editor has a Paste link button that works while signed out", async ({ 
   await expect(dialog).toContainText(`curl ${link}/raw`);
   await expect(dialog.locator("a[href='/paste']")).toBeVisible();
 });
+
+test("a paste that holds a secret waits for a tick; personal details only warn", async ({ page }) => {
+  await page.goto("/paste");
+  const notice = page.locator("#paste-sensitive");
+  const submit = page.locator("#paste-submit");
+  await page.locator("#paste-source").fill('{"cwd": "/home/jane/src", "debug": true}');
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText("Check before sharing");
+  await expect(notice).toContainText("jane");
+  await expect(submit).toBeEnabled();
+  const key = "sk-proj-" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4";
+  await page.locator("#paste-source").fill(`OPENAI_API_KEY=${key}\n`);
+  await expect(notice).toContainText("Not safe to share");
+  await expect(notice).toContainText("an OpenAI API key".replace(/^a/, "A"));
+  await expect(notice).not.toContainText(key);
+  await expect(submit).toBeDisabled();
+  await notice.locator("input[type=checkbox]").check();
+  await expect(submit).toBeEnabled();
+  // Another secret is a new question.
+  await page.locator("#paste-source").fill(`OPENAI_API_KEY=${key}\nGITHUB_TOKEN=ghp_${"Q7".repeat(18)}\n`);
+  await expect(submit).toBeDisabled();
+  await notice.locator("input[type=checkbox]").check();
+  await submit.click();
+  await expect(page.locator("#paste-result")).toBeVisible();
+  await page.locator("#paste-result button", { hasText: "New paste" }).click();
+  await expect(notice).toBeHidden();
+  await expect(submit).toBeEnabled();
+});

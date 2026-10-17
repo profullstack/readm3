@@ -299,6 +299,23 @@ JSON without saying so; `--language` (or `language` in the API) forces one. The 
 and `DELETE /api/v1/pastes/<token>`, and the `paste_create`, `paste_get` and
 `paste_delete` MCP tools; each answer carries `language` and `mime`.
 
+### Is it safe to share?
+
+Every way of making a link checks the file first: the paste page, the editor's Paste
+link and Share dialogs, `readm3 paste`, `readm3 share` and the API. A **secret** (a
+private key, an OpenAI, Anthropic, GitHub, AWS, Stripe, Slack or npm token, a JWT, a
+password in a URL or in a `PASSWORD=` style setting) gets a red "Not safe to share"
+notice, and the button waits until you tick "I know, share it anyway"; the CLI stops
+and needs `--force`. **Personal details** (an email address, a public IP, a home
+directory that names your account) get a caution and nothing stops. Matches are
+reported with their line, and secrets are masked (`sk-p…N4`), so the warning never
+repeats the secret.
+
+`POST /api/v1/pastes` and `shares_create` answer with a `sensitive` report of the
+same scan (`level` is `"secret"`, `"personal"` or `null`, plus `findings`); the API
+reports and never refuses, so a script decides for itself. A clean scan is not a
+guarantee: the check knows common shapes, not every secret.
+
 ## Editor
 
 Open https://readm3.com/viewer for a plain, fast text editor in your browser, with the
