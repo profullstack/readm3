@@ -48,13 +48,54 @@ test("imports safely, edits, downloads exact source, and restores the draft afte
   await expect(page.locator("#document-content")).toContainText("Edited privately");
   await expect(page.locator("#save-status")).toHaveText("Saved on this device");
   const downloading = page.waitForEvent("download");
-  await page.keyboard.press("Control+s");
+  await page.locator("#download").click();
   const download = await downloading;
   expect(download.suggestedFilename()).toBe("private.md");
   expect(await readFile((await download.path())!, "utf8")).toBe(edited);
   await page.reload();
   await expect(page.locator("#document-name")).toHaveText("private.md");
   await expect(page.locator("#document-content")).toContainText("Edited privately");
+});
+
+test("opens a folder from disk, marks unsaved files, and writes them back with Ctrl+S", async ({ page }) => {
+  // Fake File System Access handles: the real pickers cannot be driven headless.
+  await page.addInitScript(() => {
+    const written: Record<string, string> = {};
+    (window as unknown as { written: typeof written }).written = written;
+    const file = (name: string, text: string) => ({
+      kind: "file", name, getFile: async () => new File([text], name), queryPermission: async () => "granted",
+      createWritable: async () => { let out = ""; return { write: async (data: string | Blob) => { out += typeof data === "string" ? data : await data.text(); }, close: async () => { written[name] = out; } }; },
+    });
+    const directory = (name: string, entries: unknown[]) => ({ kind: "directory", name, values: async function* () { yield* entries; } });
+    Object.assign(window, {
+      showDirectoryPicker: async () => directory("project", [
+        file("app.ts", "const answer = 41;\n"),
+        directory("node_modules", [file("ignored.js", "")]),
+        directory("src", [file("util.py", "def f():\n    return 1\n")]),
+      ]),
+      showOpenFilePicker: async () => [file("notes.txt", "hello\n")],
+      showSaveFilePicker: async ({ suggestedName }: { suggestedName: string }) => file(`saved-${suggestedName}`, ""),
+    });
+  });
+  await page.reload();
+  await page.locator("#open-folder").click();
+  await expect(page.locator("#workspace-name")).toHaveText("project");
+  await expect(page.locator('#file-list button[title="project/src/util.py"]')).toBeVisible();
+  await expect(page.locator('#file-list button[title*="node_modules"]')).toHaveCount(0);
+  await expect(page.locator("#document-name")).toHaveText("project/app.ts");
+  await expect(page.locator("#save-status")).toHaveText("Saved to disk");
+  await editorInput(page).fill("const answer = 42;\n");
+  await expect(page.locator("#save-status")).toHaveText("Saved on this device · Ctrl+S writes it to disk");
+  await expect(page.locator('#file-list button[title="project/app.ts"]')).toHaveClass(/unsaved/);
+  await page.keyboard.press("Control+s");
+  await expect(page.locator("#save-status")).toHaveText("Saved to disk · app.ts");
+  expect(await page.evaluate(() => (window as unknown as { written: Record<string, string> }).written["app.ts"])).toBe("const answer = 42;\n");
+  await expect(page.locator('#file-list button[title="project/app.ts"]')).not.toHaveClass(/unsaved/);
+  // A file with no place on disk yet asks where to save it.
+  await page.locator('#file-list button[title="Welcome.md"]').click();
+  await page.locator("#reader").press("Control+s");
+  await expect(page.locator("#save-status")).toHaveText("Saved to disk · saved-Welcome.md");
+  expect(await page.evaluate(() => (window as unknown as { written: Record<string, string> }).written["saved-Welcome.md"])).toContain("Your docs. Your space.");
 });
 
 test("imports a pruned directory with README ordering and retains existing drafts", async ({ page }) => {

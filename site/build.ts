@@ -16,6 +16,7 @@ import { escape, toHtml } from "./html.ts";
 import { createHash } from "node:crypto";
 import { flatten, type Entry } from "../src/tree.ts";
 import { VERSION } from "../src/cli.ts";
+import { LANGUAGES } from "../src/code.ts";
 import { footerHtml } from "@profullstack/footer";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -682,11 +683,17 @@ function pastePage(): string {
 write("paste/index.html", pastePage());
 for (const size of [192, 512]) cpSync(join(here, `assets/icon-${size}.png`), join(out, `viewer-assets/icon-${size}.png`));
 write("viewer.webmanifest", JSON.stringify({
-  id: "/viewer", name: "readm3 — Markdown editor", short_name: "readm3",
-  description: "Your Markdown, in a quiet reading window. Read and edit offline.",
+  id: "/viewer", name: "readm3 — text editor", short_name: "readm3",
+  description: "A plain, fast text editor for Markdown and code. Opens files from disk, saves back to them, and works offline.",
   start_url: "/viewer", scope: "/", display: "standalone",
   background_color: "#05070a", theme_color: "#05070a", lang: "en",
   icons: [192, 512].map((size) => ({ src: `/viewer-assets/icon-${size}.png`, sizes: `${size}x${size}`, type: "image/png", purpose: "any" })),
+  // Installed, readm3 is offered in the system's "Open with" for every text kind it knows.
+  file_handlers: [{
+    action: "/viewer",
+    accept: { "text/plain": [...new Set(LANGUAGES.flatMap((language) => language.extensions.map((extension) => `.${extension}`)))] },
+    launch_type: "single-client",
+  }],
 }));
 const precache = ["/viewer", script, ...chunks, viewerCss, sharedCss, adminCss, seed, "/viewer.webmanifest", "/favicon.svg", "/viewer-assets/icon-192.png", "/viewer-assets/icon-512.png"];
 const cacheVersion = createHash("sha256").update(viewerHtml + precache.join("|")).digest("hex").slice(0, 16);

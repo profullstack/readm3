@@ -97,22 +97,26 @@ function database(): Promise<IDBDatabase> {
   });
 }
 
-export async function restore(): Promise<Workspace | undefined> {
+export async function readKey<T>(key: string): Promise<T | undefined> {
   const db = await database();
   return new Promise((resolve, reject) => {
-    const request = db.transaction("workspace").objectStore("workspace").get("current");
+    const request = db.transaction("workspace").objectStore("workspace").get(key);
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
 }
 
-export async function persist(workspace: Workspace): Promise<void> {
+export async function writeKey(key: string, value: unknown): Promise<void> {
   const db = await database();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction("workspace", "readwrite");
-    transaction.objectStore("workspace").put(workspace, "current");
+    transaction.objectStore("workspace").put(value, key);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
     transaction.onabort = () => reject(transaction.error);
   });
 }
+
+export const restore = () => readKey<Workspace>("current");
+
+export const persist = (workspace: Workspace) => writeKey("current", workspace);

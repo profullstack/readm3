@@ -6,6 +6,7 @@ import type { Flavor } from "../src/flavors.ts";
 import { toHtml } from "./html.ts";
 import { renderCode, type CodeView } from "./code-view.ts";
 import type { SourceEditor } from "./code-editor.ts";
+import * as disk from "./disk.ts";
 import { binaryType, detectLanguage, languageForName, looksBinary, MARKDOWN } from "../src/code.ts";
 import { accepts, bytesOf, comparePaths, kindOf, MAX_FILE_BYTES, MAX_FILES, MAX_WORKSPACE_BYTES, persist, rawUrl, restore, toBase64, type Document, type Workspace } from "./workspace.ts";
 
@@ -40,6 +41,10 @@ let codeView: CodeView | null = null;
 let sourceEditor: SourceEditor | null = null;
 let editorLoading: Promise<SourceEditor> | undefined;
 let editorPath = "";
+/** Files opened from disk that Ctrl+S writes back to, by workspace path. */
+let diskEntries = new Map<string, disk.DiskEntry>();
+/** Whether the file has a place on disk and differs from what was last read or written there. */
+const unsavedOnDisk = (doc: Document) => { const entry = diskEntries.get(doc.path); return !!entry && disk.fingerprint(doc.source) !== entry.saved; };
 let mediaUrl: string | null = null;
 /** What the active document is on screen: Markdown, code in some language, or a PDF or image. */
 const kind = () => kindOf(current());
@@ -158,7 +163,9 @@ async function save() {
     if (revision === savingRevision) {
       pendingSave = false;
       saveFailed = false;
-      saveStatus.textContent = "Saved on this device";
+      const unsaved = unsavedOnDisk(current());
+      saveStatus.textContent = unsaved ? "Saved on this device · Ctrl+S writes it to disk" : diskEntries.has(current().path) ? "Saved to disk" : "Saved on this device";
+      markUnsaved();
     }
   } catch {
     saveFailed = true;
@@ -173,6 +180,13 @@ function changed() {
   saveStatus.textContent = "Saving on this device…";
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => void save(), 300);
+}
+
+/** The dot on the active file's row and heading when its disk copy is behind. */
+function markUnsaved() {
+  const unsaved = unsavedOnDisk(current());
+  element("document-name").classList.toggle("unsaved", unsaved);
+  fileList.querySelector(`[aria-current="page"]`)?.classList.toggle("unsaved", unsaved);
 }
 
 function setFilesOpen(open: boolean) {
@@ -218,6 +232,7 @@ function fileRow(path: string, name: string, depth: number, directory: boolean) 
   row.style.paddingLeft = `${10 + depth * 15}px`;
   row.title = path;
   if (!directory && path === workspace.active) row.setAttribute("aria-current", "page");
+  if (!directory && unsavedOnDisk(workspace.documents.find((doc) => doc.path === path)!)) row.classList.add("unsaved");
   const icon = document.createElement("span");
   icon.className = "file-icon";
   icon.setAttribute("aria-hidden", "true");
@@ -391,7 +406,8 @@ function openDocument(path: string, focus = true) {
   if (!cloudDocument) changed();
 }
 
-function addDocuments(incoming: Document[], name?: string) {
+/** Adds files, renaming any that would replace an open draft; returns them in the order given. */
+function addDocuments(incoming: Document[], name?: string): Document[] {
   const map = new Map(workspace.documents.map((doc) => [doc.path, doc]));
   let total = workspace.documents.reduce((sum, doc) => sum + encoder.encode(doc.source).length, 0);
   const added: Document[] = [];
@@ -413,31 +429,33 @@ function addDocuments(incoming: Document[], name?: string) {
     added.push(next);
     total += size;
   }
-  if (!added.length) return;
+  if (!added.length) return added;
   workspace.documents = [...map.values()].sort((a, b) => comparePaths(a.path, b.path));
   if (name) workspace.name = name;
   filter.value = "";
   collapsed.clear();
   const first = added.find((doc) => /^readme\b/i.test(doc.path.split("/").at(-1)!)) ?? added[0];
   openDocument(first.path);
+  return added;
 }
 
-async function importFiles(files: File[]) {
+async function importFiles(files: disk.Picked[], name = "Your workspace") {
   if (importBusy) return;
   importBusy = true;
   try {
     const incoming: Document[] = [];
+    const handles: (FileSystemFileHandle | undefined)[] = [];
     let bytes = 0;
     let skipped = 0;
     let unreadable = 0;
-    for (const file of files) {
-      const path = file.webkitRelativePath || file.name;
+    for (const { file, path, handle } of files) {
       if (!accepts(path)) continue;
       // A PDF or image is kept as base64, a third larger than the file; the limits apply to what is stored.
       const cost = binaryType(path) ? Math.ceil(file.size * 4 / 3) : file.size;
       if (cost > MAX_FILE_BYTES || bytes + cost > MAX_WORKSPACE_BYTES || incoming.length >= MAX_FILES) { skipped++; continue; }
       if (binaryType(path)) {
         incoming.push({ path, source: toBase64(new Uint8Array(await file.arrayBuffer())) });
+        handles.push(handle);
         bytes += cost;
         continue;
       }
@@ -450,14 +468,53 @@ async function importFiles(files: File[]) {
         if (language !== MARKDOWN) doc.language = language;
       }
       incoming.push(doc);
+      handles.push(handle);
       bytes += cost;
     }
-    if (incoming.length) addDocuments(incoming, "Your workspace");
+    if (incoming.length) {
+      const added = addDocuments(incoming, name);
+      added.forEach((doc, i) => { const handle = handles[i]; if (handle) diskEntries.set(doc.path, { handle, saved: disk.fingerprint(doc.source) }); });
+      if (handles.some(Boolean)) { void disk.storeEntries(diskEntries); renderFiles(); void save(); }
+    }
     else notice("No readable files found. Open text files (Markdown, JSON, code, config), PDFs or images up to 4 MB.");
     if (skipped) notice(`${skipped} file(s) skipped because of size or workspace limits.`);
     if (unreadable) notice(`${unreadable} file(s) skipped: not text, PDF or image.`);
   } catch { notice("A file could not be read. Try selecting it again."); }
   finally { importBusy = false; filesInput.value = ""; folderInput.value = ""; }
+}
+
+/** What an input or a drop hands over: files with their relative paths, no way back to disk. */
+const copies = (files: Iterable<File>): disk.Picked[] => [...files].map((file) => ({ file, path: file.webkitRelativePath || file.name }));
+
+async function openFromDisk(folder: boolean) {
+  if (!disk.supported()) { (folder ? folderInput : filesInput).click(); return; }
+  try {
+    if (folder) { const picked = await disk.pickFolder(); if (picked) await importFiles(picked.files, picked.name); }
+    else { const picked = await disk.pickFiles(); if (picked) await importFiles(picked); }
+  } catch (error) { notice(error instanceof Error ? error.message : "Could not open from disk."); }
+}
+
+/**
+ * Ctrl+S: a shared document saves a version; a file from disk is written back to it; a file
+ * that has no place on disk yet asks where to put it (Save As), or downloads where the
+ * browser cannot write files at all.
+ */
+async function saveFile(saveAs = false) {
+  if (cloudDocument) { await saveCloud(); return; }
+  if (pasteDocument || !disk.supported()) { download(); return; }
+  const doc = current();
+  let handle = saveAs ? undefined : diskEntries.get(doc.path)?.handle;
+  try {
+    handle ??= await disk.saveAs(doc.path.split("/").at(-1)!) ?? undefined;
+    if (!handle) return;
+    await disk.write(handle, isBinary() ? bytesOf(doc) : doc.source);
+    diskEntries.set(doc.path, { handle, saved: disk.fingerprint(doc.source) });
+    await disk.storeEntries(diskEntries);
+    markUnsaved();
+    saveStatus.textContent = `Saved to disk · ${handle.name}`;
+  } catch (error) {
+    notice(`${error instanceof Error ? error.message : "Could not write the file."} Use Download to keep a copy.`);
+  }
 }
 
 function download() {
@@ -539,10 +596,10 @@ function bindEvents() {
     if (pendingSave) { notice("Save or download your draft before restoring a version."); return; }
     void versionHistory(cloudDocument, adoptCloud).catch(error => notice(error instanceof Error ? error.message : "Could not load history."));
   };
-  element("open-files").onclick = () => filesInput.click();
-  element("open-folder").onclick = () => folderInput.click();
-  filesInput.onchange = () => void importFiles([...filesInput.files ?? []]);
-  folderInput.onchange = () => void importFiles([...folderInput.files ?? []]);
+  element("open-files").onclick = () => void openFromDisk(false);
+  element("open-folder").onclick = () => void openFromDisk(true);
+  filesInput.onchange = () => void importFiles(copies(filesInput.files ?? []));
+  folderInput.onchange = () => void importFiles(copies(folderInput.files ?? []));
   element("new-file").onclick = () => { addDocuments([{ path: "Untitled.md", source: "# Untitled\n\n" }]); setMode(true, true, true); };
   filter.oninput = () => renderFiles();
   element("read-mode").onclick = () => setMode(false);
@@ -571,7 +628,7 @@ function bindEvents() {
   document.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove("dragging"); } });
   document.addEventListener("drop", (event) => {
     event.preventDefault(); dragDepth = 0; document.body.classList.remove("dragging");
-    if (!cloudDocument && event.dataTransfer) void importFiles([...event.dataTransfer.files]);
+    if (!cloudDocument && event.dataTransfer) void importFiles(copies(event.dataTransfer.files));
   });
   new ResizeObserver(() => renderDocument()).observe(reader);
 }
@@ -581,7 +638,7 @@ function onKey(event: KeyboardEvent) {
   if (document.querySelector("dialog[open]") || event.isComposing || event.defaultPrevented) return;
   const target = event.target as HTMLElement;
   const typing = target.matches("input, textarea, select, [contenteditable]");
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); if (cloudDocument) void saveCloud(); else download(); return; }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); void saveFile(event.shiftKey); return; }
   if (event.altKey || event.ctrlKey || event.metaKey) return;
   if (event.key === "Escape") {
     if (editing) setMode(false);
@@ -699,6 +756,16 @@ async function fetchDocument(input: string) {
 }
 
 interface InstallPrompt extends Event { prompt(): Promise<void>; userChoice: Promise<{ outcome: string }>; }
+interface LaunchQueue { setConsumer(consumer: (params: { files: readonly FileSystemHandle[] }) => void): void; }
+/** "Open with readm3" from the operating system, once the app is installed. */
+function receiveLaunches() {
+  const queue = (window as unknown as { launchQueue?: LaunchQueue }).launchQueue;
+  queue?.setConsumer((params) => {
+    if (!params.files.length || cloudDocument || pasteDocument) return;
+    void disk.launched(params.files).then((files) => importFiles(files)).catch(() => notice("The file could not be opened."));
+  });
+}
+
 async function setupPwa() {
   const connection = element("connection");
   const connectionStatus = () => { connection.textContent = navigator.onLine ? "Browser workspace" : "Offline · local workspace"; };
@@ -766,6 +833,7 @@ async function start() {
     }
   }
   try { workspace = (await restore())!; } catch { /* A fresh in-memory workspace still works. */ }
+  diskEntries = await disk.loadEntries();
   if (!workspace?.documents?.length || !workspace.documents.some((doc) => doc.path === workspace.active)) {
     const seed = await fetch(__SEED_URL__);
     if (!seed.ok) throw new Error("Could not load the starter documents. Reload to try again.");
@@ -779,6 +847,7 @@ async function start() {
   if (params.has("new")) { element("new-file").click(); history.replaceState(null, "", "/viewer"); }
   const remote = params.get("url")?.trim();
   if (remote) await openUrlParam(remote);
+  receiveLaunches();
   void setupPwa();
 }
 
