@@ -12,12 +12,18 @@
  *
  * The CLI uses a loopback redirect when it can open a browser on the same machine,
  * and /oauth/cli otherwise, so a login started over SSH never lands on localhost.
+ *
+ * The desktop app signs in the same way (its window has no password manager, and an
+ * emailed link opens in the browser), then trades its access token once for a
+ * browser session in its own window:
+ *  - POST /oauth/desktop-session   Bearer readm3-desktop token → session cookie value
  */
 import type { Database } from "bun:sqlite";
 import { createOAuthServer, OAuthError, type OAuthStore, type TokenRow } from "@profullstack/auth-system/oauth2";
-import type { Accounts } from "./accounts.ts";
+import { SESSION_SECONDS, type Accounts } from "./accounts.ts";
 
 export const CLI_CLIENT_ID = "readm3-cli";
+export const DESKTOP_CLIENT_ID = "readm3-desktop";
 const TOKEN_PREFIX = "r3"; // r3_at_…, r3_rt_… (OAUTH_ACCESS_PREFIX in accounts.ts)
 
 const iso = (value: Date | string) => new Date(value).toISOString();
@@ -108,6 +114,10 @@ export function createOAuth(accounts: Accounts) {
         // Any port on 127.0.0.1 (RFC 8252), or the paste-a-code page for SSH sessions.
         redirectUris: ["http://127.0.0.1/callback", `${origin}/oauth/cli`],
       },
+      [DESKTOP_CLIENT_ID]: {
+        name: "the readm3 desktop app",
+        redirectUris: ["http://127.0.0.1/callback"],
+      },
     },
   });
 
@@ -131,6 +141,19 @@ export function createOAuth(accounts: Accounts) {
         if (error instanceof OAuthError) return json(error.toJSON(), error.status);
         throw error;
       }
+    }
+
+    if (path === "/oauth/desktop-session") {
+      if (request.method !== "POST") return json({ error: "invalid_request", error_description: "Use POST." }, 405);
+      const bearer = request.headers.get("authorization")?.match(/^Bearer (\S+)$/)?.[1] ?? "";
+      // Only a token issued to the desktop app becomes a browser session; a CLI token never does.
+      const grant = bearer ? await oauth.verifyAccessToken(bearer) : null;
+      const user = grant?.clientId === DESKTOP_CLIENT_ID ? accounts.authenticate(bearer) : null;
+      if (!user) return json({ error: "invalid_token", error_description: "Sign in again from the desktop app." }, 401);
+      const session = accounts.startSession(user.id, "", "Desktop app");
+      // The token has done its one job; the session cookie is what the window keeps.
+      await oauth.revoke(bearer);
+      return json({ name: accounts.cookieName, value: session, maxAge: SESSION_SECONDS });
     }
 
     if (path === "/oauth/cli" && request.method === "GET") {
@@ -169,7 +192,7 @@ export function createOAuth(accounts: Accounts) {
         return page(
           `Sign in to ${params.clientName}?`,
           `<p><strong>${escape(params.clientName)}</strong> will be able to read and edit your readm3 documents as <strong>${escape(who)}</strong>.</p>
-<p>Only approve if you just ran <strong>readm3 login</strong> yourself.</p>
+<p>Only approve if you just ${params.clientId === DESKTOP_CLIENT_ID ? "chose <strong>Sign in with your browser</strong> in the readm3 desktop app" : "ran <strong>readm3 login</strong>"} yourself.</p>
 <form method="post" action="/oauth/authorize">${hidden}<button name="decision" value="approve">Approve</button><button name="decision" value="deny">Cancel</button></form>`,
         );
       }

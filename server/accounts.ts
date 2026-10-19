@@ -7,7 +7,7 @@ const secret = () => randomBytes(32).toString("base64url");
 const id = () => randomBytes(12).toString("base64url");
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const stamp = () => new Date().toISOString();
-const SESSION_SECONDS = 30 * 86400;
+export const SESSION_SECONDS = 30 * 86400;
 /** `email` is null for an account that signs in only through a linked identity (CoinPay). */
 export type Account = { id: string; username: string; displayName: string; admin: number; createdAt: string; email: string | null; emailVerifiedAt: string | null };
 export type Mail = { to: string; url: string };

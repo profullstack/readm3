@@ -10,6 +10,7 @@ const custom = typeof process !== "undefined" ? process.env?.READM3_URL?.replace
 if (origin === "https://readm3.com" || origin === "app://readm3" || (custom && origin === custom)) {
   contextBridge.exposeInMainWorld("readm3Desktop", {
     takeLaunchFiles: () => ipcRenderer.invoke("launch-files"),
+    signInWithBrowser: () => ipcRenderer.invoke("sign-in-with-browser"),
     onOpenFiles: (callback) => { ipcRenderer.on("open-files", (_event, files) => callback(files)); },
     readFile: (path) => ipcRenderer.invoke("read-file", path),
     writeFile: (path, data) => ipcRenderer.invoke("write-file", path, data),

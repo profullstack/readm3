@@ -144,3 +144,44 @@ test("an unregistered redirect_uri is refused on the page, never redirected to",
   expect(response.status).toBe(400);
   expect(response.headers.get("location")).toBeNull();
 });
+
+/** Approve a loopback sign-in for a client as the signed-in browser, and return its access token. */
+async function loopbackToken(url: string, cookie: string, clientId: string) {
+  const verifier = "d".repeat(64);
+  const challenge = new Bun.CryptoHasher("sha256").update(verifier).digest("base64url");
+  const params = { response_type: "code", client_id: clientId, redirect_uri: "http://127.0.0.1:9/callback", code_challenge: challenge, code_challenge_method: "S256", state: "s" };
+  const approved = await fetch(`${url}/oauth/authorize`, {
+    method: "POST", redirect: "manual",
+    headers: { cookie, origin: url, "content-type": "application/x-www-form-urlencoded" },
+    body: form({ ...params, decision: "approve" }),
+  });
+  const code = new URL(approved.headers.get("location")!).searchParams.get("code")!;
+  const tokens = await (await fetch(`${url}/oauth/token`, {
+    method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: form({ client_id: clientId, grant_type: "authorization_code", code, redirect_uri: params.redirect_uri, code_verifier: verifier }),
+  })).json();
+  return tokens.access_token as string;
+}
+
+test("the desktop app signs in through the browser and trades its token once for a session", async () => {
+  const { url, user, cookie } = await site();
+  const consent = await (await fetch(`${url}/oauth/authorize?${new URLSearchParams({ response_type: "code", client_id: "readm3-desktop", redirect_uri: "http://127.0.0.1:9/callback", code_challenge: "x".repeat(43), code_challenge_method: "S256", state: "s" })}`, { headers: { cookie } })).text();
+  expect(consent).toContain("Sign in with your browser");
+
+  const access = await loopbackToken(url, cookie, "readm3-desktop");
+  const exchange = () => fetch(`${url}/oauth/desktop-session`, { method: "POST", headers: { authorization: `Bearer ${access}` } });
+  const granted = await exchange();
+  expect(granted.status).toBe(200);
+  const session = await granted.json();
+  expect(session).toMatchObject({ name: "readm3_session", maxAge: 30 * 86400 });
+  // The value is an ordinary browser session for the same person.
+  const me = await (await fetch(`${url}/api/auth/session`, { headers: { cookie: `${session.name}=${session.value}` } })).json();
+  expect(me.user.id).toBe(user.id);
+  // It works once: the token is revoked by the exchange.
+  expect((await exchange()).status).toBe(401);
+
+  // A CLI token is never turned into a browser session.
+  const cli = await loopbackToken(url, cookie, "readm3-cli");
+  expect((await fetch(`${url}/oauth/desktop-session`, { method: "POST", headers: { authorization: `Bearer ${cli}` } })).status).toBe(401);
+  expect((await fetch(`${url}/oauth/desktop-session`, { method: "POST" })).status).toBe(401);
+});

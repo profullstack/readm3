@@ -164,10 +164,12 @@ $BIN/$name"
     mkdir -p "$APPS" "$ICONS"
     fetch "https://readm3.com/viewer-assets/icon-512.png" "$ICONS/readm3.png" || true
     printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=readm3' 'GenericName=Text Editor' \
-      "Exec=$BIN/readm3-desktop %F" 'Icon=readm3' 'Categories=Development;TextEditor;Utility;' \
-      'MimeType=text/plain;text/markdown;application/json;text/x-python;text/javascript;text/css;text/html;application/xml;text/x-shellscript;' \
+      "Exec=$BIN/readm3-desktop %U" 'Icon=readm3' 'Categories=Development;TextEditor;Utility;' \
+      'MimeType=text/plain;text/markdown;application/json;text/x-python;text/javascript;text/css;text/html;application/xml;text/x-shellscript;x-scheme-handler/readm3;' \
       'StartupWMClass=readm3' 'Terminal=false' > "$APPS/readm3.desktop"
     command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPS" >/dev/null 2>&1 || true
+    # readm3:// links ("Open in app" on readm3.com) start the desktop app.
+    command -v xdg-mime >/dev/null 2>&1 && xdg-mime default readm3.desktop x-scheme-handler/readm3 >/dev/null 2>&1 || true
     PATHS="$PATHS
 $BIN/readm3-desktop
 $APPS/readm3.desktop

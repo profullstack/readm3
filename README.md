@@ -451,6 +451,16 @@ or lands in History when you have unsaved edits. There is no `--wait`: a second 
 hands its files to the window already open and exits, so `readm3 edit` is not a
 `core.editor` for git.
 
+**Signing in** in the app is **Sign in with your browser** on the Account page: your
+browser opens readm3.com, where your password manager and email are, you approve the
+desktop app, and the app is signed in (OAuth with a loopback redirect, then one exchange
+of that token for the window's session at `POST /oauth/desktop-session`). An emailed link
+or CoinPay page inside the app would sign in the browser instead, so the app does not offer them.
+
+**Open in app** on readm3.com/viewer opens the same page in the desktop app through a
+`readm3://open?url=…` link the app registers (macOS, Windows, and Linux through the
+installer's desktop entry). When nothing answers, the button becomes **Get the app**.
+
 Files opened with "Open with" (Finder and Explorer included) go straight into the
 editor. The window loads readm3.com, so sign-in, sync and sharing work as on the web;
 a copy of the editor ships inside the app for a first launch with no connection. The
