@@ -376,8 +376,11 @@ directly with no credentials or server proxy. Local files are uploaded only when
 | | Without an account | Free account | Pay as you go |
 | --- | --- | --- | --- |
 | Largest file | 4 MB | 5 GB | 5 GB |
-| Number of files | 1,000 (20 MB in all) | no limit | no limit |
+| Number of files | 1,000 (20 MB in all) | 5,000 | 5,000 |
 | Synced storage | none | 5 GB | $0.05 per GB a month over 5 GB |
+
+The meter beside Sync in the editor's header shows storage and files against these
+limits; click it for the plan, the price and the balance, and to add funds.
 
 Signed in, a file over 4 MB is a *stored file*: it opens read-only (a PDF or image is
 shown whole, text as its first megabyte) and Download gives it back exactly. On the
@@ -735,7 +738,7 @@ explicitly overrides a conflict. Replaced local files receive numbered `.bak-NNN
 backups. Browser replacements receive backups in IndexedDB, accessible through
 **Sync → Local backups** for download or restoration. Clearing browser site data
 also removes those local backups. The CLI syncs a readable workspace of up to 4 MB
-per file and 20 MB in total; the browser and desktop app sync any number of files of
+per file and 20 MB in total; the browser and desktop app sync up to 5,000 files of
 up to 5 GB each (see File limits and storage).
 
 The authenticated API exposes:

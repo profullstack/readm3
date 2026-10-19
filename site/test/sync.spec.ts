@@ -151,6 +151,28 @@ test("a signed-in account opens a file over 4 MB read-only and syncs it as an en
   expect((await stat((await (await downloading).path())!)).size).toBe(big.length);
 });
 
+test("the header shows usage against the plan's limits, signed out and signed in", async ({ page, context }) => {
+  await page.goto("/viewer");
+  const usage = page.locator("#usage");
+  await expect(usage).toBeVisible();
+  await expect(usage).toHaveAttribute("title", /\/ 20\.0 MB · \d+ \/ 1,000 files/);
+  await usage.click();
+  const dialog = page.getByRole("dialog", { name: "Usage and limits" });
+  await expect(dialog).toContainText("No account");
+  await expect(dialog.getByRole("link", { name: "Sign in (free)" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Close dialog" }).click();
+
+  await register(context, username());
+  await page.reload();
+  await setPassphrase(page);
+  await expect(usage).toHaveAttribute("title", /\/ 5\.0 GB · \d+ \/ 5,000 files/);
+  await usage.click();
+  await expect(dialog).toContainText("Free account");
+  await expect(dialog).toContainText("$0.05 per GB a month");
+  await expect(dialog).toContainText("Balance");
+  await expect(dialog.getByRole("button", { name: "Add funds" })).toBeVisible();
+});
+
 test("signed out, a file over 4 MB asks for a free account", async ({ page }) => {
   await page.goto("/viewer");
   await page.locator("#files-input").setInputFiles({ name: "huge.md", mimeType: "text/markdown", buffer: Buffer.alloc(4 * 1024 * 1024 + 1, "a") });
