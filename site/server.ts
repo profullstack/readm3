@@ -15,6 +15,7 @@ import { createApi } from "../server/api.ts";
 import { anthropicSummarizer, Billing, DEFAULT_MODEL, type Summarize } from "../server/billing.ts";
 import { Payments, paymentOptions, type PaymentOptions } from "../server/payments.ts";
 import { CoinPay } from "../server/coinpay.ts";
+import { createOAuth } from "../server/oauth.ts";
 import { createSyncApi } from "../server/sync-api.ts";
 
 const dist = join(dirname(fileURLToPath(import.meta.url)), "dist");
@@ -126,6 +127,8 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
   const payments = new Payments(store, billing, options.payments ?? paymentOptions());
   const api = createApi(store, accounts.origin, new CoinPay(store, accounts, options.coinpay), { billing, payments });
   const syncApi = createSyncApi(store, accounts);
+  // `readm3 login`: OAuth 2.1 for the CLI (server/oauth.ts).
+  const oauth = createOAuth(accounts);
   return Bun.serve({
     port: listenPort,
     hostname: options.hostname ?? "0.0.0.0",
@@ -158,6 +161,8 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
         : server.requestIP(request)?.address || "unknown";
       const accountResponse = await accounts.handle(request, ip);
       if (accountResponse) return accountResponse;
+      const oauthResponse = await oauth(request);
+      if (oauthResponse) return oauthResponse;
       const syncResponse = await syncApi(request);
       if (syncResponse) return syncResponse;
       const documentResponse = await api(request, ip);

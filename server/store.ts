@@ -2,7 +2,14 @@ import { Database } from "bun:sqlite";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { IDENTITY_SCHEMA, VERIFIED_IDENTITY } from "./accounts.ts";
+import {
+  IDENTITY_SCHEMA,
+  isOAuthAccessToken,
+  OAUTH_ACCESS_JOIN,
+  OAUTH_ACCESS_WHERE,
+  OAUTH_SCHEMA,
+  VERIFIED_IDENTITY,
+} from "./accounts.ts";
 
 export type User = {
   id: string;
@@ -86,6 +93,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS shares_document ON shares(documentId);
       CREATE INDEX IF NOT EXISTS sessions_user ON sessions(userId);
       ${IDENTITY_SCHEMA}
+      ${OAUTH_SCHEMA}
     `);
     // Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS leaves an
     // existing table alone, so a live database gets them here, once.
@@ -111,6 +119,15 @@ export class Store {
     return u;
   }
   authenticate(token: string): User | null {
+    // An access token from `readm3 login` (OAuth 2.1, server/oauth.ts).
+    if (isOAuthAccessToken(token)) {
+      const row = this.get<{ userId: string }>(
+        `SELECT t.userId FROM ${OAUTH_ACCESS_JOIN} WHERE ${OAUTH_ACCESS_WHERE} AND ${VERIFIED_IDENTITY}`,
+        checksum(token),
+        now(),
+      );
+      return row ? this.user(row.userId) : null;
+    }
     const session = this.get<{ userId: string }>(
       `SELECT s.userId FROM sessions s JOIN users u ON u.id=s.userId WHERE s.tokenHash=? AND s.expiresAt>? AND ${VERIFIED_IDENTITY}`,
       checksum(token),
