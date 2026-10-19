@@ -216,6 +216,8 @@ ${FOOTER}
 /* ----------------------------------------------------------------- copy --- */
 
 const INSTALL = `curl -fsSL ${SITE}/install.sh | sh`;
+/** The one-line installer with a Copy button; sits under each page's hero heading. */
+const INSTALL_BOX = `<div class="install"><code>${escape(INSTALL)}</code><button type="button" data-copy="${escape(INSTALL)}">Copy</button></div>`;
 
 /** The README embeds a 90-column ASCII screenshot; render wider or it truncates. */
 const README_WIDTH = 100;
@@ -232,6 +234,7 @@ function home(): string {
   const hero = `<section class="hero">
   <p class="eyebrow">Markdown, made for working together</p>
   <h1>Good writing starts with a draft.<br>Great docs get shared.</h1>
+  ${INSTALL_BOX}
   <p class="lede">Write the README. Draft the proposal. Give your team a place to edit it.
   readm3 brings Markdown editing, simple view or edit links, and a history of every save
   into one quiet workspace.</p>
@@ -351,11 +354,11 @@ function docs(): string {
   const main = `<section class="hero hero-tight">
   <p class="eyebrow">Documentation</p>
   <h1>readm3 ${escape(`v${VERSION}`)}</h1>
+  ${INSTALL_BOX}
   <p class="lede">Everything below is the project README, rendered by readm3's own parser at
   build time. Change the theme and the same parse re-colors, which is what happens in your
   terminal when you pass <code>--theme</code>.</p>
   <div class="cta">
-    <div class="install"><code>${escape(INSTALL)}</code><button type="button" data-copy="${escape(INSTALL)}">Copy</button></div>
     <a class="ghost" href="${REPO}">Source on GitHub</a>
   </div>
 </section>
@@ -482,7 +485,7 @@ write("sharing/index.html", shell({
   title: "Sharing, teams, API and MCP — readm3",
   description: "Edit and share Markdown with view/edit permissions, version history, organizations, teams, CLI, API and MCP.",
   path: "/sharing",
-  main: `<section class="hero hero-tight"><p class="eyebrow">Working together</p><h1>Editing, sharing, and your tools.</h1><p class="lede">The same documents and permissions, wherever you work.</p></section>${pane({ title: "sharing.md", body: render(readFileSync(join(here, "content/sharing.md"), "utf8"), 100), percent: "100%" })}`,
+  main: `<section class="hero hero-tight"><p class="eyebrow">Working together</p><h1>Editing, sharing, and your tools.</h1>${INSTALL_BOX}<p class="lede">The same documents and permissions, wherever you work.</p></section>${pane({ title: "sharing.md", body: render(readFileSync(join(here, "content/sharing.md"), "utf8"), 100), percent: "100%" })}`,
   jsonLd: { "@context": "https://schema.org", "@type": "TechArticle", headline: "Markdown sharing, teams, CLI, API and MCP" },
 }));
 write("styles.css", css);
@@ -626,6 +629,7 @@ function pastePage(): string {
   const main = `<section class="hero hero-tight">
   <p class="eyebrow">Paste</p>
   <h1>Paste anything.<br>Get a private link.</h1>
+  ${INSTALL_BOX}
   <p class="lede">Text of any kind, a PDF or an image, behind a secret link. No account.
   Markdown renders as a document, code is highlighted and folds, and the link expires when
   you say. Only a hash of the secret is kept, so nobody can list or find it.</p>

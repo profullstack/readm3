@@ -174,7 +174,9 @@ main { max-width: var(--measure); margin: 0 auto; padding: 0 1.5rem 4rem; }
   border-radius: 8px;
   padding: 0.6rem 0.6rem 0.6rem 1rem;
 }
-.install code { color: var(--page-fg); white-space: nowrap; }
+.install code { color: var(--page-fg); white-space: nowrap; overflow-x: auto; min-width: 0; }
+/* Under a hero heading: as wide as the command, never wider than the page. */
+.hero > .install { display: inline-flex; max-width: 100%; box-sizing: border-box; margin: 0 0 1.5rem; }
 .install code::before { content: "$ "; color: var(--page-dim); }
 
 .install button,
