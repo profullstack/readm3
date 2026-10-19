@@ -1,8 +1,10 @@
 import { action, request, type CloudDocument } from "./cloud.ts";
 import { pasteDialog, publish, sharing, history as versionHistory } from "./sharing.ts";
 import { showSync } from "./sync.ts";
+import { autoSyncEnabled, schedule as scheduleSync, setAutoSync, startAutoSync } from "./autosync.ts";
 import { renderMarkdown } from "../src/markdown.ts";
 import type { Flavor } from "../src/flavors.ts";
+import type { ReaderSettings } from "../src/sync-schema.ts";
 import { toHtml } from "./html.ts";
 import { renderCode, type CodeView } from "./code-view.ts";
 import type { SourceEditor } from "./code-editor.ts";
@@ -168,6 +170,8 @@ async function save() {
   try {
     await persist(workspace);
     if (revision === savingRevision) {
+      // Every saved edit reaches the account a few seconds later, unless it came from sync.
+      if (!applyingSync) scheduleSync();
       pendingSave = false;
       saveFailed = false;
       const unsaved = unsavedOnDisk(current());
@@ -178,6 +182,28 @@ async function save() {
     saveFailed = true;
     saveStatus.textContent = "Browser storage unavailable — download to keep your files";
   }
+}
+
+let applyingSync = false;
+/** A workspace and settings from the account (Sync dialog or automatic sync) replace this device's. */
+async function applySynced(incoming: Workspace | undefined, settings: ReaderSettings | undefined) {
+  applyingSync = true;
+  try {
+    clearTimeout(saveTimer);
+    if (incoming) {
+      await persist(incoming);
+      workspace = incoming;
+      filter.value = "";
+      collapsed.clear();
+    }
+    if (settings?.theme && [...theme.options].some((option) => option.value === settings.theme)) theme.value = settings.theme;
+    if (settings?.flavor) flavor.value = settings.flavor;
+    storePreference("theme", theme.value);
+    storePreference("flavor", flavor.value);
+    document.documentElement.dataset.theme = theme.value;
+    openDocument(workspace.documents.some((doc) => doc.path === workspace.active) ? workspace.active : workspace.documents[0]!.path, false);
+    await save();
+  } finally { applyingSync = false; }
 }
 
 function changed() {
@@ -689,24 +715,10 @@ function loadPreferences() {
 
 function bindEvents() {
   element("sync-workspace").onclick = () => void showSync({
+    auto: { enabled: autoSyncEnabled, set: setAutoSync },
     read: () => workspace,
     settings: () => ({ theme: theme.value, flavor: flavor.value as Flavor }),
-    async apply(incoming, settings) {
-      clearTimeout(saveTimer);
-      if (incoming) {
-        await persist(incoming);
-        workspace = incoming;
-        filter.value = "";
-        collapsed.clear();
-      }
-      if (settings?.theme && [...theme.options].some((option) => option.value === settings.theme)) theme.value = settings.theme;
-      if (settings?.flavor) flavor.value = settings.flavor;
-      storePreference("theme", theme.value);
-      storePreference("flavor", flavor.value);
-      document.documentElement.dataset.theme = theme.value;
-      openDocument(workspace.active, false);
-      await save();
-    },
+    apply: (incoming, settings) => applySynced(incoming as Workspace | undefined, settings),
   });
   element("cloud-save").onclick = () => void saveCloud();
   element("paste-share").onclick = () => pasteDialog(current().path, current().source);
@@ -1052,6 +1064,15 @@ async function start() {
   if (topup) { history.replaceState(null, "", "/viewer"); void awaitTopUp(topup, notice); }
   void setupPwa();
   setupOpenInDesktop();
+  startAutoSync({
+    read: () => ({ name: workspace.name, active: workspace.active, documents: workspace.documents }),
+    settings: () => ({ theme: theme.value, flavor: flavor.value as Flavor }),
+    apply: (incoming, settings) => applySynced(incoming as Workspace, settings),
+    status: (text) => { element("sync-note").textContent = text; },
+    device: disk.desktop ? "desktop" : "browser",
+    seedUrl: __SEED_URL__,
+    app: "readm3 web",
+  });
 }
 
 start().catch((error) => { saveStatus.textContent = error instanceof Error ? error.message : "Unable to open the workspace. Reload to try again."; });
