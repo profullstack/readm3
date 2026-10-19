@@ -18,15 +18,17 @@
 const { app, BrowserWindow, Menu, ipcMain, net, protocol, session, shell } = require("electron");
 const { createHash, randomBytes } = require("node:crypto");
 const { createServer } = require("node:http");
-const { readFile, readdir, writeFile, stat } = require("node:fs/promises");
+const { open, readFile, readdir, writeFile, stat } = require("node:fs/promises");
 const { basename, join, resolve } = require("node:path");
 const { fileURLToPath, pathToFileURL } = require("node:url");
 
 const ORIGIN = (process.env.READM3_URL || "https://readm3.com").replace(/\/$/, "");
 const LOCAL = "app://readm3";
-const MAX_FILE_BYTES = 4 * 1024 * 1024;
-/** The page's own limits (site/workspace.ts); it applies them again, these only bound the walk. */
-const MAX_FILES = 1000;
+/** Larger files go to the page without their bytes; it reads them in ranges (read-range). */
+const INLINE_BYTES = 4 * 1024 * 1024;
+/** The largest file a signed-in account may keep (src/blob-store.ts); the page applies its own limits again. */
+const MAX_FILE_BYTES = 5 * 1024 ** 3;
+const MAX_RANGE = 16 * 1024 * 1024;
 const IGNORED = new Set(["node_modules", "dist", "build", "out", "target", "vendor", "coverage", "venv", "__pycache__", ".git"]);
 const NEVER = /\.(?:zip|gz|tgz|bz2|xz|7z|rar|tar|exe|dll|so|dylib|o|a|class|jar|war|wasm|bin|dat|db|sqlite|sqlite3|mp3|mp4|m4a|mov|avi|mkv|webm|ogg|wav|flac|woff2?|ttf|otf|eot|psd|ai|doc|docx|xls|xlsx|ppt|pptx|iso|dmg|pkg|deb|rpm|apk|lock)$/i;
 /** The bundled editor: inside the package, or the repo's site build when run with `electron .`. */
@@ -48,13 +50,13 @@ let window;
 async function load(paths, cwd = process.cwd()) {
   const files = [];
   const add = async (path, info, relative) => {
-    if (info.size > MAX_FILE_BYTES || files.length >= MAX_FILES) return;
-    files.push({ path, name: basename(path), relative, data: new Uint8Array(await readFile(path)) });
+    if (info.size > MAX_FILE_BYTES) return;
+    const data = info.size > INLINE_BYTES ? undefined : new Uint8Array(await readFile(path));
+    files.push({ path, name: basename(path), relative, size: info.size, data });
     opened.add(path);
   };
   const walk = async (directory, prefix) => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
-      if (files.length >= MAX_FILES) return;
       if (entry.name.startsWith(".") || IGNORED.has(entry.name)) continue;
       const path = join(directory, entry.name);
       const relative = `${prefix}/${entry.name}`;
@@ -240,6 +242,18 @@ else {
       if (typeof path !== "string" || !opened.has(path)) throw new Error("readm3 can only read files it opened.");
       const info = await stat(path);
       return { data: new Uint8Array(await readFile(path)), modified: info.mtimeMs };
+    });
+    // A large file reaches the page a range at a time, never whole through one message.
+    ipcMain.handle("read-range", async (event, path, start, end) => {
+      if (!trusted(event.senderFrame?.url ?? "")) throw new Error("Not allowed.");
+      if (typeof path !== "string" || !opened.has(path)) throw new Error("readm3 can only read files it opened.");
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end - start > MAX_RANGE) throw new Error("Invalid range.");
+      const handle = await open(path, "r");
+      try {
+        const buffer = Buffer.alloc(end - start);
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
+        return new Uint8Array(buffer.subarray(0, bytesRead));
+      } finally { await handle.close(); }
     });
     ipcMain.handle("write-file", async (event, path, data) => {
       if (!trusted(event.senderFrame?.url ?? "")) throw new Error("Not allowed.");

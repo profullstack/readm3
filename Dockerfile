@@ -24,7 +24,7 @@ COPY --from=builder --chown=bun:bun /app/server ./server
 # Only the src modules the server imports at runtime: sync-api needs sync-schema, and
 # pastes needs code.ts (language detection; its one dependency, highlight.js, is in node_modules),
 # and billing needs diff.ts (the AI summary is asked about the changed lines).
-COPY --from=builder --chown=bun:bun /app/src/sync-schema.ts /app/src/flavors.ts /app/src/emoji.ts /app/src/code.ts /app/src/diff.ts /app/src/sensitive.ts /app/src/sync-crypto.ts ./src/
+COPY --from=builder --chown=bun:bun /app/src/sync-schema.ts /app/src/flavors.ts /app/src/emoji.ts /app/src/code.ts /app/src/diff.ts /app/src/sensitive.ts /app/src/sync-crypto.ts /app/src/blob-store.ts ./src/
 COPY --from=deps --chown=bun:bun /app/node_modules ./node_modules
 RUN mkdir -p /data && chown bun:bun /data
 

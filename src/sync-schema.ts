@@ -1,13 +1,15 @@
 /** Browser-safe account data contract. Only these two files may be synced. */
 import { isFlavor, type Flavor } from "./flavors.ts";
 import { envelopeProblem, SEALED_FILE } from "./sync-crypto.ts";
+import { blobRefProblem, INLINE_MAX_BYTES, SNAPSHOT_INLINE_BYTES, type BlobRef } from "./blob-store.ts";
 
 /**
  * A workspace file. `source` is the text, or base64 bytes when the path names a PDF or
  * an image. `language` is only stored when the name could not decide it (no known
- * extension) and the content was sniffed on import.
+ * extension) and the content was sniffed on import. A file stored apart (src/blob-store.ts:
+ * larger than 4 MB, or spilled from a full snapshot) has `blob` and an empty `source`.
  */
-export interface WorkspaceDocument { path: string; source: string; language?: string }
+export interface WorkspaceDocument { path: string; source: string; language?: string; blob?: BlobRef }
 export interface SyncedWorkspace { documents: WorkspaceDocument[]; active: string; name: string }
 export interface ReaderSettings { theme?: string; flavor?: Flavor }
 export const SYNC_LIMITS = { maxFileBytes: 32 * 1024 * 1024, maxTotalBytes: 33 * 1024 * 1024, maxFiles: 2 };
@@ -31,7 +33,7 @@ export function validateWorkspace(value: unknown): SyncedWorkspace {
   if (!value || typeof value !== "object") throw new Error("Workspace must be an object.");
   const ws = value as SyncedWorkspace;
   if (Object.keys(ws).some((key) => !["name", "active", "documents"].includes(key))) throw new Error("Workspace can only contain name, active and documents.");
-  if (typeof ws.name !== "string" || ws.name.length > 200 || !Array.isArray(ws.documents) || !ws.documents.length || ws.documents.length > 1000) throw new Error("Workspace needs a name and 1–1,000 files.");
+  if (typeof ws.name !== "string" || ws.name.length > 200 || !Array.isArray(ws.documents) || !ws.documents.length) throw new Error("Workspace needs a name and at least one file.");
   const paths = new Set<string>();
   let total = 0;
   const encoder = new TextEncoder();
@@ -41,10 +43,16 @@ export function validateWorkspace(value: unknown): SyncedWorkspace {
     if (!doc || typeof doc.path !== "string" || doc.path.length > 1024 || /[\\\x00-\x1f:]/.test(doc.path) || doc.path.split("/").some((p) => !p || p.startsWith(".")) || paths.has(doc.path)) throw new Error("Workspace contains an invalid or duplicate file path.");
     if (typeof doc.source !== "string") throw new Error("A file's source must be text.");
     if (doc.language !== undefined && (typeof doc.language !== "string" || !/^[a-z0-9_+-]{1,40}$/.test(doc.language))) throw new Error("A file's language must be a short highlight name.");
-    if (Object.keys(doc).some((key) => !["path", "source", "language"].includes(key))) throw new Error("Documents can only contain path, source and language.");
+    if (Object.keys(doc).some((key) => !["path", "source", "language", "blob"].includes(key))) throw new Error("Documents can only contain path, source, language and blob.");
+    if (doc.blob !== undefined) {
+      const problem = blobRefProblem(doc.blob);
+      if (problem) throw new Error(problem);
+      if (doc.source !== "") throw new Error("A stored file keeps its bytes apart; its source must be empty.");
+    }
     const bytes = encoder.encode(doc.source).length;
     total += bytes;
-    if (bytes > 4 * 1024 * 1024 || total > 20 * 1024 * 1024) throw new Error("Workspace limit: 4 MB per file and 20 MB total.");
+    // Larger files, and small ones past the snapshot's share, are stored apart (src/blob-store.ts).
+    if (bytes > INLINE_MAX_BYTES || total > SNAPSHOT_INLINE_BYTES + INLINE_MAX_BYTES) throw new Error("Workspace limit: 4 MB of text per file inside the synced copy; larger files are stored apart.");
     paths.add(doc.path);
   }
   if (!paths.has(ws.active)) throw new Error("The active document is missing.");

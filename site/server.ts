@@ -7,6 +7,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { footerHtml } from "@profullstack/footer";
 import { dirname, join, normalize, sep } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { Accounts } from "../server/accounts.ts";
 import { accountMailer } from "../server/account-mail.ts";
@@ -17,6 +18,7 @@ import { Payments, paymentOptions, type PaymentOptions } from "../server/payment
 import { CoinPay } from "../server/coinpay.ts";
 import { createOAuth } from "../server/oauth.ts";
 import { createSyncApi } from "../server/sync-api.ts";
+import { Blobs, createBlobApi } from "../server/blobs.ts";
 
 const dist = join(dirname(fileURLToPath(import.meta.url)), "dist");
 const port = Number(process.env.PORT ?? 3000);
@@ -109,10 +111,11 @@ function cacheFor(path: string): string {
   return "public, max-age=300";
 }
 
-export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorParameters<typeof CoinPay>[2]; port?: number; hostname?: string; summarize?: Summarize | null; payments?: PaymentOptions } = {}) {
+export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorParameters<typeof CoinPay>[2]; port?: number; hostname?: string; summarize?: Summarize | null; payments?: PaymentOptions; blobDir?: string } = {}) {
   const listenPort = options.port ?? port;
+  const database = process.env.READM3_DB || join(dirname(dist), "..", "data", "readm3.sqlite");
   const accounts = options.accounts ?? new Accounts(
-    process.env.READM3_DB || join(dirname(dist), "..", "data", "readm3.sqlite"),
+    database,
     process.env.READM3_URL || (process.env.NODE_ENV === "production" ? "https://readm3.com" : `http://127.0.0.1:${listenPort}`),
     accountMailer(),
   );
@@ -127,6 +130,16 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
   const payments = new Payments(store, billing, options.payments ?? paymentOptions());
   const api = createApi(store, accounts.origin, new CoinPay(store, accounts, options.coinpay), { billing, payments });
   const syncApi = createSyncApi(store, accounts);
+  // Stored files (server/blobs.ts) live beside the database on the same volume. The free
+  // allowance and the pay-as-you-go price can be changed without a release.
+  const blobs = new Blobs(store, billing, {
+    dir: options.blobDir ?? process.env.READM3_BLOB_DIR ?? (database === ":memory:" ? join(tmpdir(), `readm3-blobs-${process.pid}`) : join(dirname(database), "blobs")),
+    freeBytes: Number(process.env.READM3_FREE_STORAGE_BYTES) || undefined,
+    microsPerGibMonth: Number(process.env.READM3_STORAGE_MICROS_PER_GB_MONTH) || undefined,
+    topups: () => payments.enabled,
+  });
+  const blobApi = createBlobApi(blobs, accounts);
+  setInterval(() => { try { blobs.tick(); } catch (error) { console.error("readm3 storage charge:", error instanceof Error ? error.message : error); } }, 3600_000).unref();
   // `readm3 login`: OAuth 2.1 for the CLI (server/oauth.ts).
   const oauth = createOAuth(accounts);
   return Bun.serve({
@@ -165,6 +178,8 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
       if (oauthResponse) return oauthResponse;
       const syncResponse = await syncApi(request);
       if (syncResponse) return syncResponse;
+      const blobResponse = await blobApi(request);
+      if (blobResponse) return blobResponse;
       const documentResponse = await api(request, ip);
       if (documentResponse) return documentResponse;
 

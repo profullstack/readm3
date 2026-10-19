@@ -13,6 +13,7 @@ if (origin === "https://readm3.com" || origin === "app://readm3" || (custom && o
     signInWithBrowser: () => ipcRenderer.invoke("sign-in-with-browser"),
     onOpenFiles: (callback) => { ipcRenderer.on("open-files", (_event, files) => callback(files)); },
     readFile: (path) => ipcRenderer.invoke("read-file", path),
+    readRange: (path, start, end) => ipcRenderer.invoke("read-range", path, start, end),
     writeFile: (path, data) => ipcRenderer.invoke("write-file", path, data),
   });
 }

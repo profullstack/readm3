@@ -1,4 +1,6 @@
-import { action, request, type CloudDocument } from "./cloud.ts";
+import { action, request, type CloudDocument, type CloudUser } from "./cloud.ts";
+import * as stored from "./blobs.ts";
+import { formatStorage, INLINE_MAX_BYTES, MAX_BLOB_BYTES, newBlobRef } from "../src/blob-store.ts";
 import { pasteDialog, publish, sharing, history as versionHistory } from "./sharing.ts";
 import { showSync } from "./sync.ts";
 import { askPassphrase, autoSyncEnabled, forgetPassphrase, schedule as scheduleSync, setAutoSync, startAutoSync, syncNow } from "./autosync.ts";
@@ -59,6 +61,15 @@ const kind = () => kindOf(current());
 const isCode = () => kind().kind === "code";
 const isBinary = () => kind().kind === "binary";
 const isMarkdown = () => kind().kind === "markdown";
+/**
+ * Signed in, the free tier has no file count and files up to 5 GB (src/blob-store.ts);
+ * signed out, the workspace keeps its small local limits.
+ */
+let signedIn = false;
+const ACCOUNT_LIMITS = "Sign in (free) for files up to 5 GB and no limit on the number of files.";
+/** A stored file too large for the workspace (not a spilled small one): shown read-only. */
+const isLarge = (doc = current()) => !!doc.blob && !doc.blob.digest;
+const PREVIEW_BYTES = 1024 * 1024;
 const formatBytes = (n: number) => n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
 
 /** Shows the controls that make sense for the active document's kind. */
@@ -67,15 +78,15 @@ function applyKind() {
   element("flavor-label").hidden = current.kind !== "markdown";
   element("spoilers").hidden = current.kind !== "markdown";
   element("code-tools").hidden = current.kind !== "code";
-  element("copy").hidden = current.kind === "binary";
+  element("copy").hidden = current.kind === "binary" || isLarge();
   element("file-mark").textContent = current.kind === "markdown" ? "M↓" : current.kind === "code" ? current.language.extensions[0]!.toUpperCase() : current.binary.label.split(" ")[0]!.toUpperCase();
-  element<HTMLButtonElement>("edit-mode").disabled = current.kind === "binary" || !!pasteDocument || (!!cloudDocument && !cloudDocument.canEdit);
-  if (!cloudDocument && !pasteDocument) element("history").hidden = current.kind === "binary";
+  element<HTMLButtonElement>("edit-mode").disabled = current.kind === "binary" || isLarge() || !!pasteDocument || (!!cloudDocument && !cloudDocument.canEdit);
+  if (!cloudDocument && !pasteDocument) element("history").hidden = current.kind === "binary" || isLarge();
 }
 
-/** Whether the active file may be edited here: not a paste, not a view-only link, not a PDF or image. */
+/** Whether the active file may be edited here: not a paste, not a view-only link, not a PDF, image or file over 4 MB. */
 function canEdit(): boolean {
-  return !pasteDocument && !isBinary() && (!cloudDocument || cloudDocument.canEdit);
+  return !pasteDocument && !isBinary() && !isLarge() && (!cloudDocument || cloudDocument.canEdit);
 }
 
 function cloudControls() {
@@ -381,12 +392,16 @@ function renderMedia(mime: string, media: "pdf" | "image", label: string) {
   const key = JSON.stringify(["media", workspace.active, current().source.length]);
   if (key === previousRender) return;
   previousRender = key;
+  showMedia(new Blob([bytesOf(current()).buffer as ArrayBuffer], { type: mime }), media, label);
+}
+
+function showMedia(blob: Blob, media: "pdf" | "image", label: string) {
   content.hidden = true;
   codeContent.hidden = true;
   mediaContent.hidden = false;
   codeView = null;
   if (mediaUrl) URL.revokeObjectURL(mediaUrl);
-  mediaUrl = URL.createObjectURL(new Blob([bytesOf(current()).buffer as ArrayBuffer], { type: mime }));
+  mediaUrl = URL.createObjectURL(blob);
   mediaContent.replaceChildren();
   if (media === "image") {
     const image = document.createElement("img");
@@ -395,7 +410,7 @@ function renderMedia(mime: string, media: "pdf" | "image", label: string) {
     mediaContent.append(image);
   } else {
     const embed = document.createElement("embed");
-    embed.type = mime;
+    embed.type = blob.type;
     embed.src = mediaUrl;
     embed.title = current().path;
     mediaContent.append(embed);
@@ -411,8 +426,58 @@ function renderMedia(mime: string, media: "pdf" | "image", label: string) {
   mediaContent.append(note);
 }
 
+/**
+ * A stored file (site/blobs.ts), read from this device or fetched from the account. A
+ * small one spilled from the synced copy turns back into an ordinary file; a large one
+ * is a PDF or image the browser shows, or text shown as a read-only first megabyte.
+ */
+function renderStored() {
+  const doc = current();
+  const ref = doc.blob!;
+  const key = JSON.stringify(["stored", doc.path, ref.id]);
+  if (key === previousRender) return;
+  previousRender = key;
+  const active = kind();
+  content.hidden = true;
+  mediaContent.hidden = true;
+  codeContent.hidden = false;
+  codeView = null;
+  const status = document.createElement("p");
+  status.className = "media-note";
+  status.textContent = `Opening ${formatStorage(ref.size)}…`;
+  codeContent.replaceChildren(status);
+  const still = () => workspace.active === doc.path && current().blob?.id === ref.id;
+  stored.bytes(ref, active.kind === "binary" ? active.binary.mime : "", (done) => { status.textContent = `Downloading from your account… ${Math.floor(done / Math.max(1, ref.size) * 100)}%`; })
+    .then(async (blob) => {
+      if (!still()) return;
+      if (ref.digest) {
+        doc.source = await blob.text();
+        delete doc.blob;
+        previousRender = "";
+        applyKind();
+        documentInfo();
+        renderDocument();
+        void save();
+        return;
+      }
+      if (active.kind === "binary") { showMedia(blob, active.binary.kind, active.binary.label); return; }
+      const pre = document.createElement("pre");
+      pre.className = "large-preview";
+      pre.textContent = await blob.slice(0, PREVIEW_BYTES).text();
+      if (!still()) return;
+      status.textContent = `This file is ${formatStorage(ref.size)}, too large to edit here. Showing the first 1 MB, read-only; Download gives the whole file.`;
+      codeContent.replaceChildren(status, pre);
+    })
+    .catch((error) => {
+      if (!still()) return;
+      status.textContent = `${error instanceof Error ? error.message : "This file could not be opened."}${signedIn ? "" : " Sign in to fetch it from your account."}`;
+      previousRender = "";
+    });
+}
+
 function renderDocument() {
   if (!workspace || editing) return;
+  if (current().blob) { renderStored(); progress(); return; }
   const active = kind();
   if (active.kind === "code") {
     const key = JSON.stringify(["code", workspace.active, current().source, active.language.id]);
@@ -480,6 +545,7 @@ function setMode(edit: boolean, focus = true, atEnd = false) {
   if (edit && cloudDocument && !cloudDocument.canEdit) { notice("You have view-only access to this document."); return; }
   if (edit && pasteDocument) { notice("A private link is read-only. Copy or download the file to edit it."); return; }
   if (edit && isBinary()) { notice("A PDF or image cannot be edited here. Download it to change it elsewhere."); return; }
+  if (edit && isLarge()) { notice("A file over 4 MB opens read-only. Download it to change it elsewhere."); return; }
   editing = edit;
   editor.hidden = !edit;
   reader.hidden = edit;
@@ -495,6 +561,12 @@ function setMode(edit: boolean, focus = true, atEnd = false) {
 
 function documentInfo() {
   const active = kind();
+  const ref = current().blob;
+  if (ref) {
+    const label = active.kind === "binary" ? active.binary.label : active.kind === "code" ? active.language.label : "Markdown";
+    element("document-info").textContent = `${label} · ${formatStorage(ref.size)}${ref.digest ? "" : " · read-only"}`;
+    return;
+  }
   if (active.kind === "binary") {
     element("document-info").textContent = `${active.binary.label} · ${formatBytes(bytesOf(current()).length)}`;
     return;
@@ -532,8 +604,8 @@ function addDocuments(incoming: Document[], name?: string): Document[] {
   const added: Document[] = [];
   for (const doc of incoming) {
     const size = encoder.encode(doc.source).length;
-    if (size > MAX_FILE_BYTES || total + size > MAX_WORKSPACE_BYTES || map.size >= MAX_FILES) {
-      notice("Workspace limit reached: 4 MB per file, 20 MB total, and 1,000 files. Download files you want to keep.");
+    if (size > MAX_FILE_BYTES || (!signedIn && (total + size > MAX_WORKSPACE_BYTES || map.size >= MAX_FILES))) {
+      notice(signedIn ? "A file over 4 MB could not be stored apart. Try opening it again." : `Workspace limit reached: 4 MB per file, 20 MB total, and 1,000 files without an account. ${ACCOUNT_LIMITS}`);
       break;
     }
     // Reopening a file refreshes the copy that matches disk (`readm3 edit .` every morning),
@@ -541,7 +613,10 @@ function addDocuments(incoming: Document[], name?: string): Document[] {
     let path = doc.path;
     let copy = 2;
     const existing = map.get(path);
-    if (existing && (existing.source === doc.source || matchesDisk(existing))) total -= encoder.encode(existing.source).length;
+    if (existing && (existing.source === doc.source || matchesDisk(existing))) {
+      total -= encoder.encode(existing.source).length;
+      if (existing.blob && existing.blob.id !== doc.blob?.id) void stored.forget(existing.blob);
+    }
     else while (map.has(path)) {
       const dot = doc.path.lastIndexOf(".");
       path = dot >= 0 ? `${doc.path.slice(0, dot)} (${copy++})${doc.path.slice(dot)}` : `${doc.path} (${copy++})`;
@@ -569,12 +644,28 @@ async function importFiles(files: disk.Picked[], name = "Your workspace") {
     const handles: (FileSystemFileHandle | undefined)[] = [];
     let bytes = 0;
     let skipped = 0;
+    let needAccount = 0;
     let unreadable = 0;
     for (const { file, path, handle } of files) {
       if (!accepts(path)) continue;
       // A PDF or image is kept as base64, a third larger than the file; the limits apply to what is stored.
       const cost = binaryType(path) ? Math.ceil(file.size * 4 / 3) : file.size;
-      if (cost > MAX_FILE_BYTES || bytes + cost > MAX_WORKSPACE_BYTES || incoming.length >= MAX_FILES) { skipped++; continue; }
+      if (cost > MAX_FILE_BYTES) {
+        // Larger files are stored apart as they are (site/blobs.ts), which needs an account.
+        if (!signedIn) { needAccount++; continue; }
+        if (file.size > MAX_BLOB_BYTES) { skipped++; continue; }
+        if (!binaryType(path) && looksBinary(await file.slice(0, 8192).text())) { unreadable++; continue; }
+        const doc: Document = { path, source: "", blob: newBlobRef(file.size) };
+        if (!binaryType(path) && !languageForName(path)) {
+          const language = detectLanguage(path, await file.slice(0, 65536).text());
+          if (language !== MARKDOWN) doc.language = language;
+        }
+        await stored.keep(doc.blob!, file);
+        incoming.push(doc);
+        handles.push(handle);
+        continue;
+      }
+      if (!signedIn && (bytes + cost > MAX_WORKSPACE_BYTES || incoming.length >= MAX_FILES)) { needAccount++; continue; }
       if (binaryType(path)) {
         incoming.push({ path, source: toBase64(new Uint8Array(await file.arrayBuffer())) });
         handles.push(handle);
@@ -596,13 +687,18 @@ async function importFiles(files: disk.Picked[], name = "Your workspace") {
     if (incoming.length) {
       const added = addDocuments(incoming, name);
       added.forEach((doc, i) => { const handle = handles[i]; if (handle) diskEntries.set(doc.path, { handle, saved: disk.fingerprint(doc.source) }); });
-      for (const doc of added) if (!binaryType(doc.path)) void fileHistory.record(doc.path, doc.source, "opened");
+      for (const doc of added) if (!binaryType(doc.path) && !doc.blob) void fileHistory.record(doc.path, doc.source, "opened");
       if (handles.some(Boolean)) { void disk.storeEntries(diskEntries); renderFiles(); void save(); }
     }
-    else notice("No readable files found. Open text files (Markdown, JSON, code, config), PDFs or images up to 4 MB.");
-    if (skipped) notice(`${skipped} file(s) skipped because of size or workspace limits.`);
+    else if (!needAccount) notice(`No readable files found. Open text files (Markdown, JSON, code, config), PDFs or images up to ${signedIn ? "5 GB" : "4 MB"}.`);
+    if (needAccount) notice(`${needAccount} file(s) skipped: over 4 MB, or past 20 MB and 1,000 files, without an account. ${ACCOUNT_LIMITS}`);
+    if (skipped) notice(`${skipped} file(s) skipped: larger than 5 GB.`);
     if (unreadable) notice(`${unreadable} file(s) skipped: not text, PDF or image.`);
-  } catch { notice("A file could not be read. Try selecting it again."); }
+  } catch (error) {
+    notice(error instanceof DOMException && error.name === "QuotaExceededError"
+      ? "This device's browser storage is full. Free some space, or open fewer large files."
+      : "A file could not be read. Try selecting it again.");
+  }
   finally { importBusy = false; filesInput.value = ""; folderInput.value = ""; }
 }
 
@@ -629,7 +725,7 @@ const diskSeen = new Map<string, number>();
  * reloaded; with local edits it is left alone and the disk version waits in History.
  */
 async function checkDisk() {
-  if (!workspace || cloudDocument || pasteDocument || document.hidden || isBinary()) return;
+  if (!workspace || cloudDocument || pasteDocument || document.hidden || isBinary() || current().blob) return;
   const doc = current();
   const entry = diskEntries.get(doc.path);
   if (!entry) return;
@@ -671,7 +767,7 @@ async function openFromDisk(folder: boolean) {
  */
 async function saveFile(saveAs = false) {
   if (cloudDocument) { await saveCloud(); return; }
-  if (pasteDocument || !disk.supported()) { download(); return; }
+  if (pasteDocument || !disk.supported() || current().blob) { download(); return; }
   const doc = current();
   let handle = saveAs ? undefined : diskEntries.get(doc.path)?.handle;
   try {
@@ -690,16 +786,26 @@ async function saveFile(saveAs = false) {
 
 function download() {
   const active = kind();
-  const blob = active.kind === "binary"
-    ? new Blob([bytesOf(current()).buffer as ArrayBuffer], { type: active.binary.mime })
-    : new Blob([current().source], { type: `${active.language.mime};charset=utf-8` });
+  const doc = current();
+  const name = doc.path.split("/").at(-1)!;
+  const mime = active.kind === "binary" ? active.binary.mime : `${active.language.mime};charset=utf-8`;
+  if (doc.blob) {
+    notice(`Preparing ${name} (${formatStorage(doc.blob.size)})…`);
+    stored.bytes(doc.blob, mime).then((blob) => saveBlob(blob, name)).catch((error) => notice(error instanceof Error ? error.message : "The file could not be downloaded."));
+    return;
+  }
+  saveBlob(active.kind === "binary" ? new Blob([bytesOf(doc).buffer as ArrayBuffer], { type: mime }) : new Blob([doc.source], { type: mime }), name);
+  if (!cloudDocument) void save();
+}
+
+function saveBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = current().path.split("/").at(-1)!;
+  anchor.download = name;
   anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-  if (!cloudDocument) void save();
+  // A multi-gigabyte file takes a while to hand over; the URL outlives the click.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 function storePreference(key: string, value: string) { try { localStorage.setItem(`readm3:${key}`, value); } catch { /* The reader still works without preferences. */ } }
@@ -880,23 +986,24 @@ async function fetchDocument(input: string) {
   const type = response.headers.get("content-type") ?? "";
   const givenName = decodeURIComponent(url.pathname.split("/").at(-1) || "").replace(/[/\\]/g, "-");
   if (type.includes("text/html") && !/\.html?$/i.test(givenName)) throw new Error("That URL returns a web page. Use the raw file URL instead.");
-  if (Number(response.headers.get("content-length")) > MAX_FILE_BYTES) throw new Error("This file exceeds the 4 MB limit.");
+  const limit = signedIn ? MAX_BLOB_BYTES : MAX_FILE_BYTES;
+  const tooLarge = () => new Error(signedIn ? "This file is over the 5 GB limit." : `This file is over 4 MB. ${ACCOUNT_LIMITS}`);
+  if (Number(response.headers.get("content-length")) > limit) throw tooLarge();
   const stream = response.body?.getReader();
   if (!stream) throw new Error("The host returned an empty response.");
-  const chunks: Uint8Array[] = [];
+  // Blob parts, not one array: a browser keeps a large Blob on disk.
+  const parts: Blob[] = [];
   let length = 0;
   try {
     while (true) {
       const { done, value } = await stream.read();
       if (done) break;
       length += value.byteLength;
-      if (length > MAX_FILE_BYTES) { await stream.cancel(); throw new Error("This file exceeds the 4 MB limit."); }
-      chunks.push(value);
+      if (length > limit) { await stream.cancel(); throw tooLarge(); }
+      parts.push(new Blob([value as BlobPart]));
     }
   } finally { stream.releaseLock(); }
-  const bytes = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+  const whole = new Blob(parts);
   let name = givenName || "Document.md";
   if (!accepts(name)) name = "Document.md";
   // A PDF or image served without an extension in its path still gets one from its type.
@@ -904,6 +1011,14 @@ async function fetchDocument(input: string) {
     if (type.startsWith("application/pdf")) name += ".pdf";
     else if (type.startsWith("image/")) name += `.${type.slice(6).split(/[;+]/)[0]}`;
   }
+  if (length > MAX_FILE_BYTES || (binaryType(name) && Math.ceil(length * 4 / 3) > MAX_FILE_BYTES)) {
+    if (!binaryType(name) && looksBinary(await whole.slice(0, 8192).text())) throw new Error("That URL is not a text file, PDF or image.");
+    const doc: Document = { path: name, source: "", blob: newBlobRef(length) };
+    await stored.keep(doc.blob!, whole);
+    addDocuments([doc]);
+    return;
+  }
+  const bytes = new Uint8Array(await whole.arrayBuffer());
   if (binaryType(name)) { addDocuments([{ path: name, source: toBase64(bytes) }]); return; }
   const text = new TextDecoder().decode(bytes);
   if (looksBinary(text)) throw new Error("That URL is not a text file, PDF or image.");
@@ -929,7 +1044,7 @@ function receiveLaunches() {
     const open = (files: disk.DesktopFile[]) => {
       if (!files.length) return;
       const folder = files.find((file) => file.relative)?.relative!.split("/")[0];
-      void importFiles(disk.fromDesktop(files), folder);
+      void disk.fromDesktop(files).then((picked) => importFiles(picked, folder)).catch(() => notice("A file could not be read from disk."));
     };
     void disk.desktop.takeLaunchFiles().then(open);
     disk.desktop.onOpenFiles(open);
@@ -1001,6 +1116,11 @@ async function setupPwa() {
   } catch { notice("Offline setup is unavailable. The reader still works while this page is open."); }
 }
 
+async function refreshAccount() {
+  try { signedIn = !!(await request<{ user: CloudUser | null }>("me")).user; }
+  catch { /* Offline: the last answer stands. */ }
+}
+
 async function start() {
   loadPreferences();
   if (pasteToken) {
@@ -1053,6 +1173,9 @@ async function start() {
   openDocument(workspace.active, false);
   bindEvents();
   await save();
+  // The account decides the limits before anything is opened from a link or the desktop.
+  await refreshAccount();
+  window.addEventListener("focus", () => void refreshAccount());
   const params = new URLSearchParams(location.search);
   if (params.has("new")) { element("new-file").click(); history.replaceState(null, "", "/viewer"); }
   const remote = params.get("url")?.trim();

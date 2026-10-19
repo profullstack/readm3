@@ -16,8 +16,12 @@ import type { SyncedWorkspace, WorkspaceDocument } from "./sync-schema.ts";
 
 export type Digest = (text: string) => string;
 
-/** FNV-1a over the text and the language: cheap, and only ever compared on one account. */
-export const digestDocument = (doc: Pick<WorkspaceDocument, "source" | "language">): string => {
+/**
+ * FNV-1a over the text and the language: cheap, and only ever compared on one account.
+ * A spilled text file carries the digest of its text; a large stored file is its blob.
+ */
+export const digestDocument = (doc: Pick<WorkspaceDocument, "source" | "language" | "blob">): string => {
+  if (doc.blob) return doc.blob.digest ?? `blob:${doc.blob.id}`;
   let hash = 0x811c9dc5;
   const text = `${doc.language ?? ""}\0${doc.source}`;
   for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);

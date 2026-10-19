@@ -1,4 +1,4 @@
-import { accepts, MAX_FILES, readKey, writeKey } from "./workspace.ts";
+import { accepts, readKey, writeKey } from "./workspace.ts";
 
 /**
  * Files that came from disk and can go back to it, through the File System Access API
@@ -38,8 +38,8 @@ export async function pickFolder(): Promise<{ name: string; files: Picked[] } | 
   catch (error) { if (cancelled(error)) return null; throw error; }
   const files: Picked[] = [];
   const walk = async (directory: Directory, prefix: string) => {
+    // No count here: the editor applies the limits, which depend on being signed in.
     for await (const entry of directory.values()) {
-      if (files.length >= MAX_FILES) return;
       const path = `${prefix}/${entry.name}`;
       if (entry.kind === "directory") { if (accepts(`${path}/x`)) await walk(entry as Directory, path); }
       else if (accepts(path)) {
@@ -65,13 +65,18 @@ export async function launched(handles: readonly FileSystemHandle[]): Promise<Pi
   return Promise.all(files.map(async (handle) => ({ file: await handle.getFile(), path: handle.name, handle })));
 }
 
-/** A file the desktop app opened for the page: its path, its name and its bytes; `relative` when it came in a folder. */
-export interface DesktopFile { path: string; name: string; relative?: string; data: Uint8Array; }
+/**
+ * A file the desktop app opened for the page: its path, its name and its bytes; `relative`
+ * when it came in a folder. A file over 4 MB comes with its size and no bytes; the page
+ * reads it in ranges.
+ */
+export interface DesktopFile { path: string; name: string; relative?: string; size?: number; data?: Uint8Array; }
 interface DesktopBridge {
   takeLaunchFiles(): Promise<DesktopFile[]>;
   onOpenFiles(callback: (files: DesktopFile[]) => void): void;
   /** Absent in desktop builds before 0.13.0, which only had the bytes from launch. */
   readFile?(path: string): Promise<{ data: Uint8Array; modified: number }>;
+  readRange?(path: string, start: number, end: number): Promise<Uint8Array>;
   writeFile(path: string, data: string | Uint8Array): Promise<void>;
 }
 /** Present only inside the readm3 desktop app (desktop/preload.cjs). */
@@ -82,12 +87,25 @@ export const desktop = typeof window === "undefined" ? undefined : (window as un
  * picker. It lasts for the session: it cannot be stored, and that is fine, because the
  * desktop hands the file over again the next time it is opened.
  */
-export function fromDesktop(files: DesktopFile[]): Picked[] {
-  return files.map((entry) => {
+export async function fromDesktop(files: DesktopFile[]): Promise<Picked[]> {
+  const RANGE = 8 * 1024 * 1024;
+  /** A large file, read range by range into Blob parts, which the browser keeps on disk. */
+  const whole = async (entry: DesktopFile): Promise<File> => {
+    const parts: Blob[] = [];
+    for (let start = 0; start < entry.size!; start += RANGE)
+      parts.push(new Blob([await desktop!.readRange!(entry.path, start, Math.min(entry.size!, start + RANGE)) as BlobPart]));
+    return new File(parts, entry.name);
+  };
+  const picked: Picked[] = [];
+  for (const entry of files) {
+    // A large file from a desktop build without ranges cannot be read; it is left out.
+    if (!entry.data && !desktop!.readRange) continue;
+    const file = entry.data ? new File([entry.data.buffer as ArrayBuffer], entry.name) : await whole(entry);
     const handle = {
       kind: "file", name: entry.name,
       // Read from disk each time, so the editor sees a file change under it and a save is not undone.
       getFile: async () => {
+        if (!entry.data) return whole(entry);
         if (!desktop!.readFile) return new File([entry.data.buffer as ArrayBuffer], entry.name);
         const { data, modified } = await desktop!.readFile(entry.path);
         return new File([data.buffer as ArrayBuffer], entry.name, { lastModified: modified });
@@ -97,8 +115,9 @@ export function fromDesktop(files: DesktopFile[]): Picked[] {
         return { write: async (data: BlobPart) => { parts.push(data); }, close: async () => { await desktop!.writeFile(entry.path, new Uint8Array(await new Blob(parts).arrayBuffer())); } };
       },
     } as unknown as FileSystemFileHandle;
-    return { file: new File([entry.data.buffer as ArrayBuffer], entry.name), path: entry.relative ?? entry.name, handle };
-  });
+    picked.push({ file, path: entry.relative ?? entry.name, handle });
+  }
+  return picked;
 }
 
 /** Writes the file, asking for write access first if this session has not been granted it. */

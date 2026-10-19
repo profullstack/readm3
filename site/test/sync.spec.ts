@@ -1,4 +1,5 @@
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
+import { stat } from "node:fs/promises";
 import { editorInput } from "./editor.ts";
 
 const origin = process.env.READM3_TEST_URL || `http://127.0.0.1:${process.env.READM3_TEST_PORT || 4318}`;
@@ -123,4 +124,33 @@ test("sync requires sign-in and account snapshots are not served from the offlin
   });
   expect(cached).toBe(false);
   await context.setOffline(false);
+});
+
+test("a signed-in account opens a file over 4 MB read-only and syncs it as an encrypted stored file", async ({ page, context }) => {
+  await register(context, username());
+  await page.goto("/viewer");
+  await setPassphrase(page);
+  const line = "large log line with a marker\n";
+  const big = Buffer.from(line.repeat(Math.ceil(9 * 1024 * 1024 / line.length)));
+  await page.locator("#files-input").setInputFiles({ name: "server.log", mimeType: "text/plain", buffer: big });
+  await expect(page.locator("#document-name")).toHaveText("server.log");
+  await expect(page.locator("#code-content")).toContainText("too large to edit here");
+  await expect(page.locator("#code-content .large-preview")).toContainText("large log line with a marker");
+  await expect(page.locator("#edit-mode")).toBeDisabled();
+  await expect(page.locator("#document-info")).toContainText("read-only");
+  await expect.poll(async () => {
+    const account = await (await page.request.get("/api/v1/blobs")).json();
+    return account.blobs.filter((blob: { complete: boolean }) => blob.complete).map((blob: { size: number }) => blob.size);
+  }, { timeout: 20_000 }).toEqual([big.length]);
+  await expect.poll(async () => JSON.stringify(await sealedSnapshot(page)), { timeout: 20_000 }).toContain("sealed.json");
+  expect(JSON.stringify(await sealedSnapshot(page))).not.toContain("server.log");
+  const downloading = page.waitForEvent("download");
+  await page.locator("#download").click();
+  expect((await stat((await (await downloading).path())!)).size).toBe(big.length);
+});
+
+test("signed out, a file over 4 MB asks for a free account", async ({ page }) => {
+  await page.goto("/viewer");
+  await page.locator("#files-input").setInputFiles({ name: "huge.md", mimeType: "text/markdown", buffer: Buffer.alloc(4 * 1024 * 1024 + 1, "a") });
+  await expect(page.locator("#notice")).toContainText("Sign in (free) for files up to 5 GB");
 });

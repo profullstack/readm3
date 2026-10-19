@@ -112,6 +112,15 @@ export class Billing {
     return result.changes > 0;
   }
 
+  /** Takes money once per reference (storage charges it by the hour); false when already taken. */
+  debit(userId: string, amountMicros: number, ref: string, detail: string): boolean {
+    const result = this.store.run(
+      "INSERT OR IGNORE INTO billing_ledger (id,userId,kind,amountMicros,ref,arm,detail,createdAt) VALUES (?,?,?,?,?,NULL,?,?)",
+      id(), userId, "charge", -amountMicros, ref, detail, now(),
+    );
+    return result.changes > 0;
+  }
+
   account(user: User) {
     const arm = this.arm(user);
     return {
