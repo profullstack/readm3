@@ -1,3 +1,5 @@
+import { login as oauthLogin, logout as oauthLogout } from "@profullstack/auth-system/cli";
+import { oauthStore } from "./account.ts";
 import { pasteLocation } from "./cloud-client.ts";
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
@@ -11,9 +13,11 @@ import {
   sharedLocation,
 } from "./cloud-client.ts";
 export const CLOUD_USAGE = `Shared Markdown
-  readm3 login --token-stdin              Save a personal API token securely
-  readm3 login --coinpay                  Sign in with CoinPay in the browser; saves a token
-  readm3 logout                           Remove the local token
+  readm3 login                            Sign in in the browser (email or CoinPay). Over SSH,
+                                          open the printed link anywhere and paste the code back.
+  readm3 login --no-browser               Always use the copy-and-paste code
+  readm3 login --token-stdin              Save a personal API token from /admin instead
+  readm3 logout                           Sign out here and end this CLI sign-in
   readm3 share FILE [--org ID] [--role view|edit] [--force]
   readm3 docs list [--org ID] [--search TEXT] [--limit N] [--offset N]
   readm3 docs get ID [--raw]
@@ -79,7 +83,7 @@ export async function cloudMain(argv: string[]) {
     const value = argv[i]!;
     if (value.startsWith("--")) {
       const name = value.slice(2);
-      if (["raw", "token-stdin", "json", "coinpay", "force"].includes(name)) flags[name] = "true";
+      if (["raw", "token-stdin", "json", "coinpay", "no-browser", "force"].includes(name)) flags[name] = "true";
       else {
         if (!argv[i + 1] || argv[i + 1]!.startsWith("--"))
           throw new Error(`${value} needs a value.`);
@@ -108,17 +112,29 @@ export async function cloudMain(argv: string[]) {
     return value;
   };
   if (command === "login") {
-    if (!flags["token-stdin"] && !flags.coinpay)
-      throw new Error(
-        "Use --coinpay to sign in with CoinPay, or --token-stdin and paste the API token, then end input (Ctrl+D). Tokens are created at /admin.",
-      );
-    const token = flags.coinpay
-      ? await (await import("./coinpay-login.ts")).coinpayLogin(cloudConfig("-"))
-      : readFileSync(0, "utf8").trim();
-    if (!token) throw new Error("No token supplied.");
-    const config = cloudConfig(token);
+    if (flags["token-stdin"]) {
+      const token = readFileSync(0, "utf8").trim();
+      if (!token) throw new Error("No token supplied.");
+      const config = cloudConfig(token);
+      const user = await cloudAction("account_me", {}, config);
+      saveCloudConfig(config);
+      output({ signedIn: true, user });
+      return;
+    }
+    // OAuth 2.1 (@profullstack/auth-system/cli): a loopback redirect when a browser can
+    // open on this machine, otherwise the server shows a code to paste back here.
+    // --coinpay is the same sign-in: the browser step offers CoinPay.
+    const server = cloudConfig("-");
+    const tokens = await oauthLogin({
+      issuer: server.url,
+      clientId: "readm3-cli",
+      manualRedirectUri: `${server.url}/oauth/cli`,
+      ...(flags["no-browser"] || process.env.READM3_NO_BROWSER ? { manual: true } : {}),
+    });
+    const config = cloudConfig(tokens.access_token);
     const user = await cloudAction("account_me", {}, config);
     saveCloudConfig(config);
+    await oauthStore().save(tokens);
     output({ signedIn: true, user });
     return;
   }
@@ -154,10 +170,13 @@ export async function cloudMain(argv: string[]) {
     return;
   }
   if (command === "logout") {
+    // A `readm3 login` sign-in is revoked on the server; a pasted /admin token is only forgotten.
+    const signedIn = await oauthStore().load();
+    if (signedIn) await oauthLogout({ store: oauthStore() });
     clearCloudConfig();
     output({
       signedOut: true,
-      note: "Revoke the token in /admin to invalidate other copies.",
+      ...(signedIn ? {} : { note: "Revoke the token in /admin to invalidate other copies." }),
     });
     return;
   }

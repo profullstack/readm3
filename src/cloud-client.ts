@@ -4,7 +4,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import { join } from "node:path";
-import { apiUrl, configDir, writeConfig } from "./account.ts";
+import { apiUrl, configDir, freshToken, writeConfig } from "./account.ts";
 export interface CloudConfig {
   url: string;
   api?: string;
@@ -41,10 +41,11 @@ export async function cloudRequest<T = unknown>(
   body?: unknown,
   config = cloudConfig(),
 ): Promise<T> {
+  const token = await freshToken(config.token);
   const response = await fetch(`${config.api || `${config.url}/api/v1`}/${path}`, {
     method,
     headers: {
-      ...(config.token ? { authorization: `Bearer ${config.token}` } : {}),
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...(body === undefined ? {} : { "content-type": "application/json" }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -62,7 +63,7 @@ export async function cloudAction<T = unknown>(
 ): Promise<T> {
   if (!config.token)
     throw new Error(
-      "Sign in at readm3.com/admin, create an API token, and run readm3 login --token-stdin (or set READM3_TOKEN).",
+      "Run readm3 login to sign in (or set READM3_TOKEN).",
     );
   return cloudRequest<T>("actions", "POST", { operation, args }, config);
 }

@@ -113,12 +113,13 @@ and history in a SQLite database on persistent storage.
 
 ## CLI
 
-Create a personal token under **/admin → API tokens**, then:
+Sign in from the terminal:
 
 ```sh
+readm3 login
+# Approve in the browser (email or CoinPay). Over SSH, open the printed link in any
+# browser and paste the code it shows. Or use a token from /admin → API tokens:
 readm3 login --token-stdin
-# Paste your token, then press Ctrl+D. Or sign in with CoinPay in the browser:
-readm3 login --coinpay
 readm3 orgs list
 readm3 share README.md --org ORGANIZATION_ID
 readm3 share proposal.md --org ORGANIZATION_ID --role edit

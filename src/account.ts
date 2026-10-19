@@ -1,6 +1,7 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { getAccessToken, type SavedTokens, type TokenStore } from "@profullstack/auth-system/cli";
 
 export interface AccountUser { id: string; username: string; displayName: string }
 export interface Credentials { api: string; token: string; user: AccountUser; expiresAt?: string }
@@ -17,6 +18,32 @@ export function writeConfig(name: string, value: unknown, root = configDir()) {
   writeFileSync(temp, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 });
   renameSync(temp, path);
   chmodSync(path, 0o600);
+}
+type SavedConfig = Record<string, unknown> & { token?: string; oauth?: Omit<SavedTokens, "access_token"> };
+const readSaved = (root: string): SavedConfig => {
+  const path = join(root, "cloud.json");
+  return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) as SavedConfig : {};
+};
+/** cloud.json as auth-system's token store: `token` is the access token, `oauth` holds the refresh state. */
+export function oauthStore(root = configDir()): TokenStore {
+  return {
+    async load() {
+      const saved = readSaved(root);
+      return saved.oauth && saved.token ? { ...saved.oauth, access_token: saved.token } as SavedTokens : null;
+    },
+    async save({ access_token, ...oauth }) { writeConfig("cloud.json", { ...readSaved(root), token: access_token, oauth }, root); },
+    async clear() { rmSync(join(root, "cloud.json"), { force: true }); },
+  };
+}
+// One refresh at a time: refresh tokens rotate, and presenting a used one revokes the sign-in.
+let refreshing: Promise<string | null> | undefined;
+/** `token`, or its refreshed replacement when it is the saved `readm3 login` token and about to expire. */
+export async function freshToken(token: string | undefined, root = configDir()): Promise<string | undefined> {
+  if (!token || process.env.READM3_TOKEN) return token;
+  const saved = readSaved(root);
+  if (!saved.oauth || saved.token !== token) return token;
+  refreshing ??= getAccessToken({ store: oauthStore(root) }).finally(() => { refreshing = undefined; });
+  return (await refreshing) ?? token;
 }
 export function storedCredentials(root = configDir()): Credentials | undefined {
   const path = join(root, "cloud.json");
@@ -44,7 +71,7 @@ export function accountClient(options: { api: string; token?: string; fetchImpl?
 }
 export async function credentials(root = configDir()): Promise<Credentials> {
   const saved = storedCredentials(root);
-  const token = process.env.READM3_TOKEN || saved?.token;
+  const token = process.env.READM3_TOKEN || await freshToken(saved?.token, root);
   if (!token) throw new Error("Sign in with `readm3 login` first, or set READM3_TOKEN and READM3_API_URL.");
   // Never send a saved token to a different server because an environment variable changed.
   const api = apiUrl(process.env.READM3_API_URL || (process.env.READM3_URL ? `${process.env.READM3_URL.replace(/\/+$/, "")}/api/v1` : saved?.api));

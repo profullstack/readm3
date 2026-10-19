@@ -26,6 +26,22 @@ export const IDENTITY_SCHEMA = `
       CREATE INDEX IF NOT EXISTS user_identities_user ON user_identities(userId);
       CREATE TABLE IF NOT EXISTS identity_events (id TEXT PRIMARY KEY, userId TEXT REFERENCES users(id) ON DELETE SET NULL, provider TEXT NOT NULL, providerUserId TEXT NOT NULL, event TEXT NOT NULL CHECK(event IN ('link','unlink','signin','api')), clientId TEXT, createdAt TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS identity_events_user ON identity_events(userId, createdAt);`;
+/**
+ * OAuth 2.1 codes and tokens for `readm3 login` (server/oauth.ts, @profullstack/auth-system/oauth2).
+ * Only SHA-256 hashes are stored. Shared with server/store.ts like IDENTITY_SCHEMA.
+ */
+export const OAUTH_SCHEMA = `
+      CREATE TABLE IF NOT EXISTS oauth_codes (codeHash TEXT PRIMARY KEY, userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, clientId TEXT NOT NULL, redirectUri TEXT NOT NULL, codeChallenge TEXT NOT NULL, scope TEXT NOT NULL, expiresAt TEXT NOT NULL, used INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS oauth_tokens (tokenHash TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('access','refresh')), userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, clientId TEXT NOT NULL, scope TEXT NOT NULL, familyId TEXT NOT NULL, expiresAt TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0, used INTEGER NOT NULL DEFAULT 0);
+      CREATE INDEX IF NOT EXISTS oauth_tokens_family ON oauth_tokens(familyId);`;
+/** Access tokens from `readm3 login` look like r3_at_<43 chars>; session and API tokens are exactly 43 characters. */
+export const OAUTH_ACCESS_PREFIX = "r3_at_";
+export const isOAuthAccessToken = (token: string) => token.length > 43 && token.startsWith(OAUTH_ACCESS_PREFIX);
+/** Joins the users row `u` for a live OAuth access token (bind: tokenHash, now). */
+export const OAUTH_ACCESS_JOIN = "oauth_tokens t JOIN users u ON u.id=t.userId";
+export const OAUTH_ACCESS_WHERE = "t.tokenHash=? AND t.kind='access' AND t.revoked=0 AND t.expiresAt>?";
+/** Where a sign-in may send the browser afterwards: same-origin pages only. */
+export const SAFE_NEXT = /^\/(?:admin|viewer|account|oauth\/authorize)(?:\?|$)/;
 /** A user may authenticate with a verified email, or with a linked identity. Email alone stays the only way to create one by mail. */
 export const VERIFIED_IDENTITY = "(EXISTS (SELECT 1 FROM account_emails ae WHERE ae.userId=u.id) OR EXISTS (SELECT 1 FROM user_identities ui WHERE ui.userId=u.id))";
 
@@ -49,6 +65,7 @@ export class Accounts {
       CREATE INDEX IF NOT EXISTS email_challenges_email ON email_challenges(email);
       CREATE TABLE IF NOT EXISTS account_rate_limits (key TEXT PRIMARY KEY, count INTEGER NOT NULL, expiresAt INTEGER NOT NULL);
       ${IDENTITY_SCHEMA}
+      ${OAUTH_SCHEMA}
     `);
   }
   private rate(key: string, limit: number, seconds: number) {
@@ -66,6 +83,9 @@ export class Accounts {
   }
   /** Only verified identities (an email, or a linked CoinPay account) are returned. Use this for every workspace API. */
   authenticate(token: string): Account | null {
+    if (isOAuthAccessToken(token))
+      return this.db.query(`SELECT ${publicColumns} FROM ${OAUTH_ACCESS_JOIN} LEFT JOIN account_emails e ON e.userId=u.id
+        WHERE ${OAUTH_ACCESS_WHERE} AND ${VERIFIED_IDENTITY}`).get(hash(token), stamp()) as Account | null;
     if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
     return this.db.query(`SELECT ${publicColumns} FROM sessions s JOIN users u ON u.id=s.userId
       LEFT JOIN account_emails e ON e.userId=u.id WHERE s.tokenHash=? AND s.expiresAt>? AND ${VERIFIED_IDENTITY}`).get(hash(token), stamp()) as Account | null;
@@ -90,7 +110,7 @@ export class Accounts {
     return row;
   }
   private async requestLink(input: unknown, ip: string, requestedNext?: unknown) {
-    const next = typeof requestedNext === "string" && /^\/(?:admin|viewer)(?:\?|$)/.test(requestedNext) ? requestedNext : null;
+    const next = typeof requestedNext === "string" && SAFE_NEXT.test(requestedNext) ? requestedNext : null;
     this.rate(`send-ip:${ip}`, 20, 3600);
     const email = typeof input === "string" ? input.trim().toLowerCase() : "";
     if (email.length > 254 || !/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i.test(email) || email.split("@")[0].length > 64) {
