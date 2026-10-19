@@ -13,6 +13,8 @@ function loadMarker(key: string): Marker | undefined {
 }
 function saveMarker(key: string, marker: Marker) { sessionStorage.setItem(`readm3:${key}`, JSON.stringify(marker)); }
 export interface SyncWorkspace {
+  /** The automatic sync switch for this device (site/autosync.ts). */
+  auto?: { enabled(): boolean; set(on: boolean): void };
   read(): SyncedWorkspace;
   settings(): ReaderSettings;
   apply(workspace: SyncedWorkspace | undefined, settings: ReaderSettings | undefined): Promise<void>;
@@ -38,7 +40,7 @@ async function database() {
     request.onblocked = () => reject(new Error("Browser storage is blocked."));
   });
 }
-async function stored<T>(key: string): Promise<T | undefined> {
+export async function stored<T>(key: string): Promise<T | undefined> {
   const db = await database();
   return new Promise((resolve, reject) => {
     const query = db.transaction("state").objectStore("state").get(key);
@@ -46,7 +48,7 @@ async function stored<T>(key: string): Promise<T | undefined> {
     query.onerror = () => reject(query.error);
   });
 }
-async function store(key: string, value: unknown) {
+export async function store(key: string, value: unknown) {
   const db = await database();
   return new Promise<void>((resolve, reject) => {
     const transaction = db.transaction("state", "readwrite");
@@ -78,8 +80,18 @@ export async function showSync(workspace: SyncWorkspace) {
     // must not advance this tab's precondition and allow a stale overwrite.
     let marker = loadMarker(key);
     status.textContent = `Signed in as ${user.username}. ${marker ? `Last synced revision ${marker.revision}.` : "This browser has not synced this account yet."}`;
+    if (workspace.auto) {
+      const autoLabel = document.createElement("label");
+      const auto = document.createElement("input");
+      auto.type = "checkbox";
+      auto.id = "auto-sync";
+      auto.checked = workspace.auto.enabled();
+      auto.onchange = () => workspace.auto!.set(auto.checked);
+      autoLabel.append(auto, " Sync automatically on this device (recommended). Every signed-in device keeps the same files; edits on two devices are merged per file, and a file changed on both keeps a conflict copy.");
+      box.body.append(autoLabel);
+    }
     const explanation = document.createElement("p");
-    explanation.textContent = "Save uploads the Markdown workspace open here and your theme and flavor. Load brings back the account copy. Local edits are kept unless you choose to replace them; a backup is saved before replacement.";
+    explanation.textContent = "Manual sync (only needed with automatic sync off): Save uploads the Markdown workspace open here and your theme and flavor. Load brings back the account copy. Local edits are kept unless you choose to replace them; a backup is saved before replacement.";
     box.body.append(explanation);
     const controls = document.createElement("div");
     controls.className = "cloud-actions";
