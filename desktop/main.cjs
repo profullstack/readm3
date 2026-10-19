@@ -9,11 +9,18 @@
  * Files and folders named on the command line (`readm3 edit .`, like `subl .`), or
  * handed over by the desktop's "Open with", are read here and given to the page
  * through preload.cjs, which can write back only to files this process gave it.
+ *
+ * readm3:// links ("Open in app" on readm3.com) open a readm3.com page in this window, and
+ * "Sign in with your browser" signs the window in through the system browser, where the
+ * person's password manager is: OAuth with a loopback redirect, then one exchange of the
+ * token for a session cookie in this window (POST /oauth/desktop-session).
  */
-const { app, BrowserWindow, Menu, ipcMain, net, protocol, shell } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, net, protocol, session, shell } = require("electron");
+const { createHash, randomBytes } = require("node:crypto");
+const { createServer } = require("node:http");
 const { readFile, readdir, writeFile, stat } = require("node:fs/promises");
 const { basename, join, resolve } = require("node:path");
-const { pathToFileURL } = require("node:url");
+const { fileURLToPath, pathToFileURL } = require("node:url");
 
 const ORIGIN = (process.env.READM3_URL || "https://readm3.com").replace(/\/$/, "");
 const LOCAL = "app://readm3";
@@ -69,7 +76,68 @@ async function load(paths, cwd = process.cwd()) {
 }
 
 /** Arguments that name files, not switches; argv[0] is the binary and, unpackaged, argv[1] is the app. */
-const fileArgs = (argv) => argv.slice(app.isPackaged ? 1 : 2).filter((arg) => !arg.startsWith("-"));
+// A desktop entry with %U hands local files over as file:// URLs.
+const fileArgs = (argv) => argv.slice(app.isPackaged ? 1 : 2).filter((arg) => !arg.startsWith("-") && !arg.startsWith("readm3:"))
+  .map((arg) => (arg.startsWith("file://") ? fileURLToPath(arg) : arg));
+const linkArg = (argv) => argv.find((arg) => arg.startsWith("readm3:"));
+
+/** The readm3.com page a readm3://open?url=… link names; anything off that origin is ignored. */
+function linkTarget(link) {
+  try {
+    const target = new URL(link).searchParams.get("url");
+    return target && target.startsWith(`${ORIGIN}/`) ? target : undefined;
+  } catch { return undefined; }
+}
+let launchLink;
+function openLink(link) {
+  const target = link && linkTarget(link);
+  if (!window) { launchLink = target; return; }
+  if (window.isMinimized()) window.restore();
+  window.focus();
+  if (target) void window.loadURL(target);
+}
+
+const base64url = (bytes) => Buffer.from(bytes).toString("base64url");
+/** Sign this window in through the system browser; resolves once the session cookie is set. */
+async function signInWithBrowser() {
+  const verifier = base64url(randomBytes(32));
+  const state = base64url(randomBytes(16));
+  const challenge = base64url(createHash("sha256").update(verifier).digest());
+  const server = createServer();
+  await new Promise((done) => server.listen(0, "127.0.0.1", done));
+  const redirect = `http://127.0.0.1:${server.address().port}/callback`;
+  try {
+    const code = await new Promise((done, fail) => {
+      const timer = setTimeout(() => fail(new Error("Sign-in timed out. Try again.")), 10 * 60 * 1000);
+      server.on("request", (request, response) => {
+        const url = new URL(request.url, redirect);
+        if (url.pathname !== "/callback") { response.writeHead(404).end(); return; }
+        const ok = url.searchParams.get("state") === state && url.searchParams.get("code");
+        response.writeHead(ok ? 200 : 400, { "content-type": "text/html; charset=utf-8" });
+        response.end(`<!doctype html><meta charset="utf-8"><title>readm3</title><body style="font:16px system-ui;display:grid;place-items:center;min-height:90vh"><p>${ok ? "You are signed in to the readm3 desktop app. You can close this tab." : "Sign-in was cancelled. Nothing was shared."}</p>`);
+        clearTimeout(timer);
+        if (ok) done(url.searchParams.get("code")); else fail(new Error("Sign-in was cancelled."));
+      });
+      const authorize = new URL(`${ORIGIN}/oauth/authorize`);
+      for (const [key, value] of Object.entries({ response_type: "code", client_id: "readm3-desktop", redirect_uri: redirect, code_challenge: challenge, code_challenge_method: "S256", state }))
+        authorize.searchParams.set(key, value);
+      void shell.openExternal(authorize.toString());
+    });
+    const tokens = await (await fetch(`${ORIGIN}/oauth/token`, {
+      method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "authorization_code", client_id: "readm3-desktop", code, redirect_uri: redirect, code_verifier: verifier }),
+    })).json();
+    if (!tokens.access_token) throw new Error(tokens.error_description || "Sign-in failed. Try again.");
+    const response = await fetch(`${ORIGIN}/oauth/desktop-session`, { method: "POST", headers: { authorization: `Bearer ${tokens.access_token}` } });
+    const cookie = await response.json();
+    if (!response.ok) throw new Error(cookie.error_description || "Sign-in failed. Try again.");
+    await session.defaultSession.cookies.set({
+      url: ORIGIN, name: cookie.name, value: cookie.value, path: "/", httpOnly: true,
+      secure: ORIGIN.startsWith("https:"), sameSite: "lax", expirationDate: Date.now() / 1000 + cookie.maxAge,
+    });
+    window?.focus();
+  } finally { server.close(); }
+}
 
 async function openPaths(paths, cwd) {
   const files = await load(paths, cwd);
@@ -95,7 +163,8 @@ function createWindow() {
   window.webContents.on("will-navigate", (event, url) => {
     if (!/^https:/.test(url) && !trusted(url)) { event.preventDefault(); }
   });
-  window.loadURL(`${ORIGIN}/viewer`).catch(() => window.loadURL(`${LOCAL}/viewer`));
+  window.loadURL(launchLink ?? `${ORIGIN}/viewer`).catch(() => window.loadURL(`${LOCAL}/viewer`));
+  launchLink = undefined;
 }
 
 /** Menu items run the page's own commands by name, the same ones the command palette lists. */
@@ -145,7 +214,10 @@ else {
   app.on("second-instance", (_event, argv, workingDirectory) => {
     if (window) { if (window.isMinimized()) window.restore(); window.focus(); }
     void openPaths(fileArgs(argv), workingDirectory);
+    if (linkArg(argv)) openLink(linkArg(argv));
   });
+  // macOS delivers readm3:// links as events; Windows and Linux put them in argv.
+  app.on("open-url", (event, link) => { event.preventDefault(); openLink(link); });
   // macOS hands files over as events (Finder, `open -a readm3`), before and after launch.
   app.on("open-file", (event, path) => { event.preventDefault(); void openPaths([path]); });
   app.whenReady().then(async () => {
@@ -156,7 +228,12 @@ else {
       if (!file.startsWith(SITE)) return new Response("Not found", { status: 404 });
       return net.fetch(pathToFileURL(file).toString());
     });
+    if (app.isPackaged) app.setAsDefaultProtocolClient("readm3");
     ipcMain.handle("launch-files", () => { const files = pending; pending = []; return files; });
+    ipcMain.handle("sign-in-with-browser", async (event) => {
+      if (!trusted(event.senderFrame?.url ?? "")) throw new Error("Not allowed.");
+      await signInWithBrowser();
+    });
     // The page re-reads a file to notice it changing on disk (a git checkout, a build).
     ipcMain.handle("read-file", async (event, path) => {
       if (!trusted(event.senderFrame?.url ?? "")) throw new Error("Not allowed.");
@@ -171,6 +248,7 @@ else {
     });
     Menu.setApplicationMenu(menu());
     pending.push(...await load(fileArgs(process.argv)));
+    if (linkArg(process.argv)) launchLink = linkTarget(linkArg(process.argv));
     createWindow();
   });
   app.on("window-all-closed", () => app.quit());

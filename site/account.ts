@@ -19,6 +19,9 @@ if (coinpayNotice) {
   returned.delete("coinpay_error"); returned.delete("coinpay");
   history.replaceState(null, "", location.pathname + (returned.size ? `?${returned}` : "") + location.hash);
 }
+/** Inside the desktop app (desktop/preload.cjs): sign in through the system browser, where the password manager is. */
+const desktop = (window as unknown as { readm3Desktop?: { signInWithBrowser?: () => Promise<void> } }).readm3Desktop;
+const inDesktop = typeof desktop?.signInWithBrowser === "function";
 let timer: ReturnType<typeof setInterval> | undefined;
 let busy = false;
 
@@ -36,7 +39,8 @@ async function coinpay(panel: string) {
     if (!response.ok) return;
   } catch { return; }
   const button = el<HTMLAnchorElement>("coinpay-sign-in");
-  button.hidden = !status.enabled || panel !== "sign-in";
+  // In the desktop app CoinPay's page would open in this window, with no password manager.
+  button.hidden = !status.enabled || panel !== "sign-in" || inDesktop;
   button.href = `/api/v1/coinpay/oauth/start${next ? `?next=${encodeURIComponent(next)}` : ""}`;
   const linked = status.identities[0];
   el("coinpay-link").hidden = panel !== "profile" || (!status.enabled && !linked);
@@ -125,6 +129,20 @@ el("coinpay-unlink").addEventListener("click", () => void action(el<HTMLButtonEl
   if (!response.ok) throw new Error(result.error || "Could not unlink CoinPay.");
   await coinpay("profile"); message("status", "CoinPay is unlinked. Sign in with your email from now on.");
 }));
+if (inDesktop) {
+  // An emailed link opens in the browser and would sign the browser in, not this app.
+  el("email-form").hidden = true;
+  el("desktop-sign-in").hidden = false;
+  const fine = document.querySelector<HTMLElement>("#sign-in .fine-print");
+  if (fine) fine.textContent = "Your browser opens readm3.com. Sign in there with your email or CoinPay, approve the desktop app, and come back.";
+  el("desktop-sign-in").addEventListener("click", () => void action(el<HTMLButtonElement>("desktop-sign-in"), async () => {
+    message("status", "Finish signing in in your browser, then come back here.");
+    // Electron prefixes errors from the main process; show only the reason.
+    try { await desktop!.signInWithBrowser!(); }
+    catch (error) { throw new Error(String((error as Error).message).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "")); }
+    location.assign(next ?? "/viewer");
+  }));
+}
 async function initialize() {
   try {
     if (token) {

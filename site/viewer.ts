@@ -929,6 +929,33 @@ function receiveLaunches() {
   };
 }
 
+/**
+ * "Open in app": a readm3:// link the desktop app registers, naming this page so the app
+ * opens the same document, share or paste. When nothing answers (the page keeps focus),
+ * the button turns into the download link.
+ */
+function setupOpenInDesktop() {
+  // Not inside the app itself, and not on a phone or tablet, which have no desktop app.
+  if (disk.desktop || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || matchMedia("(max-width: 720px)").matches) return;
+  const button = element<HTMLButtonElement>("open-desktop");
+  button.hidden = false;
+  let missing = false;
+  button.onclick = () => {
+    if (missing) { window.open("https://github.com/profullstack/readm3/releases/latest", "_blank", "noopener"); return; }
+    let left = false;
+    const away = () => { left = true; };
+    window.addEventListener("blur", away, { once: true });
+    location.href = `readm3://open?url=${encodeURIComponent(location.href)}`;
+    setTimeout(() => {
+      window.removeEventListener("blur", away);
+      if (left || document.hidden) return;
+      missing = true;
+      button.textContent = "Get the app";
+      notice("The readm3 desktop app did not open. Get the app to install it, or run: readm3 desktop install");
+    }, 1500);
+  };
+}
+
 async function setupPwa() {
   const connection = element("connection");
   const connectionStatus = () => { connection.textContent = navigator.onLine ? "Browser workspace" : "Offline · local workspace"; };
@@ -1024,6 +1051,7 @@ async function start() {
   const topup = params.get("topup");
   if (topup) { history.replaceState(null, "", "/viewer"); void awaitTopUp(topup, notice); }
   void setupPwa();
+  setupOpenInDesktop();
 }
 
 start().catch((error) => { saveStatus.textContent = error instanceof Error ? error.message : "Unable to open the workspace. Reload to try again."; });

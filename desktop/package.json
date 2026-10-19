@@ -1,7 +1,7 @@
 {
   "name": "readm3-desktop",
   "productName": "readm3",
-  "version": "0.14.1",
+  "version": "0.15.0",
   "private": true,
   "description": "readm3 as a desktop app: a plain, fast text editor for Markdown and code.",
   "author": "Profullstack, Inc. <hello@profullstack.com>",
@@ -28,6 +28,7 @@
       "to": "site",
       "filter": ["viewer/**", "viewer-assets/**", "viewer.webmanifest", "favicon.svg"]
     }],
+    "protocols": [{ "name": "readm3", "schemes": ["readm3"] }],
     "fileAssociations": [
       { "ext": ["md", "markdown"], "name": "Markdown", "role": "Editor" },
       { "ext": ["txt", "json", "yaml", "yml", "toml", "js", "ts", "py", "sh", "css", "html"], "name": "Text", "role": "Editor" }
