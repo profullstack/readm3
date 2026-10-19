@@ -7,6 +7,11 @@ import { readFile } from "node:fs/promises";
 import { parseArgs, USAGE, VERSION } from "../src/cli.ts";
 import { FLAVORS } from "../src/flavors.ts";
 
+test("help names update and uninstall", () => {
+  assert.match(USAGE, /readm3 update \[--check\]/);
+  assert.match(USAGE, /readm3 uninstall \[--yes\]/);
+});
+
 test("no arguments browse the working directory", () => {
   const args = parseArgs([]);
   assert.equal(args.root, process.cwd());
