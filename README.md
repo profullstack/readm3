@@ -427,11 +427,18 @@ Use it the way you use `subl`: the CLI opens files and folders in the app and gi
 shell back.
 
 ```sh
-readm3 edit .                       # this folder in the sidebar, like `subl .`
-readm3 edit notes.md src/app.ts     # as tabs; Ctrl+S saves back to disk
+readm3                              # the desktop editor, as you left it
+readm3 .                            # this folder in the sidebar, like `subl .`
+readm3 notes.md src/app.ts          # as tabs; Ctrl+S saves back to disk
+readm3 tui                          # the terminal reader instead
+readm3 desktop install              # install or update the app
 ```
 
-`readm3 subl` and `readm3 open` are the same command. It finds the app on `PATH`
+Bare `readm3` is the desktop editor when the app is installed and there is a display;
+over SSH to a headless box, without the app, or with any terminal-reader option
+(`--theme`, `-R`, `--print`…) it is the terminal reader, as before. `readm3 desktop`,
+`readm3 --desktop`, `readm3 edit`, `readm3 subl` and `readm3 open` always mean the
+desktop editor. It finds the app on `PATH`
 (`readm3-desktop`, which `install.sh --desktop` adds), then where each platform installs
 it; `READM3_DESKTOP` names the binary yourself. A folder opens with the same rules as
 Open folder (no dot-directories, `node_modules`, build output or binaries; 1,000 files).
