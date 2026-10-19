@@ -647,11 +647,34 @@ bun run test:site    # local/offline reader plus browser sharing and admin workf
 
 ## Workspace and settings sync
 
-Sign in with verified email at `/account`, then create a personal API token in `/admin`. The PWA's **Sync** button saves or loads
-your local Markdown workspace and reader preferences on that same account. Shared
-documents continue to use their own document permissions and version history.
-Local files are uploaded only when you choose **Save to account**, `readm3 save`,
-or a sharing action. Sync requires a connection; the local reader still works offline.
+Every signed-in device (browser tab, installed app, desktop app) syncs the workspace
+and reader settings **automatically and end to end encrypted**. Turn it off for one
+device with **Sync automatically on this device** in the Sync dialog.
+
+- **Automatic**: on load, a few seconds after each edit, on focus, and every 30 s
+  (that check asks only for the latest revision number). Edits merge per file
+  (`src/sync-merge.ts`): a file changed on one device takes that change; changed on two,
+  the account copy keeps the name and the other is kept beside it as
+  `name (conflict <device> <date>).md`. A device that has never synced loads first and
+  never uploads its starter files over an account.
+- **End-to-end encrypted** (`src/sync-crypto.ts`): the workspace and settings are
+  gzip-compressed, then sealed with AES-256-GCM under a key derived (PBKDF2-SHA256,
+  600,000 iterations, per-account salt) from your **sync passphrase**. readm3.com stores
+  one `sealed.json` per revision and cannot read file names, text or settings. You choose
+  the passphrase on the first device and type it once on each other one (the derived key
+  stays in that device's IndexedDB, non-extractable); a password manager can store it.
+  There is no reset: without it the synced copy cannot be opened, though every device
+  keeps its local files. **Change sync passphrase** re-seals the account copy; other
+  devices then ask for the new one. The first encrypted save deletes every readable
+  revision the server held, and the server refuses readable saves after that.
+
+Shared documents continue to use their own document permissions and version history.
+Sync requires a connection; the local reader still works offline. The CLI's
+`readm3 save`/`load`/`sync` still move readable snapshots and are refused by an account
+that syncs encrypted.
+
+Sign in with verified email at `/account`, then create a personal API token in `/admin`
+for the CLI.
 
 The CLI, document commands, and MCP use one credential file, `cloud.json`, under
 `$XDG_CONFIG_HOME/readm3` (normally `~/.config/readm3`). It is written with mode

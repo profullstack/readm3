@@ -1,7 +1,7 @@
 import { action, request, type CloudDocument } from "./cloud.ts";
 import { pasteDialog, publish, sharing, history as versionHistory } from "./sharing.ts";
 import { showSync } from "./sync.ts";
-import { autoSyncEnabled, schedule as scheduleSync, setAutoSync, startAutoSync } from "./autosync.ts";
+import { askPassphrase, autoSyncEnabled, forgetPassphrase, schedule as scheduleSync, setAutoSync, startAutoSync, syncNow } from "./autosync.ts";
 import { renderMarkdown } from "../src/markdown.ts";
 import type { Flavor } from "../src/flavors.ts";
 import type { ReaderSettings } from "../src/sync-schema.ts";
@@ -715,7 +715,7 @@ function loadPreferences() {
 
 function bindEvents() {
   element("sync-workspace").onclick = () => void showSync({
-    auto: { enabled: autoSyncEnabled, set: setAutoSync },
+    auto: { enabled: autoSyncEnabled, set: setAutoSync, now: syncNow, changePassphrase: (userId) => void askPassphrase("create", userId), forgetPassphrase },
     read: () => workspace,
     settings: () => ({ theme: theme.value, flavor: flavor.value as Flavor }),
     apply: (incoming, settings) => applySynced(incoming as Workspace | undefined, settings),
