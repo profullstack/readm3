@@ -2,7 +2,7 @@ import { handleGet, handlePut, handleRevisions, snapshotProblem } from "@profull
 import { Store, HttpError } from "./store.ts";
 import { Accounts } from "./accounts.ts";
 import { snapshotStore } from "./sync.ts";
-import { SYNC_LIMITS, validateSyncFiles } from "../src/sync-schema.ts";
+import { isSealed, SYNC_LIMITS, validateSyncFiles } from "../src/sync-schema.ts";
 
 export function createSyncApi(store: Store, accounts: Accounts) {
   const snapshots = snapshotStore(store);
@@ -52,8 +52,17 @@ export function createSyncApi(store: Store, accounts: Accounts) {
       if (problem) throw new HttpError(400, problem);
       try { validateSyncFiles((body.snapshot as { files: Record<string, { content: string }> }).files); }
       catch (error) { throw new HttpError(400, (error as Error).message); }
+      const files = (body.snapshot as { files: Record<string, { content: string }> }).files;
+      const sealed = isSealed(files);
+      // Once an account syncs end to end encrypted, a readable snapshot (an older client) cannot replace it.
+      const current = await snapshots.latest(user.id);
+      if (!sealed && current && isSealed((current.body as { files?: Record<string, unknown> }).files))
+        throw new HttpError(409, "This account's sync is end-to-end encrypted. Update readm3 to sync.");
       const strictStore = { ...snapshots, insert: (userId: string, entry: Parameters<typeof snapshots.insert>[1]) => snapshots.insert(userId, entry, body.ifRevision as number | null) };
       const result = await handlePut(strictStore, user.id, body, SYNC_LIMITS);
+      // The first encrypted save removes every readable revision the server still holds.
+      if (sealed && result.status === 200)
+        store.run(`DELETE FROM snapshots WHERE userId=? AND json_extract(body, '$.files."sealed.json"') IS NULL`, user.id);
       return reply({ ...result.body, userId: user.id }, result.status);
     } catch (error) {
       if (error instanceof HttpError) return reply({ ok: false, error: error.message }, error.status);

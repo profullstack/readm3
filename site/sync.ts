@@ -14,7 +14,7 @@ function loadMarker(key: string): Marker | undefined {
 function saveMarker(key: string, marker: Marker) { sessionStorage.setItem(`readm3:${key}`, JSON.stringify(marker)); }
 export interface SyncWorkspace {
   /** The automatic sync switch for this device (site/autosync.ts). */
-  auto?: { enabled(): boolean; set(on: boolean): void };
+  auto?: { enabled(): boolean; set(on: boolean): void; now(): Promise<void>; changePassphrase(userId: string): void; forgetPassphrase(userId: string): Promise<void> };
   read(): SyncedWorkspace;
   settings(): ReaderSettings;
   apply(workspace: SyncedWorkspace | undefined, settings: ReaderSettings | undefined): Promise<void>;
@@ -88,9 +88,24 @@ export async function showSync(workspace: SyncWorkspace) {
       auto.checked = workspace.auto.enabled();
       auto.onchange = () => workspace.auto!.set(auto.checked);
       autoLabel.append(auto, " Sync automatically on this device (recommended). Every signed-in device keeps the same files; edits on two devices are merged per file, and a file changed on both keeps a conflict copy.");
-      box.body.append(autoLabel);
+      const e2e = document.createElement("p");
+      e2e.textContent = "End-to-end encrypted: files are compressed and encrypted on this device with your sync passphrase before upload. readm3.com cannot read them.";
+      box.body.append(autoLabel, e2e);
+      const actions = document.createElement("div");
+      actions.className = "cloud-actions";
+      const act = (label: string, run: () => void | Promise<void>) => {
+        const b = document.createElement("button");
+        b.textContent = label;
+        b.onclick = async () => { b.disabled = true; try { await run(); } catch (error) { showError(status, error); } finally { b.disabled = false; } };
+        actions.append(b);
+      };
+      act("Sync now", () => workspace.auto!.now());
+      act("Change sync passphrase", () => { box.close(); workspace.auto!.changePassphrase(user.id); });
+      act("Forget passphrase on this device", async () => { await workspace.auto!.forgetPassphrase(user.id); status.textContent = "This device will ask for the sync passphrase on the next sync."; });
+      box.body.append(actions);
     }
     const explanation = document.createElement("p");
+    explanation.hidden = !!workspace.auto;
     explanation.textContent = "Manual sync (only needed with automatic sync off): Save uploads the Markdown workspace open here and your theme and flavor. Load brings back the account copy. Local edits are kept unless you choose to replace them; a backup is saved before replacement.";
     box.body.append(explanation);
     const controls = document.createElement("div");
@@ -100,6 +115,7 @@ export async function showSync(workspace: SyncWorkspace) {
     const force = document.createElement("input");
     force.type = "checkbox";
     forceLabel.append(force, " Replace conflicting changes (keep a local backup)");
+    forceLabel.hidden = !!workspace.auto;
     box.body.append(forceLabel);
     const buttons: HTMLButtonElement[] = [];
     const button = (label: string, action: () => Promise<void>) => {
@@ -117,6 +133,8 @@ export async function showSync(workspace: SyncWorkspace) {
       };
       buttons.push(b); controls.append(b);
     };
+    // Manual Save/Load move readable copies; with end-to-end encrypted automatic sync they are not offered.
+    if (!workspace.auto) {
     button("Save to account", async () => {
       const files = currentFiles(workspace);
       validateSyncFiles(files);
@@ -146,6 +164,7 @@ export async function showSync(workspace: SyncWorkspace) {
       saveMarker(key, marker);
       status.textContent = `Loaded revision ${latest.revision}.${changed.length ? " Your previous workspace is in Local backups." : ""}`;
     });
+    }
     button("Saved revisions", async () => {
       const result = await request<{ revisions: { revision: number; savedAt: string; host: string }[] }>(`settings/revisions?accountId=${encodeURIComponent(user.id)}`);
       status.textContent = result.revisions.length ? result.revisions.map((r) => `Revision ${r.revision} · ${r.host} · ${new Date(r.savedAt).toLocaleString()}`).join("\n") : "Nothing saved to this account yet.";

@@ -1,5 +1,5 @@
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
-import { editorInput, editorText } from "./editor.ts";
+import { editorInput } from "./editor.ts";
 
 const origin = process.env.READM3_TEST_URL || `http://127.0.0.1:${process.env.READM3_TEST_PORT || 4318}`;
 const mailOrigin = `http://127.0.0.1:${Number(new URL(origin).port) + 1}`;
@@ -14,13 +14,35 @@ async function register(context: BrowserContext, name: string) {
   return (await verified.json()).user;
 }
 const username = () => `sync-${crypto.randomUUID().slice(0, 12)}`;
+const PASSPHRASE = "correct horse battery staple";
 async function openSync(page: Page) {
   await page.locator("#sync-workspace").click();
   await expect(page.getByRole("dialog", { name: "Sync your workspace" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Save to account", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sync now", exact: true })).toBeVisible();
+}
+/** The first signed-in device is asked to choose the sync passphrase. */
+async function setPassphrase(page: Page) {
+  const dialog = page.getByRole("dialog", { name: "Encrypt your synced files" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("Sync passphrase").fill(PASSPHRASE);
+  await dialog.getByLabel("Type it again").fill(PASSPHRASE);
+  await dialog.getByRole("button", { name: "Encrypt and sync" }).click();
+  await expect(dialog).toBeHidden();
+}
+async function unlock(page: Page, passphrase = PASSPHRASE) {
+  const dialog = page.getByRole("dialog", { name: "Unlock your synced files" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("Sync passphrase").fill(passphrase);
+  await dialog.getByRole("button", { name: "Unlock", exact: true }).click();
+}
+async function sealedSnapshot(page: Page) {
+  const response = await page.request.get("/api/v1/settings");
+  if (!response.ok()) return null;
+  const body = await response.json();
+  return Object.keys(body.snapshot.files).join() === "sealed.json" ? body : null;
 }
 
-test("a reader can register through the account UI and return to sync in the PWA", async ({ page }) => {
+test("a reader can register through the account UI and sync end to end encrypted", async ({ page }) => {
   await page.goto("/viewer");
   await page.locator("#sync-workspace").click();
   await page.getByRole("link", { name: "Sign in or create an account" }).click();
@@ -34,31 +56,29 @@ test("a reader can register through the account UI and return to sync in the PWA
   await page.goto(mail[0].url);
   await page.getByRole("button", { name: "Verify email & sign in" }).click();
   await expect(page).toHaveURL(/\/viewer$/);
+  await setPassphrase(page);
+  await page.locator("#files-input").setInputFiles({ name: "Private.md", mimeType: "text/markdown", buffer: Buffer.from("# my secret notes\n") });
+  await expect.poll(() => sealedSnapshot(page), { timeout: 20_000 }).not.toBeNull();
+  const raw = JSON.stringify(await sealedSnapshot(page));
+  expect(raw).not.toContain("Private");
+  expect(raw).not.toContain("secret");
   await openSync(page);
-  await expect(page.getByRole("dialog")).toContainText("Signed in as");
-  await page.getByRole("button", { name: "Save to account", exact: true }).click();
-  await expect(page.getByRole("dialog")).toContainText("Saved revision 1");
+  await expect(page.getByRole("dialog", { name: "Sync your workspace" })).toContainText("Signed in as");
+  await expect(page.getByRole("dialog", { name: "Sync your workspace" })).toContainText("End-to-end encrypted");
   const manifest = await (await page.request.get("/viewer.webmanifest")).json();
   expect(new URL("/admin", page.url()).pathname.startsWith(manifest.scope)).toBe(true);
   expect(await page.locator('link[href*="__"]').count()).toBe(0);
 });
 
-test("PWA and API exchange snapshots, preserve local conflicts, and keep recoverable backups", async ({ page, browser }) => {
-  const name = username();
-  await register(page.context(), name);
+test("two devices sync files and settings automatically through the encrypted copy", async ({ page, browser }) => {
+  await register(page.context(), username());
   await page.goto("/viewer");
-  await expect(page.locator("#save-status")).toHaveText("Saved on this device");
+  await setPassphrase(page);
   await page.locator("#theme").selectOption("nord");
   await page.locator("#flavor").selectOption("reddit");
   await page.locator("#files-input").setInputFiles({ name: "Synced.md", mimeType: "text/markdown", buffer: Buffer.from("# Across devices\n\nHello 😺\n") });
-  await openSync(page);
-  await page.getByRole("button", { name: "Save to account", exact: true }).click();
-  await expect(page.getByRole("dialog")).toContainText("Saved revision 1");
-  const response = await page.request.get("/api/v1/settings");
-  const first = await response.json();
-  expect(Object.keys(first.snapshot.files).sort()).toEqual(["settings.json", "workspace.json"]);
-  expect(JSON.parse(first.snapshot.files["workspace.json"].content).documents.some((doc: { source: string }) => doc.source.includes("Hello 😺"))).toBe(true);
-  expect(JSON.parse(first.snapshot.files["settings.json"].content)).toEqual({ theme: "nord", flavor: "reddit" });
+  await expect.poll(() => sealedSnapshot(page), { timeout: 20_000 }).not.toBeNull();
+  await expect(page.locator("#sync-note")).toContainText("Synced", { timeout: 20_000 });
 
   const second = await browser.newContext();
   try {
@@ -66,32 +86,23 @@ test("PWA and API exchange snapshots, preserve local conflicts, and keep recover
     await second.addCookies(await page.context().cookies());
     const other = await second.newPage();
     await other.goto(`${origin}/viewer`);
-    await expect(other.locator("#save-status")).toHaveText("Saved on this device");
-    await openSync(other);
-    await other.getByRole("button", { name: "Load from account", exact: true }).click();
-    await expect(other.getByRole("dialog")).toContainText("This browser has local changes");
-    await other.getByRole("checkbox", { name: /Replace conflicting changes/ }).check();
-    await other.getByRole("button", { name: "Load from account", exact: true }).click();
-    await expect(other.getByRole("dialog")).toContainText("Loaded revision 1");
-    await expect(other.locator("#document-name")).toHaveText("Synced.md");
+    await unlock(other, "not the passphrase");
+    await expect(other.getByRole("dialog", { name: "Unlock your synced files" })).toContainText("does not open");
+    await unlock(other);
+    await expect(other.locator('.file-row[data-path="Synced.md"]')).toBeVisible({ timeout: 20_000 });
     await expect(other.locator("#theme")).toHaveValue("nord");
     await expect(other.locator("#flavor")).toHaveValue("reddit");
-    await other.getByRole("button", { name: "Local backups", exact: true }).click();
-    await expect(other.getByRole("button", { name: /Download backup/ })).toBeVisible();
-    await other.getByRole("dialog", { name: "Local sync backups" }).getByRole("button", { name: "Close dialog" }).click();
-    await other.getByRole("checkbox", { name: /Replace conflicting changes/ }).uncheck();
-    await other.getByRole("dialog").getByRole("button", { name: "Close dialog" }).click();
+    await other.locator('.file-row[data-path="Synced.md"]').click();
     await other.locator("#edit-mode").click();
     await editorInput(other).fill("# Edited on second device\n");
-    await openSync(other);
-    await other.getByRole("button", { name: "Save to account", exact: true }).click();
-    await expect(other.getByRole("dialog")).toContainText("Saved revision 2");
+    await expect(other.locator("#sync-note")).toContainText("Synced", { timeout: 20_000 });
 
-    await page.getByRole("button", { name: "Save to account", exact: true }).click();
-    await expect(page.getByRole("dialog")).toContainText("another machine saved first");
-    await page.getByRole("button", { name: "Load from account", exact: true }).click();
-    await expect(page.getByRole("dialog")).toContainText("Loaded revision 2");
-    await expect(page.locator("#document-content")).toContainText("Edited on second device");
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await page.locator('.file-row[data-path="Synced.md"]').click();
+    await expect(page.locator("#document-content")).toContainText("Edited on second device", { timeout: 20_000 });
+    await openSync(page);
+    await page.getByRole("button", { name: "Local backups", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Local sync backups" })).toBeVisible();
   } finally { await second.close(); }
 });
 
@@ -101,9 +112,10 @@ test("sync requires sign-in and account snapshots are not served from the offlin
   await expect(page.getByRole("link", { name: "Sign in or create an account" })).toBeVisible();
   await page.getByRole("button", { name: "Close dialog" }).click();
   await register(context, username());
-  await openSync(page);
-  await page.getByRole("button", { name: "Save to account", exact: true }).click();
-  await expect(page.getByRole("dialog")).toContainText("Saved revision 1");
+  await page.reload();
+  await setPassphrase(page);
+  await page.locator("#files-input").setInputFiles({ name: "Offline.md", mimeType: "text/markdown", buffer: Buffer.from("# offline\n") });
+  await expect.poll(() => sealedSnapshot(page), { timeout: 20_000 }).not.toBeNull();
   await page.evaluate(async () => { await navigator.serviceWorker.ready; });
   await context.setOffline(true);
   const cached = await page.evaluate(async () => {

@@ -1,5 +1,6 @@
 /** Browser-safe account data contract. Only these two files may be synced. */
 import { isFlavor, type Flavor } from "./flavors.ts";
+import { envelopeProblem, SEALED_FILE } from "./sync-crypto.ts";
 
 /**
  * A workspace file. `source` is the text, or base64 bytes when the path names a PDF or
@@ -50,7 +51,20 @@ export function validateWorkspace(value: unknown): SyncedWorkspace {
   return ws;
 }
 
+/** An end-to-end encrypted snapshot (src/sync-crypto.ts): one sealed.json, nothing readable beside it. */
+export const isSealed = (files: Record<string, unknown> | undefined): boolean => !!files && SEALED_FILE in files;
+
 export function validateSyncFiles(files: Record<string, { content: string }>): void {
+  if (isSealed(files)) {
+    if (Object.keys(files).length !== 1) throw new Error("An encrypted snapshot holds sealed.json and nothing else.");
+    const file = files[SEALED_FILE];
+    if (!file || typeof file.content !== "string") throw new Error("sealed.json: content must be text.");
+    let envelope: unknown;
+    try { envelope = JSON.parse(file.content); } catch { throw new Error("sealed.json is not JSON."); }
+    const problem = envelopeProblem(envelope);
+    if (problem) throw new Error(problem);
+    return;
+  }
   for (const [path, file] of Object.entries(files)) {
     if (!(SYNC_FILES as readonly string[]).includes(path)) throw new Error(`File is not syncable: ${path}`);
     if (!file || typeof file.content !== "string") throw new Error(`${path}: content must be text.`);

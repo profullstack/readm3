@@ -202,3 +202,31 @@ test("MCP uses the same account and sync API over its real stdio transport", asy
   f.store.run("DELETE FROM sessions WHERE tokenHash=?", checksum(f.alice.token));
   expect((await client.callTool({ name: "settings_get", arguments: {} })).isError).toBe(true);
 }, 20_000);
+
+test("end-to-end encrypted sync: the server keeps only sealed revisions and refuses readable ones after", async () => {
+  const { call, store, alice } = await fixture();
+  const { deriveKey, newKdf, seal } = await import("../../src/sync-crypto.ts");
+  expect((await call("settings", alice.token, "PUT", { snapshot: snapshot("nord"), ifRevision: 0 })).status).toBe(200);
+  expect((await call("settings", alice.token, "PUT", { snapshot: snapshot("dracula"), ifRevision: 1 })).status).toBe(200);
+
+  const key = await deriveKey("a long sync passphrase", { ...newKdf(), iterations: 100_000 });
+  const envelope = await seal({ "settings.json": { content: "{}" } }, key);
+  const sealed = { version: 1 as const, host: "test", app: "test", files: { "sealed.json": { content: JSON.stringify(envelope) } } };
+  const saved = await call("settings", alice.token, "PUT", { snapshot: sealed, ifRevision: 2 });
+  expect(saved.status).toBe(200);
+  // Every readable revision is gone from the database; only the sealed one remains.
+  const rows = store.db.query("SELECT body FROM snapshots WHERE userId=?").all(alice.user.id) as { body: string }[];
+  expect(rows.length).toBe(1);
+  expect(rows[0]!.body).not.toContain("dracula");
+  expect(rows[0]!.body).toContain("sealed.json");
+
+  // An older client cannot put a readable copy back.
+  const readable = await call("settings", alice.token, "PUT", { snapshot: snapshot("nord"), ifRevision: null });
+  expect(readable.status).toBe(409);
+  expect((await readable.json()).error).toContain("end-to-end encrypted");
+  // Something that only looks sealed is refused.
+  const fake = { ...sealed, files: { "sealed.json": { content: JSON.stringify({ v: 1, alg: "none" }) } } };
+  expect((await call("settings", alice.token, "PUT", { snapshot: fake, ifRevision: null })).status).toBe(400);
+  const both = { ...sealed, files: { ...sealed.files, "settings.json": { content: "{}" } } };
+  expect((await call("settings", alice.token, "PUT", { snapshot: both, ifRevision: null })).status).toBe(400);
+});
