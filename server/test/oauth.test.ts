@@ -185,3 +185,22 @@ test("the desktop app signs in through the browser and trades its token once for
   expect((await fetch(`${url}/oauth/desktop-session`, { method: "POST", headers: { authorization: `Bearer ${cli}` } })).status).toBe(401);
   expect((await fetch(`${url}/oauth/desktop-session`, { method: "POST" })).status).toBe(401);
 });
+
+test("Approve works the way a browser sends it: Origin null with Sec-Fetch-Site same-origin", async () => {
+  const { url, cookie } = await site();
+  const params = { response_type: "code", client_id: "readm3-desktop", redirect_uri: "http://127.0.0.1:9/callback", code_challenge: "x".repeat(43), code_challenge_method: "S256", state: "s" };
+  const consent = await fetch(`${url}/oauth/authorize?${new URLSearchParams(params)}`, { headers: { cookie } });
+  // The page must let the browser send its real Origin with the form.
+  expect(consent.headers.get("referrer-policy")).toBe("same-origin");
+  const post = (headers: Record<string, string>) => fetch(`${url}/oauth/authorize`, {
+    method: "POST", redirect: "manual",
+    headers: { cookie, "content-type": "application/x-www-form-urlencoded", ...headers },
+    body: form({ ...params, decision: "approve" }),
+  });
+  const approved = await post({ origin: "null", "sec-fetch-site": "same-origin" });
+  expect(approved.status).toBe(303);
+  expect(approved.headers.get("location")).toStartWith("http://127.0.0.1:9/callback?code=");
+  // Another site still cannot approve, with or without an Origin.
+  expect((await post({ origin: "null", "sec-fetch-site": "cross-site" })).status).toBe(403);
+  expect((await post({ origin: "https://evil.example", "sec-fetch-site": "cross-site" })).status).toBe(403);
+});

@@ -80,7 +80,9 @@ form{display:flex;gap:.75rem;margin-top:1.5rem}button{font:inherit;padding:.6rem
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
         "x-content-type-options": "nosniff",
-        "referrer-policy": "no-referrer",
+        // Not no-referrer: under that policy a browser sends `Origin: null` with the Approve
+        // form, and the same-origin check below refused every real approval.
+        "referrer-policy": "same-origin",
         "x-frame-options": "DENY",
         // No form-action: Approve redirects to the CLI's loopback or /oauth/cli, and browsers apply form-action to that redirect.
         "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
@@ -199,7 +201,9 @@ export function createOAuth(accounts: Accounts) {
 
       if (request.method === "POST") {
         // Same-origin form posts only; the session cookie is SameSite=Lax as well.
-        if (request.headers.get("origin") !== origin) return page("Request refused", "<p>Approve from the readm3 page itself.</p>", 403);
+        const sameOrigin = request.headers.get("origin") === origin
+          || (request.headers.get("sec-fetch-site") === "same-origin" && [null, "null"].includes(request.headers.get("origin")));
+        if (!sameOrigin) return page("Request refused", "<p>Approve from the readm3 page itself.</p>", 403);
         if (!user) return Response.redirect(`${origin}/account`, 303);
         const target =
           fields.decision === "approve"
