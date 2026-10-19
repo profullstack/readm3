@@ -1,8 +1,9 @@
 /**
  * Argument parsing and entry point. `readm3 --help` is the contract.
  */
-import { statSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, realpathSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { detectInstall, lifecycle, lifecycleUsage } from "@profullstack/cli";
 import { pathToFileURL } from "node:url";
 import { themeList } from "@profullstack/hqtui";
 import { FLAVORS, isFlavor, type Flavor } from "./flavors.ts";
@@ -11,7 +12,7 @@ import { run, type ViewerOptions } from "./viewer.ts";
 import { isCloudCommand, cloudMain, CLOUD_USAGE } from "./cloud-cli.ts";
 import { isDesktopCommand, desktopMain, installedDesktop, prefersDesktop, DESKTOP_USAGE } from "./desktop-cli.ts";
 
-export const VERSION = "0.13.1";
+export const VERSION = "0.13.2";
 
 /** The help text, exported so a test can hold it to the flags it documents. */
 export const USAGE = `readm3 — a plain text editor for Markdown and code
@@ -61,6 +62,7 @@ Editing
   ctrl+g         keys for editing      tab      indent two spaces
 
 ${DESKTOP_USAGE}
+${lifecycleUsage("readm3")}
 ${CLOUD_USAGE}`;
 
 export interface ParsedArgs extends ViewerOptions {
@@ -186,7 +188,17 @@ export function parseArgs(argv: string[]): ParsedArgs {
   return parsed;
 }
 
+/** An installer copy that also installed the desktop app keeps it on update. */
+function keepDesktop(): string[] {
+  let script: string | undefined;
+  try { script = process.argv[1] && realpathSync(process.argv[1]); } catch { return []; }
+  const { share } = detectInstall({ name: "readm3", script });
+  return share && (existsSync(join(share, "desktop")) || existsSync(join(share, "readm3.AppImage"))) ? ["--desktop"] : [];
+}
+
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
+  // readm3 update / uninstall (remove): done the way this copy was installed.
+  if (await lifecycle(argv, { name: "readm3", package: "@profullstack/readm3", version: VERSION, installer: "https://readm3.com/install.sh", installerArgs: keepDesktop })) return;
   const { accountCommand } = await import("./sync-cli.ts");
   if (await accountCommand(argv)) return;
   if (isCloudCommand(argv[0])) { await cloudMain(argv); return; }

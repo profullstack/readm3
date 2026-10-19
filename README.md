@@ -38,7 +38,9 @@ on the machine it fetches a private official Node first:
 curl -fsSL https://readm3.com/install.sh | sh
 ```
 
-Run it again to update; remove with `sh ~/.local/share/readm3/uninstall.sh`.
+Update with `readm3 update` and remove with `readm3 uninstall`; both work the way readm3
+was installed (this installer, npm, bun, pnpm or yarn), through
+[@profullstack/cli](https://github.com/profullstack/cli).
 Add `--desktop` to install the desktop editor as well (Linux x64; macOS and Windows
 download it, see
 [Desktop app](#desktop-app)):
