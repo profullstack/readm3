@@ -9,18 +9,21 @@ import { FLAVORS, isFlavor, type Flavor } from "./flavors.ts";
 import { printDocument, COLOR_MODES, type ColorMode } from "./print.ts";
 import { run, type ViewerOptions } from "./viewer.ts";
 import { isCloudCommand, cloudMain, CLOUD_USAGE } from "./cloud-cli.ts";
-import { isDesktopCommand, desktopMain, DESKTOP_USAGE } from "./desktop-cli.ts";
+import { isDesktopCommand, desktopMain, installedDesktop, prefersDesktop, DESKTOP_USAGE } from "./desktop-cli.ts";
 
-export const VERSION = "0.13.0";
+export const VERSION = "0.13.1";
 
 /** The help text, exported so a test can hold it to the flags it documents. */
-export const USAGE = `readm3 — a terminal markdown reader and editor
+export const USAGE = `readm3 — a plain text editor for Markdown and code
 
 Usage
-  readm3 [path] [options]
+  readm3 [path...]            The desktop editor, when it is installed and there is
+                              a display; otherwise the terminal reader below
+  readm3 tui [path] [options] The terminal reader and editor
+  readm3 desktop [path...]    Always the desktop editor
 
   path            A directory to browse, or a file to open. Defaults to the
-                  current directory.
+                  current directory. Any option below means the terminal reader.
 
 Options
   -p, --print          Render to stdout and exit, instead of opening the reader.
@@ -187,7 +190,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   const { accountCommand } = await import("./sync-cli.ts");
   if (await accountCommand(argv)) return;
   if (isCloudCommand(argv[0])) { await cloudMain(argv); return; }
-  if (isDesktopCommand(argv[0])) { await desktopMain(argv); return; }
+  if (isDesktopCommand(argv)) { await desktopMain(argv); return; }
+  if (argv[0] === "tui") argv = argv.slice(1);
+  else if (prefersDesktop(argv, process.platform, process.env) && installedDesktop()) { await desktopMain(["edit", ...argv]); return; }
   let args: ParsedArgs;
   try {
     args = parseArgs(argv);
