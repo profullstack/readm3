@@ -94,9 +94,11 @@ test("two devices sync files and settings automatically through the encrypted co
     await expect(other.locator("#theme")).toHaveValue("nord");
     await expect(other.locator("#flavor")).toHaveValue("reddit");
     await other.locator('.file-row[data-path="Synced.md"]').click();
+    const before = (await sealedSnapshot(page))!.revision;
     await other.locator("#edit-mode").click();
     await editorInput(other).fill("# Edited on second device\n");
-    await expect(other.locator("#sync-note")).toContainText("Synced", { timeout: 20_000 });
+    // "Synced" is already on screen from the first pass; wait for the edit to reach the account.
+    await expect.poll(async () => (await sealedSnapshot(page))?.revision, { timeout: 20_000 }).toBeGreaterThan(before);
 
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await page.locator('.file-row[data-path="Synced.md"]').click();
