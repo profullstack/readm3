@@ -11,6 +11,7 @@ if (origin === "https://readm3.com" || origin === "app://readm3" || (custom && o
   contextBridge.exposeInMainWorld("readm3Desktop", {
     takeLaunchFiles: () => ipcRenderer.invoke("launch-files"),
     onOpenFiles: (callback) => { ipcRenderer.on("open-files", (_event, files) => callback(files)); },
+    readFile: (path) => ipcRenderer.invoke("read-file", path),
     writeFile: (path, data) => ipcRenderer.invoke("write-file", path, data),
   });
 }

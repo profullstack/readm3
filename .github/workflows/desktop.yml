@@ -1,8 +1,10 @@
 name: Desktop
 
-# The readm3 desktop app (desktop/): an AppImage and a Flatpak for Linux x64.
-# A published release gets both attached, with SHA256SUMS (install.sh --desktop
-# verifies against it). A pull request that touches the app builds both as artifacts.
+# The readm3 desktop app (desktop/): an AppImage and a Flatpak for Linux x64, a dmg and
+# zip for macOS (Apple silicon and Intel, ad-hoc signed), and an installer and zip for
+# Windows x64. A published release gets all of them attached, with one SHA256SUMS
+# (install.sh --desktop verifies against it). A pull request that touches the app
+# builds them as artifacts.
 on:
   release:
     types: [published]
@@ -17,11 +19,12 @@ on:
 permissions:
   contents: write
 
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
 jobs:
-  linux:
+  site:
     runs-on: ubuntu-latest
-    env:
-      TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,41 +32,92 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
       - run: bun install --frozen-lockfile
       - name: Build the editor
         run: bun run site:build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site-dist
+          path: site/dist
+          retention-days: 1
+
+  package:
+    needs: site
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+            files: readm3-linux-*.AppImage readm3-linux-*.flatpak
+          - os: macos-latest
+            name: mac
+            files: readm3-mac-*.dmg readm3-mac-*.zip
+          - os: windows-latest
+            name: windows
+            files: readm3-windows-*.exe readm3-windows-*.zip
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG || github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: site-dist
+          path: site/dist
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - name: Install the desktop build tools
         working-directory: desktop
         run: bun install --frozen-lockfile
       - name: Install flatpak-builder and the Flathub remote
+        if: matrix.name == 'linux'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq flatpak flatpak-builder
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-      - name: Package AppImage and Flatpak
+      - name: Package
         working-directory: desktop
-        run: node build.mjs AppImage flatpak
-      - name: Checksums
-        working-directory: desktop/release
-        run: |
-          sha256sum readm3-linux-*.AppImage readm3-linux-*.flatpak > SHA256SUMS
-          cat SHA256SUMS
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: node build.mjs
       - name: Attach to the release
         if: env.TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
         working-directory: desktop/release
-        run: gh release upload "$TAG" readm3-linux-*.AppImage readm3-linux-*.flatpak SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
+        run: gh release upload "$TAG" ${{ matrix.files }} --clobber --repo "$GITHUB_REPOSITORY"
       - name: Keep the builds
         if: env.TAG == ''
         uses: actions/upload-artifact@v4
         with:
-          name: readm3-desktop
+          name: readm3-desktop-${{ matrix.name }}
           path: |
-            desktop/release/readm3-linux-*.AppImage
-            desktop/release/readm3-linux-*.flatpak
-            desktop/release/SHA256SUMS
+            desktop/release/readm3-*.AppImage
+            desktop/release/readm3-*.flatpak
+            desktop/release/readm3-*.dmg
+            desktop/release/readm3-*.zip
+            desktop/release/readm3-*.exe
           retention-days: 7
+
+  checksums:
+    needs: package
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: One SHA256SUMS for every package on the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir sums && cd sums
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -p 'readm3-*'
+          sha256sum readm3-* > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "$TAG" SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"

@@ -1,7 +1,7 @@
 {
   "name": "readm3-desktop",
   "productName": "readm3",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "private": true,
   "description": "readm3 as a desktop app: a plain, fast text editor for Markdown and code.",
   "author": "Profullstack, Inc. <hello@profullstack.com>",
@@ -28,8 +28,29 @@
       "to": "site",
       "filter": ["viewer/**", "viewer-assets/**", "viewer.webmanifest", "favicon.svg"]
     }],
-    "artifactName": "readm3-linux-${arch}.${ext}",
+    "fileAssociations": [
+      { "ext": ["md", "markdown"], "name": "Markdown", "role": "Editor" },
+      { "ext": ["txt", "json", "yaml", "yml", "toml", "js", "ts", "py", "sh", "css", "html"], "name": "Text", "role": "Editor" }
+    ],
+    "mac": {
+      "artifactName": "readm3-mac-${arch}.${ext}",
+      "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }, { "target": "zip", "arch": ["arm64", "x64"] }],
+      "category": "public.app-category.developer-tools",
+      "icon": "../site/assets/icon-512.png",
+      "identity": "-"
+    },
+    "win": {
+      "artifactName": "readm3-windows-${arch}.${ext}",
+      "target": [{ "target": "nsis", "arch": ["x64"] }, { "target": "zip", "arch": ["x64"] }],
+      "icon": "../site/assets/icon-512.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "readm3-windows-${arch}-setup.${ext}"
+    },
     "linux": {
+      "artifactName": "readm3-linux-${arch}.${ext}",
       "target": ["AppImage", "flatpak"],
       "syncDesktopName": true,
       "icon": "../site/assets/icon-512.png",

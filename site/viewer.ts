@@ -47,6 +47,9 @@ let editorPath = "";
 /** Files opened from disk that Ctrl+S writes back to, by workspace path. */
 let diskEntries = new Map<string, disk.DiskEntry>();
 /** Whether the file has a place on disk and differs from what was last read or written there. */
+let diskSynced = new Map<string, number>();
+/** A copy that holds nothing the disk lacks: the same text, or unedited since it was last read or saved. */
+const matchesDisk = (doc: Document) => diskEntries.has(doc.path) ? !unsavedOnDisk(doc) : diskSynced.get(doc.path) === disk.fingerprint(doc.source);
 const unsavedOnDisk = (doc: Document) => { const entry = diskEntries.get(doc.path); return !!entry && disk.fingerprint(doc.source) !== entry.saved; };
 let mediaUrl: string | null = null;
 /** What the active document is on screen: Markdown, code in some language, or a PDF or image. */
@@ -507,10 +510,13 @@ function addDocuments(incoming: Document[], name?: string): Document[] {
       notice("Workspace limit reached: 4 MB per file, 20 MB total, and 1,000 files. Download files you want to keep.");
       break;
     }
-    // Reopening a file must never silently replace an edited draft.
+    // Reopening a file refreshes the copy that matches disk (`readm3 edit .` every morning),
+    // but must never silently replace an edited draft: that one keeps its place.
     let path = doc.path;
     let copy = 2;
-    while (map.has(path)) {
+    const existing = map.get(path);
+    if (existing && (existing.source === doc.source || matchesDisk(existing))) total -= encoder.encode(existing.source).length;
+    else while (map.has(path)) {
       const dot = doc.path.lastIndexOf(".");
       path = dot >= 0 ? `${doc.path.slice(0, dot)} (${copy++})${doc.path.slice(dot)}` : `${doc.path} (${copy++})`;
     }
@@ -906,9 +912,13 @@ function receiveLaunches() {
     if (!params.files.length || cloudDocument || pasteDocument) return;
     void disk.launched(params.files).then((files) => importFiles(files)).catch(() => notice("The file could not be opened."));
   });
-  // The desktop app: files from the command line or "Open with", now and while running.
+  // The desktop app: files and folders from the command line or "Open with", now and while running.
   if (disk.desktop && !cloudDocument && !pasteDocument) {
-    const open = (files: disk.DesktopFile[]) => { if (files.length) void importFiles(disk.fromDesktop(files)); };
+    const open = (files: disk.DesktopFile[]) => {
+      if (!files.length) return;
+      const folder = files.find((file) => file.relative)?.relative!.split("/")[0];
+      void importFiles(disk.fromDesktop(files), folder);
+    };
     void disk.desktop.takeLaunchFiles().then(open);
     disk.desktop.onOpenFiles(open);
   }
@@ -987,6 +997,7 @@ async function start() {
   }
   try { workspace = (await restore())!; } catch { /* A fresh in-memory workspace still works. */ }
   diskEntries = await disk.loadEntries();
+  diskSynced = await disk.loadSynced();
   let savedActive: string | undefined;
   try {
     const saved = JSON.parse(localStorage.getItem("readm3:tabs") ?? "{}") as { tabs?: string[]; active?: string };

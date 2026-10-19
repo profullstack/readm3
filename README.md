@@ -39,7 +39,8 @@ curl -fsSL https://readm3.com/install.sh | sh
 ```
 
 Run it again to update; remove with `sh ~/.local/share/readm3/uninstall.sh`.
-Add `--desktop` to install the desktop editor as well (Linux x64; see
+Add `--desktop` to install the desktop editor as well (Linux x64; macOS and Windows
+download it, see
 [Desktop app](#desktop-app)):
 
 ```sh
@@ -405,30 +406,53 @@ coinpayportal.com). Without them the history still works and the paid parts say 
 
 ### Desktop app
 
-The same editor in its own window, for Linux x64, from the
-[latest release](https://github.com/profullstack/readm3/releases/latest):
-`readm3-linux-x86_64.AppImage` (`chmod +x`, run it) or `readm3-linux-x86_64.flatpak`
-(`flatpak install --user readm3-linux-x86_64.flatpak`), checksums in `SHA256SUMS`.
-`install.sh --desktop` installs the AppImage with a menu entry; on a system without
-libfuse2 (Ubuntu 26.04 ships only fuse3), it unpacks the app instead, since an AppImage
-cannot mount itself there. Running a downloaded AppImage by hand on such a system needs
-`--appimage-extract-and-run` or `sudo apt install libfuse2t64`.
+The same editor in its own window, from the
+[latest release](https://github.com/profullstack/readm3/releases/latest), checksums in
+`SHA256SUMS`:
+
+- **Linux x64**: `readm3-linux-x86_64.AppImage` (`chmod +x`, run it) or
+  `readm3-linux-x86_64.flatpak` (`flatpak install --user readm3-linux-x86_64.flatpak`).
+  `install.sh --desktop` installs the AppImage with a menu entry; on a system without
+  libfuse2 (Ubuntu 26.04 ships only fuse3), it unpacks the app instead, since an AppImage
+  cannot mount itself there. Running a downloaded AppImage by hand on such a system needs
+  `--appimage-extract-and-run` or `sudo apt install libfuse2t64`.
+- **macOS** (Apple silicon `readm3-mac-arm64.dmg`, Intel `readm3-mac-x64.dmg`): drag it
+  to Applications. It is ad-hoc signed, not notarized, so the first launch needs
+  right-click → Open, or `xattr -dr com.apple.quarantine /Applications/readm3.app`.
+- **Windows x64**: `readm3-windows-x64-setup.exe` installs for your user only (no admin);
+  it is not code-signed, so SmartScreen asks once (More info → Run anyway). A portable
+  `readm3-windows-x64.zip` is there too.
+
+Use it the way you use `subl`: the CLI opens files and folders in the app and gives the
+shell back.
 
 ```sh
-readm3-desktop notes.md src/app.ts   # opens them as tabs; Ctrl+S saves back
+readm3 edit .                       # this folder in the sidebar, like `subl .`
+readm3 edit notes.md src/app.ts     # as tabs; Ctrl+S saves back to disk
 ```
 
-Files named on the command line or opened with "Open with" go straight into the
-editor, and a second launch hands its files to the window already open. The window
-loads readm3.com, so sign-in, sync and sharing work as on the web; a copy of the
-editor ships inside the app for a first launch with no connection. The Flatpak keeps
-Chromium's sandbox; on Ubuntu 24.04 and newer an AppImage cannot have one (AppArmor
-restricts user namespaces and a FUSE mount is `nosuid`), so its launcher starts it
-without and says so. Prefer the Flatpak there.
+`readm3 subl` and `readm3 open` are the same command. It finds the app on `PATH`
+(`readm3-desktop`, which `install.sh --desktop` adds), then where each platform installs
+it; `READM3_DESKTOP` names the binary yourself. A folder opens with the same rules as
+Open folder (no dot-directories, `node_modules`, build output or binaries; 1,000 files).
+Opening a folder again refreshes the files that match disk instead of adding copies;
+a file you edited and did not save keeps its draft, and the disk version arrives
+beside it. While a file is open, a change on disk (a `git pull`, a build) reloads it,
+or lands in History when you have unsaved edits. There is no `--wait`: a second launch
+hands its files to the window already open and exits, so `readm3 edit` is not a
+`core.editor` for git.
+
+Files opened with "Open with" (Finder and Explorer included) go straight into the
+editor. The window loads readm3.com, so sign-in, sync and sharing work as on the web;
+a copy of the editor ships inside the app for a first launch with no connection. The
+Flatpak keeps Chromium's sandbox; on Ubuntu 24.04 and newer an AppImage cannot have one
+(AppArmor restricts user namespaces and a FUSE mount is `nosuid`), so its launcher
+starts it without and says so. Prefer the Flatpak there.
 
 The app lives in `desktop/` (Electron). `cd desktop && bun install && node build.mjs`
-builds both packages (the Flatpak needs `flatpak-builder` and the Flathub remote);
-`.github/workflows/desktop.yml` attaches them to every release.
+builds the packages for the platform it runs on (the Flatpak needs `flatpak-builder`
+and the Flathub remote); `.github/workflows/desktop.yml` builds all three and attaches
+them to every release.
 
 ## The website
 
