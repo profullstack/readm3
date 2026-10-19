@@ -4,7 +4,7 @@
  * Public pages stay static. Account APIs use verified email identities and
  * sessions persisted on the mounted database volume.
  */
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { dirname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Accounts } from "../server/accounts.ts";
@@ -15,7 +15,6 @@ import { anthropicSummarizer, Billing, DEFAULT_MODEL, type Summarize } from "../
 import { Payments, paymentOptions, type PaymentOptions } from "../server/payments.ts";
 import { CoinPay } from "../server/coinpay.ts";
 import { createSyncApi } from "../server/sync-api.ts";
-import { footerHtml } from "@profullstack/footer";
 
 const dist = join(dirname(fileURLToPath(import.meta.url)), "dist");
 const port = Number(process.env.PORT ?? 3000);
@@ -40,30 +39,43 @@ function resolve(pathname: string): string | null {
 }
 
 /*
- * The shared Profullstack footer (@profullstack/footer). site/build.ts bakes it
- * into each page and writes its options to dist/pfs-footer.json; here the baked
- * copy is swapped for one rendered from the package's @latest template (cached
- * an hour inside the package), so a package release reaches readm3.com without
- * a rebuild. Any failure serves the baked page unchanged.
+ * The pit.world global footer (site name, search, ring, publish), appended as
+ * the last thing in <body> of every site page. Fetched from pit.world with a 3s
+ * timeout and cached an hour at module level; a failed refresh keeps serving the
+ * last good copy, and with no copy the page is served unchanged.
  */
-const footerOptionsFile = join(dist, "pfs-footer.json");
-const footerOptions = existsSync(footerOptionsFile)
-  ? (JSON.parse(readFileSync(footerOptionsFile, "utf8")) as Parameters<typeof footerHtml>[0])
-  : null;
-const BAKED_FOOTER = /<footer class="pfs-footer"[\s\S]*?<\/footer>/;
+const PIT_FOOTER_URL = "https://pit.world/snippets/footer.html?site=readm3.com";
+const PIT_FOOTER_TTL = 60 * 60 * 1000;
+const pitFooter = { html: "", fetchedAt: 0, inflight: null as Promise<void> | null };
 
-async function pageBody(file: string): Promise<{ body: BodyInit; type?: string }> {
+function refreshPitFooter(): Promise<void> {
+  pitFooter.inflight ??= fetch(PIT_FOOTER_URL, { signal: AbortSignal.timeout(3000) })
+    .then(async (res) => {
+      const text = res.ok ? await res.text() : "";
+      if (!text.includes("data-pit-footer")) throw new Error(`pit footer: HTTP ${res.status}`);
+      pitFooter.html = text;
+      pitFooter.fetchedAt = Date.now();
+    })
+    .catch(() => { pitFooter.fetchedAt = Date.now() - PIT_FOOTER_TTL + 60_000; }) // retry in a minute
+    .finally(() => { pitFooter.inflight = null; });
+  return pitFooter.inflight;
+}
+
+async function pitFooterHtml(): Promise<string> {
+  if (!pitFooter.html) await refreshPitFooter();
+  else if (Date.now() - pitFooter.fetchedAt > PIT_FOOTER_TTL) void refreshPitFooter();
+  return pitFooter.html;
+}
+
+async function pageBody(file: string, withPitFooter: boolean): Promise<{ body: BodyInit; type?: string }> {
   // The curl installer reads as text in a browser instead of downloading.
   if (file.endsWith(".sh")) return { body: Bun.file(file), type: "text/plain; charset=utf-8" };
-  if (!footerOptions || !file.endsWith(".html")) return { body: Bun.file(file) };
+  if (!withPitFooter || !file.endsWith(".html")) return { body: Bun.file(file) };
+  const footer = await pitFooterHtml();
   const html = await Bun.file(file).text();
-  if (!BAKED_FOOTER.test(html)) return { body: Bun.file(file) };
-  try {
-    const footer = await footerHtml(footerOptions);
-    return { body: html.replace(BAKED_FOOTER, () => footer), type: "text/html; charset=utf-8" };
-  } catch {
-    return { body: Bun.file(file) };
-  }
+  const at = html.lastIndexOf("</body>");
+  if (!footer || at < 0 || html.includes("data-pit-footer")) return { body: Bun.file(file) };
+  return { body: html.slice(0, at) + footer + html.slice(at), type: "text/html; charset=utf-8" };
 }
 
 function cacheFor(path: string): string {
@@ -148,7 +160,9 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
 
       const accountPage = file === join(dist, "account", "index.html") || url.pathname === "/admin";
       const privatePage = accountPage || sharedPage || url.pathname === "/viewer";
-      const page = privatePage ? { body: Bun.file(file) } : await pageBody(file);
+      // The editor, workspaces and shared documents are full-screen app shells; every other page gets the global footer.
+      const appShell = sharedPage || url.pathname === "/viewer" || url.pathname === "/admin";
+      const page = await pageBody(file, !appShell);
       return new Response(page.body, {
         headers: {
           ...(page.type ? { "content-type": page.type } : {}),
@@ -157,7 +171,7 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
           "referrer-policy": privatePage ? "no-referrer" : "strict-origin-when-cross-origin",
           ...(sharedPage ? { "x-robots-tag": "noindex, nofollow" } : {}),
           ...(accountPage ? {
-            "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+            "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
             "x-frame-options": "DENY",
           } : {}),
         },

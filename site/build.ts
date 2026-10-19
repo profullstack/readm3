@@ -17,7 +17,6 @@ import { createHash } from "node:crypto";
 import { flatten, type Entry } from "../src/tree.ts";
 import { VERSION } from "../src/cli.ts";
 import { LANGUAGES } from "../src/code.ts";
-import { footerHtml } from "@profullstack/footer";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -31,22 +30,11 @@ const CP_PROJECT = "528372c9-c79a-425f-9f80-f9fe44c5865e";
 const CP_SLOT = "b918cc2d-4bd9-45e4-9b9e-52955b4e2e54";
 
 /*
- * The shared Profullstack footer (@profullstack/footer): links, copyright and the
- * webring. Baked into every page here as the fallback, and re-rendered from the
- * package's @latest template on each request by site/server.ts (from the
- * options written to dist/pfs-footer.json), so a package release reaches the
- * site without a rebuild. Public pages send no CSP, so its inline <style> is fine.
+ * The site's own footer: one line. The network links (search, ring, publish)
+ * come from the pit.world global footer, which site/server.ts appends to every
+ * page at request time.
  */
-const FOOTER_OPTIONS = {
-  site: "https://readm3.com/",
-  links: [
-    { label: "Source", href: REPO },
-    { label: "npm", href: NPM },
-    { label: "HQTUI", href: HQTUI },
-  ],
-  tagline: `MIT licensed · v${VERSION}`,
-};
-const FOOTER = await footerHtml(FOOTER_OPTIONS);
+const FOOTER = `<footer class="site-foot"><span>&copy; ${new Date().getFullYear()} readm3 &middot; MIT</span><nav aria-label="Footer"><a href="/docs">Docs</a><a href="/sharing">Sharing &amp; API</a><a href="${REPO}">Source</a><a href="${NPM}">npm</a></nav></footer>`;
 
 /* -------------------------------------------------------------- colors --- */
 
@@ -497,7 +485,6 @@ write("robots.txt", robots);
 write("sitemap.xml", sitemap);
 write("llms.txt", llms);
 write("favicon.svg", favicon);
-write("pfs-footer.json", JSON.stringify(FOOTER_OPTIONS));
 write(".well-known/openwebring.json", JSON.stringify({
   openwebring: "0.1",
   site: { url: "https://readm3.com/", name: "readm3" },
