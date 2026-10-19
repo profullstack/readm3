@@ -3,7 +3,7 @@ type CoinPayStatus = { enabled: boolean; identities: { providerUserId: string; e
 const el = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const panels = ["loading", "sign-in", "check-email", "verify-email", "profile"];
 const requestedNext = new URLSearchParams(location.search).get("next");
-const next = requestedNext && /^\/(?:admin|viewer)(?:\?|$)/.test(requestedNext) ? requestedNext : null;
+const next = requestedNext && /^\/(?:admin|viewer|oauth\/authorize)(?:\?|$)/.test(requestedNext) ? requestedNext : null;
 let email = "";
 let token: string | null = null;
 function readLink() {

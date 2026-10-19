@@ -252,8 +252,8 @@ Stale saves are rejected so concurrent edits cannot silently overwrite each othe
 Owners can restore prior versions, pin links to a version, and revoke links.
 
 ```sh
-readm3 login --token-stdin             # token from /admin → API tokens
-readm3 login --coinpay                 # or sign in with CoinPay in the browser
+readm3 login                           # approve in the browser; over SSH, paste the code it shows
+readm3 login --token-stdin             # or a token from /admin → API tokens
 readm3 whoami                          # the account, and its linked CoinPay account
 readm3 orgs list
 readm3 share README.md --org ORG_ID    # view link by default; without --org, your personal workspace
@@ -539,11 +539,21 @@ unlinked on `/account` when it also has an email; an account that signs in only 
 CoinPay cannot be, since that would lock it out. Links, unlinks, sign-ins and app calls
 are recorded in `identity_events`; identities are in `user_identities`.
 
-`readm3 login --coinpay` runs the same grant from the terminal against a loopback
-redirect (`http://127.0.0.1:PORT/callback`, any port), then
-`POST /api/v1/coinpay/oauth/cli-exchange {code, code_verifier, redirect_uri}` has
-readm3 make the exchange and return an ordinary 90-day readm3 API token, saved like
-`login --token-stdin`. Set `READM3_NO_BROWSER=1` to print the link without opening it.
+### CLI sign-in (OAuth 2.1)
+
+`readm3 login` signs the CLI in with readm3's own OAuth 2.1 server
+([`@profullstack/auth-system/oauth2`](https://www.npmjs.com/package/@profullstack/auth-system),
+client `readm3-cli`): authorization code + PKCE S256 only, access tokens for an hour,
+refresh tokens that rotate on every use, and a reused refresh token revokes the whole
+sign-in. The browser step is `/oauth/authorize`, which sends a signed-out browser
+through `/account` (email or CoinPay) and then asks to approve. Where the CLI can open a
+browser on the same machine it waits on a loopback redirect (`http://127.0.0.1:PORT/callback`);
+over SSH, or with `--no-browser` / `READM3_NO_BROWSER=1`, it prints the link to open in
+any browser and `/oauth/cli` shows a code to paste back. Tokens are kept in `cloud.json`
+(0600) and refreshed by every command; `readm3 logout` revokes them on the server.
+`readm3 login --coinpay` is the same sign-in. Metadata is at
+`/.well-known/oauth-authorization-server`; tokens at `/oauth/token`, revocation at `/oauth/revoke`.
+`POST /api/v1/coinpay/oauth/cli-exchange` remains for CLI versions before 0.14.0.
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -637,7 +647,7 @@ The CLI, document commands, and MCP use one credential file, `cloud.json`, under
 in `/admin` to invalidate remote copies. Tokens can also be created and revoked from the account page.
 
 ```sh
-readm3 login --token-stdin               # paste a token, then Ctrl+D
+readm3 login                             # or --token-stdin: paste a token, then Ctrl+D
 readm3 whoami
 readm3 settings --theme nord --flavor github
 readm3 save ./notes                      # explicitly import and save Markdown

@@ -1,18 +1,11 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { Accounts } from "../accounts.ts";
 import { createApi } from "../api.ts";
 import { CoinPay, type CoinPayOptions } from "../coinpay.ts";
 import { Store, id } from "../store.ts";
 import { verifiedAccount } from "./fixtures.ts";
 
-const root = fileURLToPath(new URL("../..", import.meta.url));
-const runtime = process.env.READM3_TEST_NODE ? "node" : "bun";
-const entry = runtime === "node" ? "bin/readm3.mjs" : "src/cli.ts";
 const origin = "http://localhost";
 const cleanup: (() => void)[] = [];
 afterEach(() => { for (const done of cleanup.splice(0).reverse()) done(); });
@@ -227,43 +220,3 @@ test("the CLI exchange turns a loopback CoinPay grant into a readm3 API token", 
   // Codes are single use.
   expect((await f.call("coinpay/oauth/cli-exchange", { data: { code, code_verifier: verifier, redirect_uri: redirectUri } })).status).toBe(400);
 });
-
-test("readm3 login --coinpay runs the loopback grant and saves a token whoami can use", async () => {
-  const coinpay = fakeCoinPay();
-  const store = new Store(":memory:");
-  cleanup.push(() => store.close());
-  let api: ReturnType<typeof createApi> | undefined;
-  const server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(request) {
-    return (await api!(request, "cli-test")) || new Response("Not found", { status: 404 });
-  } });
-  cleanup.push(() => server.stop(true));
-  const url = `http://127.0.0.1:${server.port}`;
-  const accounts = new Accounts(store.db, url, async () => {});
-  api = createApi(store, url, new CoinPay(store, accounts, { clientId: "readm3-test", clientSecret: "test-secret", url: coinpay.url }));
-  const config = mkdtempSync(join(tmpdir(), "readm3-coinpay-cli-"));
-  cleanup.push(() => rmSync(config, { recursive: true, force: true }));
-  const env = { ...process.env, READM3_CONFIG_DIR: config, READM3_URL: url, READM3_API_URL: `${url}/api/v1`, READM3_TOKEN: "", READM3_NO_BROWSER: "1" };
-  const child = Bun.spawn([Bun.which(runtime)!, entry, "login", "--coinpay"], { cwd: root, env, stdout: "pipe", stderr: "pipe" });
-  // Read stderr until the authorize link appears, then play CoinPay and the browser.
-  const reader = child.stderr.getReader();
-  let printed = "";
-  while (!/https?:\/\/\S+\/api\/oauth\/authorize\S+/.test(printed)) {
-    const chunk = await reader.read();
-    if (chunk.done) throw new Error(`CLI exited early: ${printed}`);
-    printed += new TextDecoder().decode(chunk.value);
-  }
-  const authorize = printed.match(/https?:\/\/\S+\/api\/oauth\/authorize\S+/)![0];
-  expect(new URL(authorize).searchParams.get("code_challenge_method")).toBe("S256");
-  const approved = coinpay.grant({ sub: "cp_terminal", name: "Terminal" }, authorize);
-  expect(approved.redirectUri).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/callback$/);
-  const landed = await fetch(`${approved.redirectUri}?code=${approved.code}&state=${approved.state}`);
-  expect(landed.status).toBe(200);
-  const [stdout, exit] = await Promise.all([new Response(child.stdout).text(), child.exited]);
-  expect(exit).toBe(0);
-  expect(JSON.parse(stdout).user.displayName).toBe("Terminal");
-  expect(JSON.parse(readFileSync(join(config, "cloud.json"), "utf8")).token).toMatch(/^[\w-]{43}$/);
-  const whoami = Bun.spawn([Bun.which(runtime)!, entry, "whoami"], { cwd: root, env, stdout: "pipe", stderr: "pipe" });
-  const [out, err, code] = await Promise.all([new Response(whoami.stdout).text(), new Response(whoami.stderr).text(), whoami.exited]);
-  expect(code, err).toBe(0);
-  expect(JSON.parse(out).identities).toMatchObject([{ provider: "coinpay", providerUserId: "cp_terminal" }]);
-}, 20_000);

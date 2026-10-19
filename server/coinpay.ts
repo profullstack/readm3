@@ -15,7 +15,7 @@
  * CoinPay identity to an existing account and never becomes an account email:
  * an identity that is not linked yet is a new user, never a merge.
  */
-import type { Accounts } from "./accounts.ts";
+import { SAFE_NEXT, type Accounts } from "./accounts.ts";
 import {
   Store,
   HttpError,
@@ -366,7 +366,7 @@ export class CoinPay {
       this.require();
       const requested = new URL(request.url).searchParams.get("next");
       const next =
-        requested && /^\/(?:admin|viewer|account)(?:\?|$)/.test(requested)
+        requested && SAFE_NEXT.test(requested)
           ? requested
           : null;
       const state = secret();
