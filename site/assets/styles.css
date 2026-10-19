@@ -358,8 +358,10 @@ pre.tree { color: var(--fg); }
 
 /* ---------------------------------------------------------------- foot -- */
 
-/* More specific than the footer package's own .pfs-footer rules, which come later in the page. */
-footer.pfs-footer { --pfs-footer-muted: var(--page-dim); border-top-color: var(--page-line); }
+.site-foot { max-width: 72rem; margin: 0 auto; padding: 1.25rem 1rem; border-top: 1px solid var(--page-line); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1.25rem; color: var(--page-dim); font-size: 0.85rem; }
+.site-foot nav { display: flex; flex-wrap: wrap; gap: 0.4rem 1.1rem; }
+.site-foot a { color: var(--page-dim); text-decoration: none; }
+.site-foot a:hover { color: var(--page-fg); text-decoration: underline; }
 
 /* --------------------------------------------------------------- narrow -- */
 
