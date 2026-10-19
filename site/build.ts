@@ -208,10 +208,10 @@ function shell(options: { title: string; description: string; path: string; main
   </nav>
 </header>
 <main id="main">
+<div class="top-ad"><aside data-cp-ad data-slot="${CP_SLOT}" data-format="text_link"></aside></div>
 ${options.main}
 </main>
 ${FOOTER}
-<div class="foot-ad"><aside data-cp-ad data-slot="${CP_SLOT}" data-format="text_link"></aside></div>
 <script src="/app.js" defer></script>
 <script data-site="${CP_PROJECT}" src="https://crawlproof.com/stats.js" async></script>
 <script src="https://crawlproof.com/ad.js" async></script>
