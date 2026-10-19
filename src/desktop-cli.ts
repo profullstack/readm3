@@ -6,7 +6,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
+import { posix, resolve, win32 } from "node:path";
 
 export const DESKTOP_USAGE = `Desktop editor
   readm3 edit [PATH...]                   Open files or folders in the readm3 desktop
@@ -29,6 +29,8 @@ export interface Launch { command: string; args: string[]; }
  * usual install location. The Flatpak is last, because only `flatpak run` starts it.
  */
 export function desktopCandidates(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, home: string): Launch[] {
+  // The platform's own path rules, so the lookup for one platform can be checked on another.
+  const { delimiter, join } = platform === "win32" ? win32 : posix;
   const found: Launch[] = [];
   const binary = (command: string) => found.push({ command, args: [] });
   if (env.READM3_DESKTOP) binary(env.READM3_DESKTOP);

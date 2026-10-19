@@ -1,8 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { join } from "node:path";
+import { posix, win32 } from "node:path";
 import { desktopCandidates, findDesktop, isDesktopCommand } from "../src/desktop-cli.ts";
 import { USAGE } from "../src/cli.ts";
+
+const { join } = posix;
 
 test("edit, subl and open are the desktop commands", () => {
   for (const name of ["edit", "subl", "open"]) assert.equal(isDesktopCommand(name), true);
@@ -25,7 +27,7 @@ test("macOS and Windows look in their install folders", () => {
   const mac = desktopCandidates("darwin", { PATH: "" }, "/Users/a").map((launch) => launch.command);
   assert.ok(mac.includes(join("/Applications", "readm3.app", "Contents", "MacOS", "readm3")));
   const win = desktopCandidates("win32", { PATH: "", LOCALAPPDATA: "C:/Users/a/AppData/Local" }, "C:/Users/a").map((launch) => launch.command);
-  assert.ok(win.includes(join("C:/Users/a/AppData/Local", "Programs", "readm3", "readm3-desktop.exe")));
+  assert.ok(win.includes(win32.join("C:/Users/a/AppData/Local", "Programs", "readm3", "readm3-desktop.exe")));
 });
 
 test("the first candidate that exists is used, and none means not installed", () => {
