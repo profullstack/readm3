@@ -22,7 +22,7 @@ describe("synced workspace files", () => {
     const base = { name: "x", active: "a.md" };
     assert.throws(() => validateWorkspace({ ...base, documents: [{ path: ".env", source: "" }], active: ".env" }), /invalid or duplicate/);
     assert.throws(() => validateWorkspace({ ...base, documents: [{ path: "a.md", source: "" }, { path: "a.md", source: "" }] }), /invalid or duplicate/);
-    assert.throws(() => validateWorkspace({ ...base, documents: [{ path: "a.md", source: "", encoding: "base64" }] }), /path, source and language/);
+    assert.throws(() => validateWorkspace({ ...base, documents: [{ path: "a.md", source: "", encoding: "base64" }] }), /path, source, language and blob/);
     assert.throws(() => validateWorkspace({ ...base, documents: [{ path: "a.md", source: "", language: "not a language!" }] }), /language must be/);
   });
 });

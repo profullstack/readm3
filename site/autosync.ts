@@ -19,6 +19,8 @@ import { deriveKey, MIN_PASSPHRASE, newKdf, open, seal, SEALED_FILE, WrongPassph
 import { digestDocument, digests, mergeWorkspaces } from "../src/sync-merge.ts";
 import { isSealed, validateSyncFiles, type ReaderSettings, type SyncedWorkspace } from "../src/sync-schema.ts";
 import { store, stored } from "./sync.ts";
+import * as blobs from "./blobs.ts";
+import { formatStorage, newBlobRef, SNAPSHOT_INLINE_BYTES, type BlobRef } from "../src/blob-store.ts";
 
 const OFF = "readm3:autosync";
 export const autoSyncEnabled = (): boolean => { try { return localStorage.getItem(OFF) !== "off"; } catch { return true; } };
@@ -34,7 +36,7 @@ export interface AutoSyncHost {
   seedUrl: string;
   app: string;
 }
-type State = { revision: number; base: Record<string, string>; settings: string };
+type State = { revision: number; base: Record<string, string>; settings: string; spills?: Record<string, BlobRef> };
 type Latest = { revision: number; snapshot: { version: number; files: Record<string, { content: string }> } };
 
 let host: AutoSyncHost | undefined;
@@ -142,6 +144,61 @@ async function starterDigests(): Promise<Record<string, string>> {
   return starter;
 }
 
+/** An upload this recent may belong to another device's save in flight; it is not collected yet. */
+const GC_GRACE_MS = 3600_000;
+
+/**
+ * The workspace as it is uploaded: every stored file on the account, and small text past
+ * the snapshot's share spilled to stored files too (the largest first), so the sealed
+ * snapshot stays small however many files there are. A spill keeps the text's digest,
+ * so the merge sees the same document, and is reused while the text is unchanged.
+ */
+async function forUpload(workspace: SyncedWorkspace, remote: SyncedWorkspace | undefined, spills: Record<string, BlobRef>) {
+  const account = await blobs.account();
+  const complete = new Set(account.blobs.filter((blob) => blob.complete).map((blob) => blob.id));
+  const known = new Map<string, BlobRef>(Object.entries(spills));
+  for (const doc of remote?.documents ?? []) if (doc.blob?.digest) known.set(doc.blob.digest, doc.blob);
+  const encoder = new TextEncoder();
+  const inline = workspace.documents.filter((doc) => !doc.blob).map((doc) => ({ doc, size: encoder.encode(doc.source).length })).sort((a, b) => a.size - b.size);
+  const spill = new Set<string>();
+  let budget = SNAPSHOT_INLINE_BYTES;
+  for (const { doc, size } of inline) { if (size <= budget) budget -= size; else spill.add(doc.path); }
+  const nextSpills: Record<string, BlobRef> = {};
+  const documents = [];
+  for (const doc of workspace.documents) {
+    if (doc.blob) {
+      if (!complete.has(doc.blob.id)) {
+        const kept = await blobs.local(doc.blob);
+        // A file that is on neither side cannot be sent; its reference travels so it is not lost elsewhere.
+        if (kept) { host?.status(`Uploading ${doc.path.split("/").at(-1)} (${formatStorage(doc.blob.size)})…`); await blobs.upload(doc.blob, kept); complete.add(doc.blob.id); }
+      }
+      documents.push(doc);
+      continue;
+    }
+    if (!spill.has(doc.path)) { documents.push(doc); continue; }
+    const digest = digestDocument(doc);
+    let ref = known.get(digest);
+    if (!ref || !complete.has(ref.id)) {
+      ref = newBlobRef(encoder.encode(doc.source).length, digest);
+      await blobs.upload(ref, new Blob([doc.source]));
+      complete.add(ref.id);
+    }
+    nextSpills[digest] = ref;
+    documents.push({ path: doc.path, source: "", ...(doc.language ? { language: doc.language } : {}), blob: ref });
+  }
+  return { workspace: { ...workspace, documents }, spills: nextSpills, account };
+}
+
+/** Deletes the account's stored files that the saved workspace no longer names. */
+async function collect(workspace: SyncedWorkspace, account: blobs.StorageAccount) {
+  const used = new Set(workspace.documents.flatMap((doc) => doc.blob ? [doc.blob.id] : []));
+  const cutoff = Date.now() - GC_GRACE_MS;
+  for (const blob of account.blobs) {
+    if (used.has(blob.id) || Date.parse(blob.createdAt) > cutoff) continue;
+    try { await blobs.remove(blob.id); } catch { /* The next save tries again. */ }
+  }
+}
+
 async function latest(userId: string): Promise<Latest | undefined> {
   try { return await request<Latest>(`settings?accountId=${encodeURIComponent(userId)}`); }
   catch (error) { if (error instanceof ApiError && error.status === 404) return undefined; throw error; }
@@ -191,8 +248,11 @@ async function pass(user: CloudUser) {
     const onlyStarter = local.documents.every((doc) => (starter ?? {})[doc.path] === digestDocument(doc));
     // A readable copy on the account is replaced by a sealed one at once (the server then deletes the readable revisions).
     const readableOnServer = !!remote && !isSealed(remote.snapshot.files);
+    let spills = state?.spills ?? {};
     if (!(onlyStarter && !remote) && (merge.upload || (settingsChanged && remote) || readableOnServer || rekey)) {
-      const plain = { "settings.json": { content: serialize(settings) }, "workspace.json": { content: serialize(merge.workspace) } };
+      const outgoing = await forUpload(merge.workspace, remoteWorkspace, spills);
+      spills = outgoing.spills;
+      const plain = { "settings.json": { content: serialize(settings) }, "workspace.json": { content: serialize(outgoing.workspace) } };
       validateSyncFiles(plain);
       const sealed = { [SEALED_FILE]: { content: JSON.stringify(await seal(plain, syncKey)) } };
       try {
@@ -202,6 +262,7 @@ async function pass(user: CloudUser) {
         rekey = false;
         if (saved.userId !== user.id) throw new Error("your account changed");
         revision = saved.revision;
+        void collect(outgoing.workspace, outgoing.account);
       } catch (error) {
         if (error instanceof ApiError && error.status === 409) continue; // Another device saved first.
         throw error;
@@ -210,7 +271,7 @@ async function pass(user: CloudUser) {
     // Edits made while this pass ran are not overwritten: the next pass merges them.
     if (!sameDigests(digests(h.read()), localDigests)) { again = true; return; }
     if (merge.download || serialize(settings) !== localSettings) await h.apply(merge.workspace, settings);
-    await store(key, { revision, base: digests(merge.workspace), settings: serialize(settings) } satisfies State);
+    await store(key, { revision, base: digests(merge.workspace), settings: serialize(settings), spills } satisfies State);
     known = revision;
     h.status(merge.conflicts.length
       ? `Synced · ${merge.conflicts.length} conflict cop${merge.conflicts.length === 1 ? "y" : "ies"} kept`

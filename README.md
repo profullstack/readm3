@@ -371,7 +371,28 @@ work offline. Remote URLs
 need a connection and a host that permits browser access (CORS); files are fetched
 directly with no credentials or server proxy. Local files are uploaded only when you explicitly choose Share → Save online.
 
-Imports are limited to 4 MB per file, 20 MB per workspace, and 1,000 files.
+#### File limits and storage
+
+| | Without an account | Free account | Pay as you go |
+| --- | --- | --- | --- |
+| Largest file | 4 MB | 5 GB | 5 GB |
+| Number of files | 1,000 (20 MB in all) | no limit | no limit |
+| Synced storage | none | 5 GB | $0.05 per GB a month over 5 GB |
+
+Signed in, a file over 4 MB is a *stored file*: it opens read-only (a PDF or image is
+shown whole, text as its first megabyte) and Download gives it back exactly. On the
+device it is kept in browser storage as it is; on the account it is end-to-end
+encrypted with its own key in 8 MB chunks, and the key travels only inside your
+sealed workspace, so readm3.com holds data it cannot read or name. Small files that
+do not fit the synced copy are stored the same way and turn back into ordinary,
+editable files when opened.
+
+Storage over the free 5 GB is charged hourly from the prepaid balance (CoinPay
+top-ups, as for AI summaries). When the balance is empty, new uploads past the free
+allowance are refused; nothing already stored is deleted. `GET /api/v1/blobs` reports
+what an account stores, the allowance and the price. Self-hosted servers set
+`READM3_FREE_STORAGE_BYTES`, `READM3_STORAGE_MICROS_PER_GB_MONTH` and
+`READM3_BLOB_DIR` (default: `blobs/` beside the database).
 
 ### File history and AI summaries
 
@@ -713,8 +734,9 @@ conflicting local edits, including on a device that has never synced. `--force`
 explicitly overrides a conflict. Replaced local files receive numbered `.bak-NNN`
 backups. Browser replacements receive backups in IndexedDB, accessible through
 **Sync → Local backups** for download or restoration. Clearing browser site data
-also removes those local backups. Sync supports the browser's workspace limits:
-1,000 files, 4 MB per file, and 20 MB of source in total.
+also removes those local backups. The CLI syncs a readable workspace of up to 4 MB
+per file and 20 MB in total; the browser and desktop app sync any number of files of
+up to 5 GB each (see File limits and storage).
 
 The authenticated API exposes:
 

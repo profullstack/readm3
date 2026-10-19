@@ -116,6 +116,7 @@ html, body.reader-app { height: 100%; overflow: hidden; }
 .media-view img { max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 6px; background: repeating-conic-gradient(color-mix(in srgb, var(--fg) 6%, transparent) 0 25%, transparent 0 50%) 0 0 / 20px 20px; }
 .media-note { color: var(--muted); font: 11px var(--mono); }
 .media-note a { color: var(--primary); }
+.large-preview { margin: 12px 0 0; font: 13px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .reader-app.dragging::after { content: "Drop files here"; position: fixed; inset: 12px; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 95%, transparent); border: 2px dashed var(--primary); border-radius: 12px; color: var(--primary); font: 20px var(--mono); pointer-events: none; z-index: 10; }
 [data-theme="light"] { color-scheme: light; }
 @media (min-width: 1600px) { #reader { padding-left: 90px; } }
