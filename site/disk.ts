@@ -65,11 +65,13 @@ export async function launched(handles: readonly FileSystemHandle[]): Promise<Pi
   return Promise.all(files.map(async (handle) => ({ file: await handle.getFile(), path: handle.name, handle })));
 }
 
-/** A file the desktop app opened for the page: its path, its name and its bytes. */
-export interface DesktopFile { path: string; name: string; data: Uint8Array; }
+/** A file the desktop app opened for the page: its path, its name and its bytes; `relative` when it came in a folder. */
+export interface DesktopFile { path: string; name: string; relative?: string; data: Uint8Array; }
 interface DesktopBridge {
   takeLaunchFiles(): Promise<DesktopFile[]>;
   onOpenFiles(callback: (files: DesktopFile[]) => void): void;
+  /** Absent in desktop builds before 0.13.0, which only had the bytes from launch. */
+  readFile?(path: string): Promise<{ data: Uint8Array; modified: number }>;
   writeFile(path: string, data: string | Uint8Array): Promise<void>;
 }
 /** Present only inside the readm3 desktop app (desktop/preload.cjs). */
@@ -84,13 +86,18 @@ export function fromDesktop(files: DesktopFile[]): Picked[] {
   return files.map((entry) => {
     const handle = {
       kind: "file", name: entry.name,
-      getFile: async () => new File([entry.data.buffer as ArrayBuffer], entry.name),
+      // Read from disk each time, so the editor sees a file change under it and a save is not undone.
+      getFile: async () => {
+        if (!desktop!.readFile) return new File([entry.data.buffer as ArrayBuffer], entry.name);
+        const { data, modified } = await desktop!.readFile(entry.path);
+        return new File([data.buffer as ArrayBuffer], entry.name, { lastModified: modified });
+      },
       createWritable: async () => {
         const parts: BlobPart[] = [];
         return { write: async (data: BlobPart) => { parts.push(data); }, close: async () => { await desktop!.writeFile(entry.path, new Uint8Array(await new Blob(parts).arrayBuffer())); } };
       },
     } as unknown as FileSystemFileHandle;
-    return { file: new File([entry.data.buffer as ArrayBuffer], entry.name), path: entry.name, handle };
+    return { file: new File([entry.data.buffer as ArrayBuffer], entry.name), path: entry.relative ?? entry.name, handle };
   });
 }
 
@@ -117,6 +124,21 @@ export async function loadEntries(): Promise<Map<string, DiskEntry>> {
   try { return new Map(Object.entries(await readKey<Record<string, DiskEntry>>(KEY) ?? {})); }
   catch { return new Map(); }
 }
+/**
+ * What each path last matched on disk, kept apart from the handles because a desktop
+ * file's handle cannot be stored: after a restart this still tells an unedited copy
+ * of a file (safe to refresh when it is opened again) from a draft.
+ */
+const SYNCED = "disk-synced";
+let synced = new Map<string, number>();
+export async function loadSynced(): Promise<Map<string, number>> {
+  try { synced = new Map(Object.entries(await readKey<Record<string, number>>(SYNCED) ?? {})); } catch { /* Starts empty. */ }
+  return synced;
+}
 export async function storeEntries(entries: Map<string, DiskEntry>): Promise<void> {
-  try { await writeKey(KEY, Object.fromEntries(entries)); } catch { /* Handles last for this session only. */ }
+  // Only real handles can be stored; one desktop handle in the map would fail the whole write.
+  const storable = [...entries].filter(([, entry]) => typeof FileSystemHandle !== "undefined" && entry.handle instanceof FileSystemHandle);
+  try { await writeKey(KEY, Object.fromEntries(storable)); } catch { /* Handles last for this session only. */ }
+  for (const [path, entry] of entries) synced.set(path, entry.saved);
+  try { await writeKey(SYNCED, Object.fromEntries(synced)); } catch { /* As above. */ }
 }

@@ -259,7 +259,7 @@ function home(): string {
     <div class="card"><h3>Keep the story of the document.</h3><p>Every online save creates a version. See who changed it, share a specific version, or restore an earlier draft without losing the history.</p></div>
     <div class="card"><h3>A workspace for your team.</h3><p>Organize people into organizations and teams. Share with a whole group, a few collaborators, or anyone with your link.</p></div>
     <div class="card"><h3>A plain text editor.</h3><p>Line numbers, multiple cursors, find and replace, folding, <code>Ctrl+P</code> to any file and <code>Ctrl+Shift+P</code> for every command. Open a folder from disk and <code>Ctrl+S</code> saves back to it. <a href="/viewer">Open the editor</a>.</p></div>
-    <div class="card"><h3>Take the editor with you.</h3><p>Install readm3 from your browser, or get the desktop app for Linux as an <a href="${REPO}/releases/latest/download/readm3-linux-x86_64.AppImage">AppImage</a> or a <a href="${REPO}/releases/latest/download/readm3-linux-x86_64.flatpak">Flatpak</a>. Local files work offline; shared documents stay connected.</p></div>
+    <div class="card"><h3>Take the editor with you.</h3><p>Install readm3 from your browser, or get the desktop app: Linux <a href="${REPO}/releases/latest/download/readm3-linux-x86_64.AppImage">AppImage</a> or <a href="${REPO}/releases/latest/download/readm3-linux-x86_64.flatpak">Flatpak</a>, macOS for <a href="${REPO}/releases/latest/download/readm3-mac-arm64.dmg">Apple silicon</a> or <a href="${REPO}/releases/latest/download/readm3-mac-x64.dmg">Intel</a>, <a href="${REPO}/releases/latest/download/readm3-windows-x64-setup.exe">Windows</a>. Then <code>readm3 edit .</code> opens a folder from the terminal, like <code>subl .</code>. Local files work offline; shared documents stay connected.</p></div>
     <div class="card"><h3>Use the tools you already use.</h3><p>The web editor, CLI, API, and MCP work with the same documents and permissions. Your terminal and your agents can join the workflow.</p></div>
   </div>
 </section>`;
@@ -450,7 +450,7 @@ terminal.
 ## Links
 
 - Editor: ${SITE}/viewer (installable, offline text editor for Markdown and code: multiple cursors, find and replace, Ctrl+P quick open, command palette, saves back to files on disk)
-- Desktop app: ${REPO}/releases/latest (Linux AppImage and Flatpak of the same editor)
+- Desktop app: ${REPO}/releases/latest (the same editor for Linux as AppImage and Flatpak, macOS dmg, Windows installer); \`readm3 edit PATH...\` opens files and folders in it
 - Paste: ${SITE}/paste (anonymous pastes of any text, PDF or image behind an expiring secret link; CLI, curl, API and MCP examples)
 - Site: ${SITE}
 - Source: ${REPO}

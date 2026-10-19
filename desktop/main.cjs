@@ -6,18 +6,22 @@
  * it has loaded. A copy of the editor ships inside the app (resources/site) and is
  * served as app://readm3 when readm3.com cannot be reached on a first launch.
  *
- * Files named on the command line, or handed over by the desktop's "Open with",
- * are read here and given to the page through preload.cjs, which can write back
- * only to files this process gave it.
+ * Files and folders named on the command line (`readm3 edit .`, like `subl .`), or
+ * handed over by the desktop's "Open with", are read here and given to the page
+ * through preload.cjs, which can write back only to files this process gave it.
  */
 const { app, BrowserWindow, Menu, ipcMain, net, protocol, shell } = require("electron");
-const { readFile, writeFile, stat } = require("node:fs/promises");
+const { readFile, readdir, writeFile, stat } = require("node:fs/promises");
 const { basename, join, resolve } = require("node:path");
 const { pathToFileURL } = require("node:url");
 
 const ORIGIN = (process.env.READM3_URL || "https://readm3.com").replace(/\/$/, "");
 const LOCAL = "app://readm3";
 const MAX_FILE_BYTES = 4 * 1024 * 1024;
+/** The page's own limits (site/workspace.ts); it applies them again, these only bound the walk. */
+const MAX_FILES = 1000;
+const IGNORED = new Set(["node_modules", "dist", "build", "out", "target", "vendor", "coverage", "venv", "__pycache__", ".git"]);
+const NEVER = /\.(?:zip|gz|tgz|bz2|xz|7z|rar|tar|exe|dll|so|dylib|o|a|class|jar|war|wasm|bin|dat|db|sqlite|sqlite3|mp3|mp4|m4a|mov|avi|mkv|webm|ogg|wav|flac|woff2?|ttf|otf|eot|psd|ai|doc|docx|xls|xlsx|ppt|pptx|iso|dmg|pkg|deb|rpm|apk|lock)$/i;
 /** The bundled editor: inside the package, or the repo's site build when run with `electron .`. */
 const SITE = app.isPackaged ? join(process.resourcesPath, "site") : join(__dirname, "..", "site", "dist");
 
@@ -30,16 +34,36 @@ const opened = new Set();
 let pending = [];
 let window;
 
-async function load(paths) {
+/**
+ * Reads files, and every file under a folder. A folder's files carry `relative`, their
+ * path from the folder's parent ("notes/todo.md"), so the page opens them as the folder.
+ */
+async function load(paths, cwd = process.cwd()) {
   const files = [];
+  const add = async (path, info, relative) => {
+    if (info.size > MAX_FILE_BYTES || files.length >= MAX_FILES) return;
+    files.push({ path, name: basename(path), relative, data: new Uint8Array(await readFile(path)) });
+    opened.add(path);
+  };
+  const walk = async (directory, prefix) => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (files.length >= MAX_FILES) return;
+      if (entry.name.startsWith(".") || IGNORED.has(entry.name)) continue;
+      const path = join(directory, entry.name);
+      const relative = `${prefix}/${entry.name}`;
+      try {
+        if (entry.isDirectory()) await walk(path, relative);
+        else if (entry.isFile() && !NEVER.test(entry.name)) await add(path, await stat(path), relative);
+      } catch { /* An unreadable entry is skipped; the rest of the folder still opens. */ }
+    }
+  };
   for (const input of paths) {
-    const path = resolve(input);
+    const path = resolve(cwd, input);
     try {
       const info = await stat(path);
-      if (!info.isFile() || info.size > MAX_FILE_BYTES) continue;
-      files.push({ path, name: basename(path), data: new Uint8Array(await readFile(path)) });
-      opened.add(path);
-    } catch { /* A path that is not a readable file is ignored, as an editor would. */ }
+      if (info.isDirectory()) await walk(path, basename(path) || path);
+      else if (info.isFile()) await add(path, info);
+    } catch { /* A path that is not readable is ignored, as an editor would. */ }
   }
   return files;
 }
@@ -47,8 +71,8 @@ async function load(paths) {
 /** Arguments that name files, not switches; argv[0] is the binary and, unpackaged, argv[1] is the app. */
 const fileArgs = (argv) => argv.slice(app.isPackaged ? 1 : 2).filter((arg) => !arg.startsWith("-"));
 
-async function openPaths(paths) {
-  const files = await load(paths);
+async function openPaths(paths, cwd) {
+  const files = await load(paths, cwd);
   if (!files.length) return;
   if (window && !window.webContents.isLoading()) window.webContents.send("open-files", files);
   else pending.push(...files);
@@ -117,10 +141,13 @@ function menu() {
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   // A second launch ("Open with" while running) hands its files to this window.
-  app.on("second-instance", (_event, argv) => {
+  // Its relative paths are relative to where it was started, not to this process.
+  app.on("second-instance", (_event, argv, workingDirectory) => {
     if (window) { if (window.isMinimized()) window.restore(); window.focus(); }
-    void openPaths(fileArgs(argv));
+    void openPaths(fileArgs(argv), workingDirectory);
   });
+  // macOS hands files over as events (Finder, `open -a readm3`), before and after launch.
+  app.on("open-file", (event, path) => { event.preventDefault(); void openPaths([path]); });
   app.whenReady().then(async () => {
     protocol.handle("app", (request) => {
       const { pathname } = new URL(request.url);
@@ -130,6 +157,13 @@ else {
       return net.fetch(pathToFileURL(file).toString());
     });
     ipcMain.handle("launch-files", () => { const files = pending; pending = []; return files; });
+    // The page re-reads a file to notice it changing on disk (a git checkout, a build).
+    ipcMain.handle("read-file", async (event, path) => {
+      if (!trusted(event.senderFrame?.url ?? "")) throw new Error("Not allowed.");
+      if (typeof path !== "string" || !opened.has(path)) throw new Error("readm3 can only read files it opened.");
+      const info = await stat(path);
+      return { data: new Uint8Array(await readFile(path)), modified: info.mtimeMs };
+    });
     ipcMain.handle("write-file", async (event, path, data) => {
       if (!trusted(event.senderFrame?.url ?? "")) throw new Error("Not allowed.");
       if (typeof path !== "string" || !opened.has(path)) throw new Error("readm3 can only save files it opened.");
