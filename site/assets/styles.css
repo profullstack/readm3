@@ -362,6 +362,8 @@ pre.tree { color: var(--fg); }
 .site-foot nav { display: flex; flex-wrap: wrap; gap: 0.4rem 1.1rem; }
 .site-foot a { color: var(--page-dim); text-decoration: none; }
 .site-foot a:hover { color: var(--page-fg); text-decoration: underline; }
+/* More specific than the footer package's own .pfs-footer rules, which come later in the page. */
+footer.pfs-footer { --pfs-footer-muted: var(--page-dim); border-top-color: var(--page-line); }
 
 /* --------------------------------------------------------------- narrow -- */
 
