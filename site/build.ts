@@ -16,6 +16,7 @@ import { escape, toHtml } from "./html.ts";
 import { createHash } from "node:crypto";
 import { flatten, type Entry } from "../src/tree.ts";
 import { VERSION } from "../src/cli.ts";
+import { footerHtml } from "@profullstack/footer";
 import { LANGUAGES } from "../src/code.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -30,11 +31,15 @@ const CP_PROJECT = "528372c9-c79a-425f-9f80-f9fe44c5865e";
 const CP_SLOT = "b918cc2d-4bd9-45e4-9b9e-52955b4e2e54";
 
 /*
- * The site's own footer: one line. The network links (search, ring, publish)
- * come from the pit.world global footer, which site/server.ts appends to every
- * page at request time.
+ * The site's own footer: one line, then the shared Profullstack footer
+ * (@profullstack/footer: copyright and the webring), baked in here and
+ * re-rendered from the package's @latest template on each request by
+ * site/server.ts (from dist/pfs-footer.json). The pit.world global footer is
+ * appended after both at request time.
  */
-const FOOTER = `<footer class="site-foot"><span>&copy; ${new Date().getFullYear()} readm3 &middot; MIT</span><nav aria-label="Footer"><a href="/docs">Docs</a><a href="/sharing">Sharing &amp; API</a><a href="${REPO}">Source</a><a href="${NPM}">npm</a></nav></footer>`;
+const FOOTER_OPTIONS = { site: "https://readm3.com/", links: [] };
+const PFS_FOOTER = await footerHtml(FOOTER_OPTIONS);
+const FOOTER = `<footer class="site-foot"><span>readm3 &middot; MIT</span><nav aria-label="Footer"><a href="/docs">Docs</a><a href="/sharing">Sharing &amp; API</a><a href="${REPO}">Source</a><a href="${NPM}">npm</a></nav></footer>\n${PFS_FOOTER}`;
 
 /* -------------------------------------------------------------- colors --- */
 
@@ -485,6 +490,7 @@ write("robots.txt", robots);
 write("sitemap.xml", sitemap);
 write("llms.txt", llms);
 write("favicon.svg", favicon);
+write("pfs-footer.json", JSON.stringify(FOOTER_OPTIONS));
 write(".well-known/openwebring.json", JSON.stringify({
   openwebring: "0.1",
   site: { url: "https://readm3.com/", name: "readm3" },

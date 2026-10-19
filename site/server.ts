@@ -4,7 +4,8 @@
  * Public pages stay static. Account APIs use verified email identities and
  * sessions persisted on the mounted database volume.
  */
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { footerHtml } from "@profullstack/footer";
 import { dirname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Accounts } from "../server/accounts.ts";
@@ -67,14 +68,36 @@ async function pitFooterHtml(): Promise<string> {
   return pitFooter.html;
 }
 
+/*
+ * The shared Profullstack footer (@profullstack/footer). site/build.ts bakes it
+ * into each page and writes its options to dist/pfs-footer.json; here the baked
+ * copy is swapped for one rendered from the package's @latest template (cached
+ * an hour inside the package). Any failure keeps the baked copy.
+ */
+const footerOptionsFile = join(dist, "pfs-footer.json");
+const footerOptions = existsSync(footerOptionsFile)
+  ? (JSON.parse(readFileSync(footerOptionsFile, "utf8")) as Parameters<typeof footerHtml>[0])
+  : null;
+const BAKED_FOOTER = /<footer class="pfs-footer"[\s\S]*?<\/footer>/;
+
+async function latestPfsFooter(html: string): Promise<string> {
+  if (!footerOptions || !BAKED_FOOTER.test(html)) return html;
+  try {
+    const footer = await footerHtml(footerOptions);
+    return html.replace(BAKED_FOOTER, () => footer);
+  } catch {
+    return html;
+  }
+}
+
 async function pageBody(file: string, withPitFooter: boolean): Promise<{ body: BodyInit; type?: string }> {
   // The curl installer reads as text in a browser instead of downloading.
   if (file.endsWith(".sh")) return { body: Bun.file(file), type: "text/plain; charset=utf-8" };
   if (!withPitFooter || !file.endsWith(".html")) return { body: Bun.file(file) };
   const footer = await pitFooterHtml();
-  const html = await Bun.file(file).text();
+  const html = await latestPfsFooter(await Bun.file(file).text());
   const at = html.lastIndexOf("</body>");
-  if (!footer || at < 0 || html.includes("data-pit-footer")) return { body: Bun.file(file) };
+  if (!footer || at < 0 || html.includes("data-pit-footer")) return { body: html, type: "text/html; charset=utf-8" };
   return { body: html.slice(0, at) + footer + html.slice(at), type: "text/html; charset=utf-8" };
 }
 
