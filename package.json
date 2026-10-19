@@ -1,6 +1,6 @@
 {
   "name": "@profullstack/readm3",
-  "version": "0.13.2",
+  "version": "0.13.3",
   "description": "Markdown editing and sharing for people and teams. Web/PWA, CLI, API and MCP with version history, view/edit links, and a terminal reader.",
   "type": "module",
   "license": "MIT",
@@ -43,6 +43,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@profullstack/cli": "^0.1.0",
     "@profullstack/footer": "latest",
     "@profullstack/hqtui": "^0.5.0",
     "@profullstack/synconfig": "^0.1.3",
