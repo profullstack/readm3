@@ -1,6 +1,7 @@
 import { action, request, type CloudDocument, type CloudUser } from "./cloud.ts";
 import * as stored from "./blobs.ts";
-import { formatStorage, INLINE_MAX_BYTES, MAX_BLOB_BYTES, newBlobRef } from "../src/blob-store.ts";
+import { refreshUsage, showUsage } from "./usage.ts";
+import { formatStorage, INLINE_MAX_BYTES, MAX_ACCOUNT_FILES, MAX_BLOB_BYTES, newBlobRef } from "../src/blob-store.ts";
 import { pasteDialog, publish, sharing, history as versionHistory } from "./sharing.ts";
 import { showSync } from "./sync.ts";
 import { askPassphrase, autoSyncEnabled, forgetPassphrase, schedule as scheduleSync, setAutoSync, startAutoSync, syncNow } from "./autosync.ts";
@@ -66,7 +67,7 @@ const isMarkdown = () => kind().kind === "markdown";
  * signed out, the workspace keeps its small local limits.
  */
 let signedIn = false;
-const ACCOUNT_LIMITS = "Sign in (free) for files up to 5 GB and no limit on the number of files.";
+const ACCOUNT_LIMITS = "Sign in (free) for files up to 5 GB and up to 5,000 files.";
 /** A stored file too large for the workspace (not a spilled small one): shown read-only. */
 const isLarge = (doc = current()) => !!doc.blob && !doc.blob.digest;
 const PREVIEW_BYTES = 1024 * 1024;
@@ -188,6 +189,7 @@ async function save() {
       const unsaved = unsavedOnDisk(current());
       saveStatus.textContent = unsaved ? "Saved on this device · Ctrl+S writes it to disk" : diskEntries.has(current().path) ? "Saved to disk" : "Saved on this device";
       markUnsaved();
+      updateUsage();
     }
   } catch {
     saveFailed = true;
@@ -301,7 +303,8 @@ function commands(): PaletteItem[] {
       command("File: Save As…", () => void saveFile(true), "Ctrl+Shift+S"),
       command("File: Close tab", () => closeTab(workspace.active)),
       command("File: History", openHistory),
-      command("Billing: Top up AI summaries", () => void showTopUp()),
+      command("Billing: Add funds", () => void showTopUp()),
+      command("Billing: Usage and limits", showUsage),
       command("Sync: Sync this workspace to your account", () => element("sync-workspace").click()),
     ] : [],
     ...cloudDocument?.canEdit ? [command("File: Save version", () => void saveCloud(), "Ctrl+S")] : [],
@@ -608,6 +611,10 @@ function addDocuments(incoming: Document[], name?: string): Document[] {
       notice(signedIn ? "A file over 4 MB could not be stored apart. Try opening it again." : `Workspace limit reached: 4 MB per file, 20 MB total, and 1,000 files without an account. ${ACCOUNT_LIMITS}`);
       break;
     }
+    if (signedIn && map.size >= MAX_ACCOUNT_FILES && !map.has(doc.path)) {
+      notice(`Workspace limit reached: ${MAX_ACCOUNT_FILES.toLocaleString()} files. ${incoming.length - added.length} file(s) were not added.`);
+      break;
+    }
     // Reopening a file refreshes the copy that matches disk (`readm3 edit .` every morning),
     // but must never silently replace an edited draft: that one keeps its place.
     let path = doc.path;
@@ -645,9 +652,12 @@ async function importFiles(files: disk.Picked[], name = "Your workspace") {
     let bytes = 0;
     let skipped = 0;
     let needAccount = 0;
+    let overCount = 0;
     let unreadable = 0;
     for (const { file, path, handle } of files) {
       if (!accepts(path)) continue;
+      // Past the account's file count nothing more is read.
+      if (signedIn && incoming.length >= MAX_ACCOUNT_FILES) { overCount++; continue; }
       // A PDF or image is kept as base64, a third larger than the file; the limits apply to what is stored.
       const cost = binaryType(path) ? Math.ceil(file.size * 4 / 3) : file.size;
       if (cost > MAX_FILE_BYTES) {
@@ -693,6 +703,7 @@ async function importFiles(files: disk.Picked[], name = "Your workspace") {
     else if (!needAccount) notice(`No readable files found. Open text files (Markdown, JSON, code, config), PDFs or images up to ${signedIn ? "5 GB" : "4 MB"}.`);
     if (needAccount) notice(`${needAccount} file(s) skipped: over 4 MB, or past 20 MB and 1,000 files, without an account. ${ACCOUNT_LIMITS}`);
     if (skipped) notice(`${skipped} file(s) skipped: larger than 5 GB.`);
+    if (overCount) notice(`${overCount} file(s) skipped: a workspace holds up to ${MAX_ACCOUNT_FILES.toLocaleString()} files.`);
     if (unreadable) notice(`${unreadable} file(s) skipped: not text, PDF or image.`);
   } catch (error) {
     notice(error instanceof DOMException && error.name === "QuotaExceededError"
@@ -1119,6 +1130,14 @@ async function setupPwa() {
 async function refreshAccount() {
   try { signedIn = !!(await request<{ user: CloudUser | null }>("me")).user; }
   catch { /* Offline: the last answer stands. */ }
+  updateUsage(true);
+}
+
+/** The header meter: this workspace's files and storage against the plan (site/usage.ts). */
+function updateUsage(force = false) {
+  if (!workspace || cloudDocument || pasteDocument) return;
+  const bytes = workspace.documents.reduce((sum, doc) => sum + doc.source.length, 0);
+  void refreshUsage({ files: workspace.documents.length, bytes, signedIn }, force);
 }
 
 async function start() {
@@ -1174,6 +1193,7 @@ async function start() {
   bindEvents();
   await save();
   // The account decides the limits before anything is opened from a link or the desktop.
+  element("usage").onclick = showUsage;
   await refreshAccount();
   window.addEventListener("focus", () => void refreshAccount());
   const params = new URLSearchParams(location.search);
@@ -1191,7 +1211,7 @@ async function start() {
     read: () => ({ name: workspace.name, active: workspace.active, documents: workspace.documents }),
     settings: () => ({ theme: theme.value, flavor: flavor.value as Flavor }),
     apply: (incoming, settings) => applySynced(incoming as Workspace, settings),
-    status: (text) => { element("sync-note").textContent = text; },
+    status: (text) => { element("sync-note").textContent = text; if (text.startsWith("Synced")) updateUsage(true); },
     device: disk.desktop ? "desktop" : "browser",
     seedUrl: __SEED_URL__,
     app: "readm3 web",

@@ -28,10 +28,12 @@ test("chunk arithmetic covers a 5 GB file exactly", () => {
   assert.match(blobRefProblem({ ...newBlobRef(1), id: "../../etc" })!, /invalid id/);
 });
 
-test("a synced workspace has no file count limit and carries stored files by reference", () => {
-  const documents = Array.from({ length: 5000 }, (_, i) => ({ path: `notes/${i}.md`, source: `# ${i}` }));
+test("a synced workspace holds up to 5,000 files and carries stored files by reference", () => {
+  const documents = Array.from({ length: 4999 }, (_, i) => ({ path: `notes/${i}.md`, source: `# ${i}` }));
   documents.push({ path: "big/dump.json", source: "", blob: newBlobRef(3 * 1024 ** 3) } as never);
-  assert.equal(validateWorkspace({ name: "Many", active: "notes/0.md", documents }).documents.length, 5001);
+  assert.equal(validateWorkspace({ name: "Many", active: "notes/0.md", documents }).documents.length, 5000);
+  documents.push({ path: "one/more.md", source: "" });
+  assert.throws(() => validateWorkspace({ name: "Many", active: "notes/0.md", documents }), /1–5,000 files/);
   assert.throws(() => validateWorkspace({ name: "x", active: "a.md", documents: [{ path: "a.md", source: "text", blob: newBlobRef(1) }] }), /source must be empty/);
 });
 

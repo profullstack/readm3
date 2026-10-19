@@ -113,10 +113,10 @@ export async function showTopUp(): Promise<void> {
   catch { location.href = `/account?next=${encodeURIComponent(location.pathname + location.search)}`; return; }
   const box = document.createElement("dialog");
   box.className = "history-dialog topup-dialog";
-  box.setAttribute("aria-label", "Top up AI summaries");
+  box.setAttribute("aria-label", "Add funds");
   const per = billing.multiplier === 2 ? "twice" : `${billing.multiplier} times`;
-  box.innerHTML = `<div class="dialog-header"><h2>Top up AI summaries</h2><button type="button" aria-label="Close">×</button></div>
-    <p>Pay as you go: each summary costs ${per} what the AI call costs us, usually a fraction of a cent. Your balance never expires.</p>
+  box.innerHTML = `<div class="dialog-header"><h2>Add funds</h2><button type="button" aria-label="Close">×</button></div>
+    <p>Pay as you go, from one balance that never expires: storage over the free 5 GB is $0.05 per GB a month, and each AI summary costs ${per} what the AI call costs us, usually a fraction of a cent.</p>
     <p class="history-account">Balance ${dollars(billing.balanceMicros)}</p>
     <form><div class="topup-packs"></div><label>Pay with <select name="chain">${Object.entries(CHAIN_LABELS).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></label>
     <p class="history-error" role="alert"></p><button class="primary-action" type="submit">Continue to CoinPay</button></form>`;
