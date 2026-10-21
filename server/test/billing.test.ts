@@ -339,20 +339,27 @@ describe("top-ups", () => {
     expect((await f.call("billing/topups", "POST", { amountUsd: 7 }, f.auth)).status).toBe(400);
     const realFetch = globalThis.fetch;
     let sent: any;
-    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+    let sentUrl = "";
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      sentUrl = String(url);
       sent = JSON.parse(String(init.body));
-      return new Response(JSON.stringify({ success: true, payment: { id: "pay_123" } }), { status: 200 });
+      return new Response(JSON.stringify({ success: true, id: "cs_123", url: "http://coinpay.test/checkout/cs_123", methods: ["USDC_POL", "BTC", "PAYPAL"] }), { status: 201 });
     }) as typeof fetch;
     let created;
     try { created = await f.call("billing/topups", "POST", { amountUsd: 10 }, f.auth); }
     finally { globalThis.fetch = realFetch; }
     expect(created.status).toBe(201);
-    expect(created.data.payUrl).toBe("http://coinpay.test/pay/pay_123");
-    expect(sent).toMatchObject({ business_id: "biz_1", amount: 10, currency: "USD", payment_method: "crypto" });
+    expect(created.data.payUrl).toBe("http://coinpay.test/checkout/cs_123");
+    expect(sentUrl).toBe("http://coinpay.test/api/checkout/sessions");
+    const email = f.store.get<{ email: string }>("SELECT email FROM account_emails WHERE userId=?", f.user.id)!.email;
+    expect(sent).toMatchObject({ amount: 10, currency: "USD", customer_email: email, account_id: f.user.id, property: "readm3.com", expires_in_minutes: 60, cancel_url: "http://localhost/viewer" });
+    expect(sent.metadata).toMatchObject({ readm3_topup: created.data.id, user_id: f.user.id });
+    expect(sent.success_url).toBe(`http://localhost/viewer?topup=${created.data.id}`);
+    expect(sent.blockchain).toBeUndefined();
     expect(sent.merchant_wallet_address).toBeUndefined();
 
-    // The webhook's own amount is ignored: the row says $10.
-    const body = JSON.stringify({ id: "evt_1", type: "payment.confirmed", data: { payment_id: "pay_123", status: "confirmed", amount: 999 } });
+    // The webhook's own amount is ignored: the row says $10. It is found by checkout_session_id.
+    const body = JSON.stringify({ id: "evt_1", type: "payment.confirmed", data: { payment_id: "pay_123", status: "confirmed", amount: 999, checkout_session_id: "cs_123", customer_email: email, account_id: f.user.id, property: "readm3.com" } });
     expect((await f.call("billing/coinpay/webhook", "POST", undefined, { "x-coinpay-signature": "t=1,v1=00" }, body)).status).toBe(401);
     const first = await f.call("billing/coinpay/webhook", "POST", undefined, { "x-coinpay-signature": sign(body) }, body);
     expect(first.data.credited).toBe(true);
@@ -361,6 +368,23 @@ describe("top-ups", () => {
     expect(again.data.credited).toBe(false);
     expect(f.billing.balance(f.user.id)).toBe(10_000_000);
     expect((await f.call(`billing/topups/${created.data.id}`, "GET", undefined, f.auth)).data.status).toBe("paid");
+  });
+
+  test("an off-site checkout URL is refused", async () => {
+    const f = await fixture();
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({ id: "cs_9", url: "https://evil.test/checkout/cs_9" }), { status: 201 })) as unknown as typeof fetch;
+    try { expect((await f.call("billing/topups", "POST", { amountUsd: 5 }, f.auth)).status).toBe(502); }
+    finally { globalThis.fetch = realFetch; }
+    expect(f.store.get("SELECT 1 AS x FROM billing_topups")).toBeNull();
+  });
+
+  test("a top-up opened before sessions (payment id) still settles on a forwarded webhook", async () => {
+    const f = await fixture();
+    f.store.run("INSERT INTO billing_topups (id,userId,paymentRef,amountMicros,chain,status,createdAt) VALUES ('t0',?,'pay_old',5000000,'USDC_POL','pending','2026-10-17')", f.user.id);
+    const body = JSON.stringify({ id: "evt_2", type: "payment.forwarded", data: { payment_id: "pay_old", status: "forwarded" } });
+    expect((await f.call("billing/coinpay/webhook", "POST", undefined, { "x-coinpay-signature": sign(body) }, body)).data.credited).toBe(true);
+    expect(f.billing.balance(f.user.id)).toBe(5_000_000);
   });
 
   test("detected is not paid", async () => {

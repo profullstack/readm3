@@ -104,9 +104,7 @@ export async function showHistory(path: string, restore: (source: string) => voi
   await paint();
 }
 
-const CHAIN_LABELS: Record<string, string> = { USDC_POL: "USDC (Polygon)", USDT_POL: "USDT (Polygon)", USDC_SOL: "USDC (Solana)", USDT_SOL: "USDT (Solana)", BTC: "Bitcoin", ETH: "Ethereum", SOL: "Solana", POL: "Polygon" };
-
-/** Choose an amount and a coin, then pay on CoinPay's page; the balance arrives by webhook. */
+/** Choose an amount, then pay with any coin or PayPal on CoinPay's page; the balance arrives by webhook. */
 export async function showTopUp(): Promise<void> {
   let billing: Account & { topups: boolean; packs: number[] };
   try { billing = await request("billing"); }
@@ -118,7 +116,7 @@ export async function showTopUp(): Promise<void> {
   box.innerHTML = `<div class="dialog-header"><h2>Add funds</h2><button type="button" aria-label="Close">×</button></div>
     <p>Pay as you go, from one balance that never expires: storage over the free 5 GB is $0.05 per GB a month, and each AI summary costs ${per} what the AI call costs us, usually a fraction of a cent.</p>
     <p class="history-account">Balance ${dollars(billing.balanceMicros)}</p>
-    <form><div class="topup-packs"></div><label>Pay with <select name="chain">${Object.entries(CHAIN_LABELS).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></label>
+    <form><div class="topup-packs"></div><p class="history-account">Pay with BTC, ETH, SOL, USDC, USDT and more, or PayPal, on CoinPay.</p>
     <p class="history-error" role="alert"></p><button class="primary-action" type="submit">Continue to CoinPay</button></form>`;
   const packs = box.querySelector(".topup-packs")!;
   billing.packs.forEach((usd, index) => {
@@ -140,7 +138,7 @@ export async function showTopUp(): Promise<void> {
     const submit = form.querySelector("button")!;
     submit.disabled = true;
     try {
-      const created = await request<{ payUrl: string }>("billing/topups", "POST", { amountUsd: Number(data.get("amount")), chain: data.get("chain") });
+      const created = await request<{ payUrl: string }>("billing/topups", "POST", { amountUsd: Number(data.get("amount")) });
       location.href = created.payUrl;
     } catch (cause) {
       error.textContent = cause instanceof Error ? cause.message : "Could not start the payment.";
