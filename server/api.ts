@@ -289,6 +289,10 @@ export function createApi(
         limit(`summary:${user.id}`, 30);
         return json(await money.billing.summary(user, await body(request)));
       }
+      if (money && path === "summaries/document" && request.method === "POST") {
+        limit(`summary:${user.id}`, 30);
+        return json(await money.billing.documentSummary(user, await body(request)));
+      }
       if (path === "actions" && request.method === "POST") {
         const data = await body(request);
         const args = data.args ?? {};

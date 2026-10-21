@@ -143,6 +143,12 @@ test("keeps a rolling history: opened, saved, changed on disk, with snippets and
   // Signed out: the paid summary says how to get it, and nothing is charged.
   await expect(page.locator("#file-history-dialog .history-account")).toContainText("Sign in");
   await expect(page.locator("#file-history-dialog").getByRole("button", { name: "Summarize with AI" })).toHaveCount(0);
+  await page.locator("#file-history-dialog").getByRole("button", { name: "Close history" }).click();
+  // The document Summarize button, signed out: a sign-in line, no call.
+  await page.locator("#summarize").click();
+  await expect(page.locator(".summary-dialog")).toContainText("Sign in (free) to summarize documents with AI: 10 a week free");
+  await page.locator(".summary-dialog").getByRole("button", { name: "Close summary" }).click();
+  await page.locator("#history").click();
   await items.nth(2).getByRole("button", { name: "Restore" }).click();
   await expect.poll(() => editorText(page)).toContain('"count": 1');
   await expect(page.locator("#notice")).toContainText("Restored");

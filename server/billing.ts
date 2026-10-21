@@ -1,5 +1,5 @@
 /**
- * Pay-as-you-go AI summaries of how a file changed.
+ * Pay-as-you-go AI summaries: of how a file changed, and of a whole document.
  *
  * A signed-in account holds a prepaid balance (topped up through CoinPay) in a
  * ledger of signed micro-dollar amounts; the balance is their sum. Each summary is
@@ -8,7 +8,11 @@
  * one arm, so a person always sees one price and the arms can be compared on
  * top-ups, summaries and revenue (GET /billing/experiment, admins only).
  *
- * The model is given only the changed hunks (src/diff.ts), never the whole file.
+ * A change summary gives the model only the changed hunks (src/diff.ts), never the whole
+ * file. A document summary gives it the document, cut to a budget; the first few each
+ * week are free (FREE_DOCUMENTS_PER_WEEK), then they are charged like any other.
+ *
+ * Claude writes the summaries; OpenAI is the fallback when the Claude call fails.
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { createHash } from "node:crypto";
@@ -31,16 +35,25 @@ export const MODEL_PRICES: Record<string, { input: number; output: number }> = {
   "claude-opus-5-5": { input: 4, output: 20 },
   "claude-sonnet-5-5": { input: 2, output: 10 },
   "claude-haiku-5-5": { input: 0.1, output: 0.5 },
+  // The OpenAI fallback (OpenAI list prices).
+  "gpt-5.2": { input: 1.75, output: 14 },
+  "gpt-5-mini": { input: 0.25, output: 2 },
 };
 export const DEFAULT_MODEL = "claude-opus-5-5";
+export const DEFAULT_OPENAI_MODEL = "gpt-5.2";
+/** Whole-document summaries each account gets free per week (Monday 00:00 UTC to the next). */
+export const FREE_DOCUMENTS_PER_WEEK = 10;
 /** Longest text sent per side, and the most of the diff the model is shown. */
 export const MAX_SOURCE = 400 * 1024;
 const MAX_PROMPT_CHARS = 60_000;
 const MAX_OUTPUT_TOKENS = 2_000;
 
 export type Usage = { input_tokens: number; output_tokens: number };
-/** One model call: the prompt in, the text and token usage out. Injected so tests never call the API. */
-export type Summarize = (system: string, prompt: string) => Promise<{ text: string; usage: Usage; refused: boolean }>;
+/**
+ * One model call: the prompt in, the text and token usage out, and which model answered
+ * (so the price follows the fallback). Injected so tests never call the API.
+ */
+export type Summarize = (system: string, prompt: string) => Promise<{ text: string; usage: Usage; refused: boolean; model?: string }>;
 
 export function anthropicSummarizer(apiKey: string, model: string): Summarize {
   const client = new Anthropic({ apiKey });
@@ -54,7 +67,48 @@ export function anthropicSummarizer(apiKey: string, model: string): Summarize {
       messages: [{ role: "user", content: prompt }],
     });
     const text = response.content.flatMap((block) => block.type === "text" ? [block.text] : []).join("").trim();
-    return { text, usage: response.usage, refused: response.stop_reason === "refusal" };
+    return { text, usage: response.usage, refused: response.stop_reason === "refusal", model };
+  };
+}
+
+/** The same call on OpenAI's chat completions; current models take max_completion_tokens, not max_tokens. */
+export function openaiSummarizer(apiKey: string, model: string, fetchImpl: typeof fetch = fetch): Summarize {
+  return async (system, prompt) => {
+    const response = await fetchImpl("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        max_completion_tokens: MAX_OUTPUT_TOKENS,
+        reasoning_effort: "low",
+        messages: [{ role: "system", content: system }, { role: "user", content: prompt }],
+      }),
+    });
+    if (!response.ok) throw new Error(`OpenAI ${response.status}: ${(await response.text()).slice(0, 300)}`);
+    const data = await response.json() as { choices?: { message?: { content?: string | null; refusal?: string | null } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number } };
+    const message = data.choices?.[0]?.message;
+    return {
+      text: (message?.content ?? "").trim(),
+      usage: { input_tokens: data.usage?.prompt_tokens ?? 0, output_tokens: data.usage?.completion_tokens ?? 0 },
+      refused: !!message?.refusal,
+      model,
+    };
+  };
+}
+
+/**
+ * Tries each provider in turn and returns the first answer. A failed call (no credits,
+ * an outage, a bad key) moves on to the next; the reason is logged server-side only.
+ */
+export function fallbackSummarizer(providers: { name: string; summarize: Summarize }[]): Summarize | null {
+  if (!providers.length) return null;
+  return async (system, prompt) => {
+    let last: unknown;
+    for (const provider of providers) {
+      try { return await provider.summarize(system, prompt); }
+      catch (error) { last = error; console.error(`summary: ${provider.name} failed:`, error instanceof Error ? error.message : error); }
+    }
+    throw last;
   };
 }
 
@@ -67,6 +121,24 @@ export const priceMicros = (cost: number, arm: Arm) => Math.ceil(cost * ARMS[arm
 export const SYSTEM = `You describe how a file changed between two versions, for its owner's history.
 Write a one or two sentence abstract of what changed and what it means, then up to three short bullet points naming the specific changes (values, keys, functions, sections).
 Be concrete and literal; say "values changed" rather than guessing why. Plain text, no heading, no preamble.`;
+
+export const DOCUMENT_SYSTEM = `You summarize a document for the person reading it.
+Write a two or three sentence abstract of what the document is and says, then up to five short bullet points with its key points, decisions, numbers or steps.
+Be concrete and stay with what the document says; do not add advice of your own. Plain text, no heading, no preamble.`;
+
+/** The prompt for a whole document: its name, and its text cut to the budget with a note saying so. */
+export function documentPrompt(path: string, text: string): string {
+  const body = text.length > MAX_PROMPT_CHARS ? text.slice(0, MAX_PROMPT_CHARS) : text;
+  const cut = body.length < text.length ? `\n\n(Only the first ${MAX_PROMPT_CHARS.toLocaleString("en-US")} of ${text.length.toLocaleString("en-US")} characters are shown.)` : "";
+  return `File: ${path}\n\n${body}${cut}\n`;
+}
+
+/** The Monday 00:00 UTC that starts the free week holding `at`. */
+export function weekStart(at = new Date()): Date {
+  const start = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate()));
+  start.setUTCDate(start.getUTCDate() - ((start.getUTCDay() + 6) % 7));
+  return start;
+}
 
 /** The prompt: the file's name, the size of the change, and its hunks, cut to a budget. */
 export function prompt(path: string, diff: Diff): string {
@@ -86,8 +158,19 @@ export function prompt(path: string, diff: Diff): string {
 export class Billing {
   /** One summary at a time per account, so two requests cannot both spend the same balance. */
   private running = new Set<string>();
-  constructor(private store: Store, private summarize: Summarize | null, readonly model = DEFAULT_MODEL) {
+  constructor(private store: Store, private summarize: Summarize | null, readonly model = DEFAULT_MODEL, readonly freePerWeek = FREE_DOCUMENTS_PER_WEEK) {
     store.db.exec(BILLING_SCHEMA);
+  }
+
+  /** This week's free document summaries: how many are left and when the count starts again. */
+  free(userId: string, at = new Date()) {
+    const start = weekStart(at);
+    const used = this.store.get<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM billing_ledger WHERE userId=? AND ref LIKE 'free-summary:%' AND createdAt>=?", userId, start.toISOString(),
+    )?.n ?? 0;
+    const resets = new Date(start);
+    resets.setUTCDate(resets.getUTCDate() + 7);
+    return { perWeek: this.freePerWeek, left: Math.max(0, this.freePerWeek - used), resetsAt: resets.toISOString() };
   }
 
   /** The account's price arm, assigned on first use from its id so it never changes. */
@@ -129,6 +212,7 @@ export class Billing {
       multiplier: ARMS[arm],
       model: this.model,
       enabled: !!this.summarize,
+      freeSummaries: this.free(user.id),
       ledger: this.store.all<{ kind: string; amountMicros: number; detail: string; createdAt: string }>(
         "SELECT kind,amountMicros,detail,createdAt FROM billing_ledger WHERE userId=? ORDER BY createdAt DESC LIMIT 20", user.id,
       ),
@@ -136,9 +220,9 @@ export class Billing {
   }
 
   /** A rough upper bound for one summary, so an empty balance is refused before the call. */
-  estimate(arm: Arm, promptText: string): number {
+  estimate(arm: Arm, promptText: string, system = SYSTEM): number {
     const price = MODEL_PRICES[this.model] ?? MODEL_PRICES[DEFAULT_MODEL]!;
-    return priceMicros(Math.ceil((promptText.length + SYSTEM.length) / 3) * price.input + 400 * price.output, arm);
+    return priceMicros(Math.ceil((promptText.length + system.length) / 3) * price.input + 400 * price.output, arm);
   }
 
   async summary(user: User, args: Record<string, unknown>) {
@@ -150,28 +234,48 @@ export class Billing {
     if (before.length > MAX_SOURCE || after.length > MAX_SOURCE) throw new HttpError(413, "Each version may be up to 400 KB for a summary.");
     const diff = diffLines(before, after);
     if (!diff.hunks.length) throw new HttpError(400, "The two versions are the same.");
+    const result = await this.charged(user, path, SYSTEM, prompt(path, diff), false, "change");
+    return { ...result, added: diff.added, removed: diff.removed };
+  }
+
+  /** A summary of a whole document; free while this week's allowance lasts, then from the balance. */
+  async documentSummary(user: User, args: Record<string, unknown>) {
+    if (!this.summarize) throw new HttpError(503, "AI summaries are not configured on this server.");
+    const path = typeof args.path === "string" && args.path.trim() ? args.path.trim().slice(0, 300) : "document";
+    const text = args.text;
+    if (typeof text !== "string") throw new HttpError(400, "text must be the document's text.");
+    if (!text.trim()) throw new HttpError(400, "The document is empty.");
+    if (text.length > MAX_SOURCE) throw new HttpError(413, "A document may be up to 400 KB for a summary.");
+    return this.charged(user, path, DOCUMENT_SYSTEM, documentPrompt(path, text), true, "document");
+  }
+
+  /** Runs one summary and records it: free (amount 0, no arm) when allowed and one is left, else at the arm's price. */
+  private async charged(user: User, path: string, system: string, text: string, freeAllowed: boolean, kind: "change" | "document") {
     const arm = this.arm(user);
-    const text = prompt(path, diff);
-    const estimate = this.estimate(arm, text);
-    if (this.balance(user.id) < estimate) {
-      throw new HttpError(402, `Not enough balance for a summary (about $${(estimate / 1e6).toFixed(4)}). Top up to continue.`);
+    const free = freeAllowed && this.free(user.id).left > 0;
+    const estimate = this.estimate(arm, text, system);
+    if (!free && this.balance(user.id) < estimate) {
+      const used = freeAllowed ? `This week's ${this.freePerWeek} free summaries are used. ` : "";
+      throw new HttpError(402, `${used}Not enough balance for a summary (about $${(estimate / 1e6).toFixed(4)}). Top up to continue.`);
     }
     if (this.running.has(user.id)) throw new HttpError(429, "A summary is already being written for this account.");
     this.running.add(user.id);
     let result: Awaited<ReturnType<Summarize>>;
-    try { result = await this.summarize(SYSTEM, text); }
+    try { result = await this.summarize!(system, text); }
     catch { throw new HttpError(502, "The summary could not be written. You were not charged; try again."); }
     finally { this.running.delete(user.id); }
     // A declined request is not the customer's to pay for.
-    if (result.refused || !result.text) throw new HttpError(422, "The model declined to summarize this change. You were not charged.");
-    const cost = costMicros(this.model, result.usage);
-    const charged = priceMicros(cost, arm);
-    const ref = `summary:${id()}`;
+    if (result.refused || !result.text) throw new HttpError(422, `The model declined to summarize this ${kind}. You were not charged.`);
+    const model = result.model ?? this.model;
+    const cost = costMicros(model, result.usage);
+    const charged = free ? 0 : priceMicros(cost, arm);
+    // A free summary has no arm, so the price experiment counts only what was paid for.
     this.store.run(
       "INSERT INTO billing_ledger (id,userId,kind,amountMicros,ref,arm,detail,createdAt) VALUES (?,?,?,?,?,?,?,?)",
-      id(), user.id, "charge", -charged, ref, arm, JSON.stringify({ path, model: this.model, costMicros: cost, input: result.usage.input_tokens, output: result.usage.output_tokens }), now(),
+      id(), user.id, "charge", -charged, `${free ? "free-summary" : "summary"}:${id()}`, free ? null : arm,
+      JSON.stringify({ kind, path, model, costMicros: cost, input: result.usage.input_tokens, output: result.usage.output_tokens }), now(),
     );
-    return { summary: result.text, chargedMicros: charged, costMicros: cost, arm, balanceMicros: this.balance(user.id), added: diff.added, removed: diff.removed };
+    return { summary: result.text, chargedMicros: charged, costMicros: cost, arm, model, free, freeSummaries: this.free(user.id), balanceMicros: this.balance(user.id) };
   }
 
   /** The experiment so far, per arm: accounts assigned, how many paid, money in, summaries, model cost. */

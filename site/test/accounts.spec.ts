@@ -65,3 +65,21 @@ test("Sign in with CoinPay creates an account whose only sign-in is CoinPay", as
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByRole("link", { name: "Sign in with CoinPay" })).toBeVisible();
 });
+
+test("Summarize: a signed-in reader gets a free AI summary of the open document, and pressing again costs nothing", async ({ page }) => {
+  await page.goto("/account");
+  await page.getByRole("link", { name: "Sign in with CoinPay" }).click();
+  await expect(page.locator("#account-email")).toHaveText("Signed in with CoinPay");
+  await page.goto("/viewer");
+  // First sign-in on a device asks for a sync passphrase; this test does not sync.
+  const passphrase = page.getByRole("dialog", { name: "Encrypt your synced files" });
+  await expect(passphrase).toBeVisible();
+  await passphrase.getByRole("button", { name: "Close dialog" }).click();
+  await page.locator("#summarize").click();
+  const dialog = page.locator(".summary-dialog");
+  await expect(dialog.locator(".summary-text")).toContainText("Test summary of");
+  await expect(dialog.locator(".history-account")).toContainText("Free · 9 of 10 free summaries left this week");
+  await dialog.getByRole("button", { name: "Close summary" }).click();
+  await page.locator("#summarize").click();
+  await expect(page.locator(".summary-dialog .history-account")).toContainText("Already summarized · 9 of 10");
+});

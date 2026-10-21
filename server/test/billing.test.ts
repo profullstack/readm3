@@ -2,7 +2,7 @@ import { test, expect, describe } from "bun:test";
 import { createHmac } from "node:crypto";
 import { Store, id } from "../store.ts";
 import { createApi } from "../api.ts";
-import { ARMS, Billing, costMicros, priceMicros, prompt, type Summarize } from "../billing.ts";
+import { ARMS, Billing, costMicros, documentPrompt, fallbackSummarizer, openaiSummarizer, priceMicros, prompt, weekStart, type Summarize } from "../billing.ts";
 import { Payments, verifySignature } from "../payments.ts";
 import { diffLines } from "../../src/diff.ts";
 import { verifiedAccount } from "./fixtures.ts";
@@ -109,6 +109,76 @@ describe("summaries", () => {
   test("needs an account", async () => {
     const f = await fixture();
     expect((await f.call("summaries", "POST", { before: "a", after: "b" })).status).toBe(401);
+  });
+});
+
+describe("document summaries", () => {
+  test("the first ten a week are free, then they come out of the balance at the arm's price", async () => {
+    const prompts: string[] = [];
+    const f = await fixture(async (_system, text) => { prompts.push(text); return { text: "A plan.", usage: { input_tokens: 1000, output_tokens: 100 }, refused: false }; });
+    const args = { path: "plan.md", text: "# Plan\n\nShip it." };
+    for (let i = 0; i < 10; i++) {
+      const done = await f.call("summaries/document", "POST", args, f.auth);
+      expect(done.status).toBe(200);
+      expect(done.data.free).toBe(true);
+      expect(done.data.chargedMicros).toBe(0);
+      expect(done.data.freeSummaries.left).toBe(9 - i);
+    }
+    expect(prompts[0]).toContain("Ship it.");
+    const empty = await f.call("summaries/document", "POST", args, f.auth);
+    expect(empty.status).toBe(402);
+    expect(JSON.stringify(empty.data)).toContain("free summaries are used");
+    expect(prompts).toHaveLength(10);
+    f.billing.credit(f.user.id, 1_000_000, "test:doc", "test");
+    const paid = await f.call("summaries/document", "POST", args, f.auth);
+    expect(paid.status).toBe(200);
+    expect(paid.data.free).toBe(false);
+    expect(paid.data.chargedMicros).toBe(priceMicros(costMicros("claude-opus-5-5", { input_tokens: 1000, output_tokens: 100 }), paid.data.arm));
+    expect(f.billing.balance(f.user.id)).toBe(1_000_000 - paid.data.chargedMicros);
+    // Free summaries carry no arm, so the experiment counts only paid ones.
+    expect(f.billing.experiment().reduce((n, arm) => n + arm.summaries, 0)).toBe(1);
+    expect((await f.call("billing", "GET", undefined, f.auth)).data.freeSummaries.left).toBe(0);
+  });
+
+  test("the allowance starts again on Monday 00:00 UTC", async () => {
+    expect(weekStart(new Date("2026-10-21T15:00:00Z")).toISOString()).toBe("2026-10-19T00:00:00.000Z");
+    expect(weekStart(new Date("2026-10-25T23:59:59Z")).toISOString()).toBe("2026-10-19T00:00:00.000Z");
+    expect(weekStart(new Date("2026-10-26T00:00:00Z")).toISOString()).toBe("2026-10-26T00:00:00.000Z");
+    const f = await fixture();
+    f.store.run("INSERT INTO billing_ledger (id,userId,kind,amountMicros,ref,arm,detail,createdAt) VALUES (?,?,?,?,?,NULL,'{}',?)", id(), f.user.id, "charge", 0, `free-summary:${id()}`, "2026-01-05T10:00:00.000Z");
+    expect(f.billing.free(f.user.id).left).toBe(10);
+  });
+
+  test("a long document is cut to the budget and says so; empty and failed ones cost nothing", async () => {
+    const text = documentPrompt("big.md", "x".repeat(100_000));
+    expect(text.length).toBeLessThan(61_000);
+    expect(text).toContain("Only the first 60,000 of 100,000 characters");
+    const f = await fixture(async () => { throw new Error("down"); });
+    expect((await f.call("summaries/document", "POST", { path: "a.md", text: "  " }, f.auth)).status).toBe(400);
+    expect((await f.call("summaries/document", "POST", { path: "a.md", text: "hello" }, f.auth)).status).toBe(502);
+    expect(f.billing.free(f.user.id).left).toBe(10);
+    expect((await f.call("summaries/document", "POST", { path: "a.md", text: "hello" })).status).toBe(401);
+  });
+});
+
+describe("providers", () => {
+  test("Claude first, OpenAI when Claude fails, and the price follows the model that answered", async () => {
+    const claude: Summarize = async () => { throw new Error("credit balance is too low"); };
+    const calls: any[] = [];
+    const fakeFetch = (async (url: string, init: RequestInit) => {
+      calls.push({ url, body: JSON.parse(String(init.body)) });
+      return new Response(JSON.stringify({ choices: [{ message: { content: " Notes. " } }], usage: { prompt_tokens: 1000, completion_tokens: 100 } }));
+    }) as unknown as typeof fetch;
+    const chain = fallbackSummarizer([{ name: "anthropic", summarize: claude }, { name: "openai", summarize: openaiSummarizer("sk-test", "gpt-5.2", fakeFetch) }])!;
+    const result = await chain("sys", "doc");
+    expect(result).toEqual({ text: "Notes.", usage: { input_tokens: 1000, output_tokens: 100 }, refused: false, model: "gpt-5.2" });
+    expect(calls[0].url).toBe("https://api.openai.com/v1/chat/completions");
+    expect(calls[0].body.max_completion_tokens).toBeGreaterThan(0);
+    expect(calls[0].body.messages[0]).toEqual({ role: "system", content: "sys" });
+    expect(costMicros("gpt-5.2", result.usage)).toBe(1000 * 1.75 + 100 * 14);
+    expect(fallbackSummarizer([])).toBeNull();
+    const failing = openaiSummarizer("sk-test", "gpt-5.2", (async () => new Response("{\"error\":\"insufficient_quota\"}", { status: 429 })) as unknown as typeof fetch);
+    await expect(fallbackSummarizer([{ name: "anthropic", summarize: claude }, { name: "openai", summarize: failing }])!("s", "d")).rejects.toThrow("OpenAI 429");
   });
 });
 

@@ -256,6 +256,7 @@ function home(): string {
     <div class="card"><h3>A workspace for your team.</h3><p>Organize people into organizations and teams. Share with a whole group, a few collaborators, or anyone with your link.</p></div>
     <div class="card"><h3>A plain text editor.</h3><p>Line numbers, multiple cursors, find and replace, folding, <code>Ctrl+P</code> to any file and <code>Ctrl+Shift+P</code> for every command. Open a folder from disk and <code>Ctrl+S</code> saves back to it. <a href="/viewer">Open the editor</a>.</p></div>
     <div class="card"><h3>Files up to 5 GB, 5,000 of them.</h3><p>A free account lifts the limits: up to 5,000 files, each up to 5 GB, with 5 GB of end-to-end encrypted storage that syncs to every device. Need more? Pay as you go, $0.05 per GB a month, from a CoinPay balance.</p></div>
+    <div class="card"><h3>Summarize any document.</h3><p>Press Summarize in the editor for a short abstract and the key points of the open file, written by Claude. The first 10 documents a week are free on a free account; after that, pay as you go from a CoinPay balance, usually a fraction of a cent each. <a href="/viewer">Try it</a>.</p></div>
     <div class="card"><h3>Take the editor with you.</h3><p>Install readm3 from your browser, or get the desktop app: Linux <a href="${REPO}/releases/latest/download/readm3-linux-x86_64.AppImage">AppImage</a> or <a href="${REPO}/releases/latest/download/readm3-linux-x86_64.flatpak">Flatpak</a>, macOS for <a href="${REPO}/releases/latest/download/readm3-mac-arm64.dmg">Apple silicon</a> or <a href="${REPO}/releases/latest/download/readm3-mac-x64.dmg">Intel</a>, <a href="${REPO}/releases/latest/download/readm3-windows-x64-setup.exe">Windows</a>. Then <code>readm3 edit .</code> opens a folder from the terminal, like <code>subl .</code>. Local files work offline; shared documents stay connected.</p></div>
     <div class="card"><h3>Use the tools you already use.</h3><p>The web editor, CLI, API, and MCP work with the same documents and permissions. Your terminal and your agents can join the workflow.</p></div>
   </div>
@@ -448,6 +449,7 @@ terminal.
 
 - Editor: ${SITE}/viewer (installable, offline text editor for Markdown and code: multiple cursors, find and replace, Ctrl+P quick open, command palette, saves back to files on disk)
 - Desktop app: ${REPO}/releases/latest (the same editor for Linux as AppImage and Flatpak, macOS dmg, Windows installer); \`readm3 edit PATH...\` opens files and folders in it
+- Summaries: Summarize in ${SITE}/viewer, or POST /api/v1/summaries/document { path, text } signed in (10 free documents a week, then pay as you go)
 - Paste: ${SITE}/paste (anonymous pastes of any text, PDF or image behind an expiring secret link; CLI, curl, API and MCP examples)
 - Site: ${SITE}
 - Source: ${REPO}
