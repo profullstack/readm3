@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { DOCX } from "../../server/test/zip.ts";
 
 test("verified signup, profile, persistence, sign-out, and return sign-in", async ({ page, request }) => {
   const email = `browser-${Date.now()}@example.com`;
@@ -82,4 +83,31 @@ test("Summarize: a signed-in reader gets a free AI summary of the open document,
   await dialog.getByRole("button", { name: "Close summary" }).click();
   await page.locator("#summarize").click();
   await expect(page.locator(".summary-dialog .history-account")).toContainText("Already summarized · 9 of 10");
+  await page.locator(".summary-dialog").getByRole("button", { name: "Close summary" }).click();
+
+  // Every kind of file summarizes: a PDF goes as itself, an SVG is redrawn as PNG, a Word file as its text.
+  const pdf = Buffer.from("%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 100]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n");
+  const svg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="red"/></svg>`);
+  await page.locator("#files-input").setInputFiles([
+    { name: "spec.pdf", mimeType: "application/pdf", buffer: pdf },
+    { name: "logo.svg", mimeType: "image/svg+xml", buffer: svg },
+    { name: "plan.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: Buffer.from(DOCX) },
+  ]);
+  const summarizeFile = async (name: string, expected: string, left: number) => {
+    await page.locator(`#file-list button[title="${name}"]`).click();
+    await expect(page.locator("#summarize")).toBeVisible();
+    await page.locator("#summarize").click();
+    await expect(dialog.locator(".summary-text")).toContainText(expected);
+    await expect(dialog.locator(".history-account")).toContainText(`Free · ${left} of 10`);
+    await dialog.getByRole("button", { name: "Close summary" }).click();
+  };
+  await summarizeFile("spec.pdf", "an attached application/pdf", 8);
+  await summarizeFile("logo.svg", "an attached image/png", 7);
+  // The Word file shows a card (browsers cannot show it) with its own Summarize button.
+  await page.locator('#file-list button[title="plan.docx"]').click();
+  await expect(page.locator("#file-mark")).toHaveText("DOCX");
+  await expect(page.locator("#media-content .media-card")).toContainText("Word document");
+  await page.locator("#media-content").getByRole("button", { name: "Summarize with AI" }).click();
+  await expect(dialog.locator(".summary-text")).toContainText("Budget: $4,200 & rising");
+  await expect(dialog.locator(".history-account")).toContainText("Free · 6 of 10");
 });

@@ -421,8 +421,22 @@ the whole open document: a short abstract and its key points. Signed in, the fir
 **10 documents a week are free** (Monday 00:00 UTC to the next); after that each one is
 charged from the balance like a change summary. Free summaries carry no price arm, so
 the experiment counts only paid ones. Up to 400 KB of text; the first 60,000
-characters are sent. Pressing Summarize again on unchanged text shows the same summary
-without a second call.
+characters are sent. Pressing Summarize again on an unchanged document shows the same
+summary without a second call.
+
+It works on every kind of file, not just text:
+
+- **PDFs** (up to 20 MB) go to the model as they are, so it reads the text and the
+  pages' figures, tables and scans.
+- **Images**: PNG, JPEG, GIF and WebP are sent as they are. SVG, AVIF, BMP, icons and
+  anything over 2,000 px or 3.75 MB are redrawn as PNG (or JPEG) in the browser first.
+  The summary describes the picture and any text, chart or diagram in it.
+- **Word, Excel, PowerPoint** (`.docx`, `.xlsx`, `.pptx`), **OpenDocument** (`.odt`,
+  `.ods`, `.odp`) and **EPUB** files can now be opened in the workspace. The browser
+  cannot show them, so they appear as a card with Summarize and Download. The server
+  reads the text out of them (paragraphs, slides with speaker notes, sheets row by row,
+  chapters in reading order) and summarizes that. Older `.doc`, `.xls` and `.ppt`
+  files work on a best-effort basis from the readable text they contain.
 
 | Endpoint | |
 | --- | --- |
@@ -430,7 +444,7 @@ without a second call.
 | `POST /api/v1/billing/topups` `{ amountUsd, chain? }` | starts a CoinPay payment, returns `payUrl` |
 | `GET /api/v1/billing/topups/<id>` | `pending` or `paid` |
 | `POST /api/v1/summaries` `{ path, before, after }` | the abstract, `chargedMicros`, new balance |
-| `POST /api/v1/summaries/document` `{ path, text }` | a summary of a whole document; `free`, `chargedMicros`, `freeSummaries { perWeek, left, resetsAt }`, new balance |
+| `POST /api/v1/summaries/document` `{ path, text }` or `{ path, data, mime? }` | a summary of a whole document, from its text or from the file as base64 `data` (PDF, PNG/JPEG/GIF/WebP, Office, OpenDocument, EPUB; the type comes from `mime` or the name); `free`, `chargedMicros`, `freeSummaries { perWeek, left, resetsAt }`, new balance |
 | `GET /api/v1/billing/experiment` | admins: per arm accounts, payers, top-ups, summaries, revenue, model cost |
 | `POST /api/v1/billing/coinpay/webhook` | CoinPay's signed webhook (`t=…,v1=` HMAC-SHA256) |
 

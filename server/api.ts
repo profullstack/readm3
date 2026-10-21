@@ -20,10 +20,12 @@ const json = (
   status = 200,
   extra: Record<string, string> = {},
 ) => Response.json(body, { status, headers: { ...headers, ...extra } });
-async function body(request: Request): Promise<Record<string, unknown>> {
+/** A file sent for a summary: up to 20 MB as base64, with room for the JSON around it. */
+const MAX_SUMMARY_BODY = 28 * 1024 * 1024;
+async function body(request: Request, max = MAX_BODY): Promise<Record<string, unknown>> {
   if (!request.headers.get("content-type")?.startsWith("application/json"))
     throw new HttpError(415, "Use application/json.");
-  if (Number(request.headers.get("content-length")) > MAX_BODY)
+  if (Number(request.headers.get("content-length")) > max)
     throw new HttpError(413, "Request too large.");
   const stream = request.body?.getReader();
   if (!stream) throw new HttpError(400, "A JSON body is required.");
@@ -34,7 +36,7 @@ async function body(request: Request): Promise<Record<string, unknown>> {
       const item = await stream.read();
       if (item.done) break;
       size += item.value.length;
-      if (size > MAX_BODY) {
+      if (size > max) {
         await stream.cancel();
         throw new HttpError(413, "Request too large.");
       }
@@ -291,7 +293,7 @@ export function createApi(
       }
       if (money && path === "summaries/document" && request.method === "POST") {
         limit(`summary:${user.id}`, 30);
-        return json(await money.billing.documentSummary(user, await body(request)));
+        return json(await money.billing.documentSummary(user, await body(request, MAX_SUMMARY_BODY)));
       }
       if (path === "actions" && request.method === "POST") {
         const data = await body(request);

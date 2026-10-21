@@ -16,7 +16,7 @@ import * as fileHistory from "./history.ts";
 import { awaitTopUp, showHistory, showTopUp } from "./history-panel.ts";
 import { showSummary } from "./summary-panel.ts";
 import { openPalette, rank, type PaletteItem } from "./palette.ts";
-import { binaryType, detectLanguage, languageForName, looksBinary, MARKDOWN } from "../src/code.ts";
+import { binaryType, detectLanguage, languageForName, looksBinary, MARKDOWN, type BinaryType } from "../src/code.ts";
 import { accepts, bytesOf, comparePaths, kindOf, MAX_FILE_BYTES, MAX_FILES, MAX_WORKSPACE_BYTES, persist, rawUrl, restore, toBase64, type Document, type Workspace } from "./workspace.ts";
 
 /** The starter workspace's content-addressed URL, defined by the build. */
@@ -81,8 +81,10 @@ function applyKind() {
   element("spoilers").hidden = current.kind !== "markdown";
   element("code-tools").hidden = current.kind !== "code";
   element("copy").hidden = current.kind === "binary" || isLarge();
-  element("summarize").hidden = current.kind === "binary" || isLarge();
-  element("file-mark").textContent = current.kind === "markdown" ? "M↓" : current.kind === "code" ? current.language.extensions[0]!.toUpperCase() : current.binary.label.split(" ")[0]!.toUpperCase();
+  // Any file can be summarized but text too large to open here (a large PDF or image still can).
+  element("summarize").hidden = isLarge() && current.kind !== "binary";
+  element("file-mark").textContent = current.kind === "markdown" ? "M↓" : current.kind === "code" ? current.language.extensions[0]!.toUpperCase()
+    : current.binary.kind === "document" ? workspace.active.split(".").at(-1)!.toUpperCase() : current.binary.label.split(" ")[0]!.toUpperCase();
   element<HTMLButtonElement>("edit-mode").disabled = current.kind === "binary" || isLarge() || !!pasteDocument || (!!cloudDocument && !cloudDocument.canEdit);
   if (!cloudDocument && !pasteDocument) element("history").hidden = current.kind === "binary" || isLarge();
 }
@@ -311,7 +313,7 @@ function commands(): PaletteItem[] {
     ] : [],
     ...cloudDocument?.canEdit ? [command("File: Save version", () => void saveCloud(), "Ctrl+S")] : [],
     command("File: Download", download),
-    ...isBinary() || isLarge() ? [] : [command("File: Summarize with AI", summarize)],
+    ...isLarge() && !isBinary() ? [] : [command("File: Summarize with AI", summarize)],
     command("View: Read", () => setMode(false), "Esc"),
     ...canEdit() ? [command("View: Edit", () => setMode(true), "e")] : [],
     command("View: Toggle sidebar", () => document.body.classList.toggle("sidebar-hidden")),
@@ -393,15 +395,18 @@ function progress() {
 }
 
 let previousRender = "";
-/** A PDF or image: the browser's own viewer on a blob URL, which is revoked when the next one is made. */
-function renderMedia(mime: string, media: "pdf" | "image", label: string) {
+/**
+ * A PDF or image: the browser's own viewer on a blob URL, which is revoked when the next
+ * one is made. An office document or e-book the browser cannot show gets a card instead.
+ */
+function renderMedia(mime: string, media: BinaryType["kind"], label: string) {
   const key = JSON.stringify(["media", workspace.active, current().source.length]);
   if (key === previousRender) return;
   previousRender = key;
   showMedia(new Blob([bytesOf(current()).buffer as ArrayBuffer], { type: mime }), media, label);
 }
 
-function showMedia(blob: Blob, media: "pdf" | "image", label: string) {
+function showMedia(blob: Blob, media: BinaryType["kind"], label: string) {
   content.hidden = true;
   codeContent.hidden = true;
   mediaContent.hidden = false;
@@ -409,6 +414,27 @@ function showMedia(blob: Blob, media: "pdf" | "image", label: string) {
   if (mediaUrl) URL.revokeObjectURL(mediaUrl);
   mediaUrl = URL.createObjectURL(blob);
   mediaContent.replaceChildren();
+  if (media === "document") {
+    const card = document.createElement("div");
+    card.className = "media-card";
+    const title = document.createElement("strong");
+    title.textContent = current().path.split("/").at(-1)!;
+    const summarizeButton = document.createElement("button");
+    summarizeButton.type = "button";
+    summarizeButton.className = "primary-action";
+    summarizeButton.textContent = "Summarize with AI";
+    summarizeButton.onclick = summarize;
+    const downloadButton = document.createElement("button");
+    downloadButton.type = "button";
+    downloadButton.className = "ghost";
+    downloadButton.textContent = "Download";
+    downloadButton.onclick = download;
+    const line = document.createElement("p");
+    line.textContent = `${label} · ${formatBytes(blob.size)}. Browsers cannot show this file; Summarize reads it for you, and Download opens it in your own app.`;
+    card.append(title, line, summarizeButton, " ", downloadButton);
+    mediaContent.append(card);
+    return;
+  }
   if (media === "image") {
     const image = document.createElement("img");
     image.src = mediaUrl;
@@ -550,7 +576,7 @@ async function showEditor(focus: boolean, atEnd: boolean) {
 function setMode(edit: boolean, focus = true, atEnd = false) {
   if (edit && cloudDocument && !cloudDocument.canEdit) { notice("You have view-only access to this document."); return; }
   if (edit && pasteDocument) { notice("A private link is read-only. Copy or download the file to edit it."); return; }
-  if (edit && isBinary()) { notice("A PDF or image cannot be edited here. Download it to change it elsewhere."); return; }
+  if (edit && isBinary()) { notice("Only text is edited here. Download this file to change it elsewhere."); return; }
   if (edit && isLarge()) { notice("A file over 4 MB opens read-only. Download it to change it elsewhere."); return; }
   editing = edit;
   editor.hidden = !edit;
@@ -707,7 +733,7 @@ async function importFiles(files: disk.Picked[], name = "Your workspace") {
     if (needAccount) notice(`${needAccount} file(s) skipped: over 4 MB, or past 20 MB and 1,000 files, without an account. ${ACCOUNT_LIMITS}`);
     if (skipped) notice(`${skipped} file(s) skipped: larger than 5 GB.`);
     if (overCount) notice(`${overCount} file(s) skipped: a workspace holds up to ${MAX_ACCOUNT_FILES.toLocaleString()} files.`);
-    if (unreadable) notice(`${unreadable} file(s) skipped: not text, PDF or image.`);
+    if (unreadable) notice(`${unreadable} file(s) skipped: not text, a PDF, an image or an office document.`);
   } catch (error) {
     notice(error instanceof DOMException && error.name === "QuotaExceededError"
       ? "This device's browser storage is full. Free some space, or open fewer large files."
@@ -716,10 +742,19 @@ async function importFiles(files: disk.Picked[], name = "Your workspace") {
   finally { importBusy = false; filesInput.value = ""; folderInput.value = ""; }
 }
 
-/** An AI summary of the open document, as it reads now (unsaved edits included). */
+/** An AI summary of the open document: text as it reads now (unsaved edits included), or the file itself. */
 function summarize() {
-  if (isBinary() || isLarge()) return;
-  void showSummary(workspace.active, current().source, () => void showTopUp());
+  const doc = current();
+  const active = kind();
+  const topUp = () => void showTopUp();
+  if (active.kind !== "binary") {
+    if (!isLarge()) void showSummary(doc.path, { text: doc.source }, topUp);
+    return;
+  }
+  const { mime } = active.binary;
+  const ref = doc.blob;
+  const file = ref ? () => stored.bytes(ref, mime) : async () => new Blob([bytesOf(doc).buffer as ArrayBuffer], { type: mime });
+  void showSummary(doc.path, { mime, size: ref ? ref.size : bytesOf(doc).length, file }, topUp);
 }
 
 function openHistory() {

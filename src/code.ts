@@ -121,10 +121,13 @@ for (const language of LANGUAGES) for (const extension of language.extensions) b
 const AUTO_DETECT = LANGUAGES.filter((language) => language.auto !== false).map((language) => language.id);
 
 /**
- * Files the browser shows on its own without any text rendering: a PDF through the
- * built-in viewer, an image through <img>. Their bytes travel as base64 in `source`.
+ * Files that are not text. The browser shows a PDF through its built-in viewer and an
+ * image through <img>; an office document or e-book it cannot show, so it is kept to
+ * download or summarize. Their bytes travel as base64 in `source`.
  */
-export interface BinaryType { kind: "pdf" | "image"; mime: string; label: string }
+export interface BinaryType { kind: "pdf" | "image" | "document"; mime: string; label: string }
+const OOXML = "application/vnd.openxmlformats-officedocument";
+const ODF = "application/vnd.oasis.opendocument";
 const BINARY_TYPES: Record<string, BinaryType> = {
   pdf: { kind: "pdf", mime: "application/pdf", label: "PDF" },
   png: { kind: "image", mime: "image/png", label: "PNG image" },
@@ -136,6 +139,16 @@ const BINARY_TYPES: Record<string, BinaryType> = {
   bmp: { kind: "image", mime: "image/bmp", label: "Bitmap image" },
   ico: { kind: "image", mime: "image/x-icon", label: "Icon" },
   svg: { kind: "image", mime: "image/svg+xml", label: "SVG image" },
+  docx: { kind: "document", mime: `${OOXML}.wordprocessingml.document`, label: "Word document" },
+  doc: { kind: "document", mime: "application/msword", label: "Word 97 document" },
+  xlsx: { kind: "document", mime: `${OOXML}.spreadsheetml.sheet`, label: "Excel workbook" },
+  xls: { kind: "document", mime: "application/vnd.ms-excel", label: "Excel 97 workbook" },
+  pptx: { kind: "document", mime: `${OOXML}.presentationml.presentation`, label: "PowerPoint deck" },
+  ppt: { kind: "document", mime: "application/vnd.ms-powerpoint", label: "PowerPoint 97 deck" },
+  odt: { kind: "document", mime: `${ODF}.text`, label: "OpenDocument text" },
+  ods: { kind: "document", mime: `${ODF}.spreadsheet`, label: "OpenDocument spreadsheet" },
+  odp: { kind: "document", mime: `${ODF}.presentation`, label: "OpenDocument presentation" },
+  epub: { kind: "document", mime: "application/epub+zip", label: "EPUB book" },
 };
 
 /** The binary type a file name maps to, or undefined for text (which includes unknown names). */

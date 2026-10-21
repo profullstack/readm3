@@ -17,6 +17,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createHash } from "node:crypto";
 import { diffLines, type Diff } from "../src/diff.ts";
+import { binaryType } from "../src/code.ts";
+import { documentText, extractable } from "./extract.ts";
 import { HttpError, id, now, type Store, type User } from "./store.ts";
 
 export const BILLING_SCHEMA = `
@@ -45,6 +47,11 @@ export const DEFAULT_OPENAI_MODEL = "gpt-5.2";
 export const FREE_DOCUMENTS_PER_WEEK = 10;
 /** Longest text sent per side, and the most of the diff the model is shown. */
 export const MAX_SOURCE = 400 * 1024;
+/** The largest PDF or office file a summary reads, and the largest image (the models' own per-image cap). */
+export const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
+export const MAX_IMAGE_BYTES = 3_750_000;
+/** Images the models read as they are; the editor converts any other kind to PNG first. */
+export const MODEL_IMAGES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const MAX_PROMPT_CHARS = 60_000;
 const MAX_OUTPUT_TOKENS = 2_000;
 
@@ -53,18 +60,23 @@ export type Usage = { input_tokens: number; output_tokens: number };
  * One model call: the prompt in, the text and token usage out, and which model answered
  * (so the price follows the fallback). Injected so tests never call the API.
  */
-export type Summarize = (system: string, prompt: string) => Promise<{ text: string; usage: Usage; refused: boolean; model?: string }>;
+export type Summarize = (system: string, prompt: string, attachment?: Attachment) => Promise<{ text: string; usage: Usage; refused: boolean; model?: string }>;
+/** A PDF or image the model reads itself, sent beside the prompt as base64. */
+export type Attachment = { mime: string; data: string; name: string };
 
 export function anthropicSummarizer(apiKey: string, model: string): Summarize {
   const client = new Anthropic({ apiKey });
-  return async (system, prompt) => {
+  return async (system, prompt, attachment) => {
+    const file = attachment && (attachment.mime === "application/pdf"
+      ? { type: "document" as const, source: { type: "base64" as const, media_type: "application/pdf" as const, data: attachment.data } }
+      : { type: "image" as const, source: { type: "base64" as const, media_type: attachment.mime as "image/png", data: attachment.data } });
     const response = await client.messages.create({
       model,
       max_tokens: MAX_OUTPUT_TOKENS,
       // A short abstract of a diff is simple work; low effort keeps the cost (and price) small.
       output_config: { effort: "low" },
       system,
-      messages: [{ role: "user", content: prompt }],
+      messages: [{ role: "user", content: file ? [file, { type: "text", text: prompt }] : prompt }],
     });
     const text = response.content.flatMap((block) => block.type === "text" ? [block.text] : []).join("").trim();
     return { text, usage: response.usage, refused: response.stop_reason === "refusal", model };
@@ -73,7 +85,11 @@ export function anthropicSummarizer(apiKey: string, model: string): Summarize {
 
 /** The same call on OpenAI's chat completions; current models take max_completion_tokens, not max_tokens. */
 export function openaiSummarizer(apiKey: string, model: string, fetchImpl: typeof fetch = fetch): Summarize {
-  return async (system, prompt) => {
+  return async (system, prompt, attachment) => {
+    const url = attachment && `data:${attachment.mime};base64,${attachment.data}`;
+    const file = attachment && (attachment.mime === "application/pdf"
+      ? { type: "file", file: { filename: attachment.name, file_data: url } }
+      : { type: "image_url", image_url: { url } });
     const response = await fetchImpl("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
@@ -81,7 +97,7 @@ export function openaiSummarizer(apiKey: string, model: string, fetchImpl: typeo
         model,
         max_completion_tokens: MAX_OUTPUT_TOKENS,
         reasoning_effort: "low",
-        messages: [{ role: "system", content: system }, { role: "user", content: prompt }],
+        messages: [{ role: "system", content: system }, { role: "user", content: file ? [file, { type: "text", text: prompt }] : prompt }],
       }),
     });
     if (!response.ok) throw new Error(`OpenAI ${response.status}: ${(await response.text()).slice(0, 300)}`);
@@ -102,10 +118,10 @@ export function openaiSummarizer(apiKey: string, model: string, fetchImpl: typeo
  */
 export function fallbackSummarizer(providers: { name: string; summarize: Summarize }[]): Summarize | null {
   if (!providers.length) return null;
-  return async (system, prompt) => {
+  return async (system, prompt, attachment) => {
     let last: unknown;
     for (const provider of providers) {
-      try { return await provider.summarize(system, prompt); }
+      try { return await provider.summarize(system, prompt, attachment); }
       catch (error) { last = error; console.error(`summary: ${provider.name} failed:`, error instanceof Error ? error.message : error); }
     }
     throw last;
@@ -126,11 +142,21 @@ export const DOCUMENT_SYSTEM = `You summarize a document for the person reading 
 Write a two or three sentence abstract of what the document is and says, then up to five short bullet points with its key points, decisions, numbers or steps.
 Be concrete and stay with what the document says; do not add advice of your own. Plain text, no heading, no preamble.`;
 
-/** The prompt for a whole document: its name, and its text cut to the budget with a note saying so. */
-export function documentPrompt(path: string, text: string): string {
+/**
+ * The prompt for a whole document: its name, and its text cut to the budget with a note
+ * saying so. `note` says where the text came from when it was read out of a file.
+ */
+export function documentPrompt(path: string, text: string, note = ""): string {
   const body = text.length > MAX_PROMPT_CHARS ? text.slice(0, MAX_PROMPT_CHARS) : text;
   const cut = body.length < text.length ? `\n\n(Only the first ${MAX_PROMPT_CHARS.toLocaleString("en-US")} of ${text.length.toLocaleString("en-US")} characters are shown.)` : "";
-  return `File: ${path}\n\n${body}${cut}\n`;
+  return `File: ${path}\n${note ? `(${note})\n` : ""}\n${body}${cut}\n`;
+}
+
+/** The prompt beside an attached PDF or image: its name, and what to do with a picture. */
+export function attachmentPrompt(path: string, mime: string): string {
+  return mime === "application/pdf"
+    ? `File: ${path}\n\nSummarize the attached PDF.`
+    : `File: ${path}\n\nThe attached image is the document. Describe what it shows, and summarize any text, chart or diagram in it.`;
 }
 
 /** The Monday 00:00 UTC that starts the free week holding `at`. */
@@ -220,9 +246,11 @@ export class Billing {
   }
 
   /** A rough upper bound for one summary, so an empty balance is refused before the call. */
-  estimate(arm: Arm, promptText: string, system = SYSTEM): number {
+  estimate(arm: Arm, promptText: string, system = SYSTEM, attachment?: Attachment): number {
     const price = MODEL_PRICES[this.model] ?? MODEL_PRICES[DEFAULT_MODEL]!;
-    return priceMicros(Math.ceil((promptText.length + system.length) / 3) * price.input + 400 * price.output, arm);
+    // An image is about 1,600 tokens; a PDF is read as text plus a picture of each page, roughly a token per 20 bytes.
+    const attached = !attachment ? 0 : attachment.mime === "application/pdf" ? Math.ceil(attachment.data.length * 3 / 4 / 20) : 1_600;
+    return priceMicros((Math.ceil((promptText.length + system.length) / 3) + attached) * price.input + 400 * price.output, arm);
   }
 
   async summary(user: User, args: Record<string, unknown>) {
@@ -238,10 +266,16 @@ export class Billing {
     return { ...result, added: diff.added, removed: diff.removed };
   }
 
-  /** A summary of a whole document; free while this week's allowance lasts, then from the balance. */
+  /**
+   * A summary of a whole document; free while this week's allowance lasts, then from the
+   * balance. Text arrives as `text`; a file as base64 `data` (with `mime`, or a name that
+   * says what it is): a PDF or image goes to the model as it is, an office document or
+   * e-book as the text read out of it.
+   */
   async documentSummary(user: User, args: Record<string, unknown>) {
     if (!this.summarize) throw new HttpError(503, "AI summaries are not configured on this server.");
     const path = typeof args.path === "string" && args.path.trim() ? args.path.trim().slice(0, 300) : "document";
+    if (args.data !== undefined) return this.fileSummary(user, path, args);
     const text = args.text;
     if (typeof text !== "string") throw new HttpError(400, "text must be the document's text.");
     if (!text.trim()) throw new HttpError(400, "The document is empty.");
@@ -249,11 +283,32 @@ export class Billing {
     return this.charged(user, path, DOCUMENT_SYSTEM, documentPrompt(path, text), true, "document");
   }
 
+  private async fileSummary(user: User, path: string, args: Record<string, unknown>) {
+    const data = typeof args.data === "string" ? args.data.replace(/\s+/g, "") : "";
+    if (!data || !/^[A-Za-z0-9+/]+=*$/.test(data)) throw new HttpError(400, "data must be the file's bytes as base64.");
+    const size = Math.floor(data.length * 3 / 4) - (data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0);
+    if (size > MAX_DOCUMENT_BYTES) throw new HttpError(413, `A file may be up to ${MAX_DOCUMENT_BYTES / 1024 / 1024} MB for a summary.`);
+    const mime = typeof args.mime === "string" && args.mime ? args.mime.split(";")[0]!.trim().toLowerCase() : binaryType(path)?.mime ?? "";
+    if (mime === "application/pdf" || mime.startsWith("image/")) {
+      if (mime !== "application/pdf" && !MODEL_IMAGES.has(mime)) throw new HttpError(415, "Images are read as PNG, JPEG, GIF or WebP; convert this one first.");
+      if (mime !== "application/pdf" && size > MAX_IMAGE_BYTES) throw new HttpError(413, "An image may be up to 3.75 MB for a summary; scale it down first.");
+      const attachment = { mime, data, name: path.split("/").at(-1)! };
+      return this.charged(user, path, DOCUMENT_SYSTEM, attachmentPrompt(path, mime), true, "document", attachment);
+    }
+    if (!extractable(path)) throw new HttpError(415, "Summaries read text, PDFs, images, and Word, Excel, PowerPoint, OpenDocument and EPUB files.");
+    let read: Awaited<ReturnType<typeof documentText>>;
+    try { read = await documentText(path, Buffer.from(data, "base64")); }
+    catch { throw new HttpError(422, "This file could not be read; it may be damaged or password-protected. You were not charged."); }
+    if (!read.text.trim()) throw new HttpError(422, "No text was found in this file. You were not charged.");
+    const note = read.legacy ? "Text recovered from an older Office file; it may include stray fragments, which you should ignore." : "Text read out of the file; layout and images are not included.";
+    return this.charged(user, path, DOCUMENT_SYSTEM, documentPrompt(path, read.text, note), true, "document");
+  }
+
   /** Runs one summary and records it: free (amount 0, no arm) when allowed and one is left, else at the arm's price. */
-  private async charged(user: User, path: string, system: string, text: string, freeAllowed: boolean, kind: "change" | "document") {
+  private async charged(user: User, path: string, system: string, text: string, freeAllowed: boolean, kind: "change" | "document", attachment?: Attachment) {
     const arm = this.arm(user);
     const free = freeAllowed && this.free(user.id).left > 0;
-    const estimate = this.estimate(arm, text, system);
+    const estimate = this.estimate(arm, text, system, attachment);
     if (!free && this.balance(user.id) < estimate) {
       const used = freeAllowed ? `This week's ${this.freePerWeek} free summaries are used. ` : "";
       throw new HttpError(402, `${used}Not enough balance for a summary (about $${(estimate / 1e6).toFixed(4)}). Top up to continue.`);
@@ -261,7 +316,7 @@ export class Billing {
     if (this.running.has(user.id)) throw new HttpError(429, "A summary is already being written for this account.");
     this.running.add(user.id);
     let result: Awaited<ReturnType<Summarize>>;
-    try { result = await this.summarize!(system, text); }
+    try { result = await this.summarize!(system, text, attachment); }
     catch { throw new HttpError(502, "The summary could not be written. You were not charged; try again."); }
     finally { this.running.delete(user.id); }
     // A declined request is not the customer's to pay for.
