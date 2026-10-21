@@ -232,3 +232,6 @@ html, body.reader-app { height: 100%; overflow: hidden; }
 .reader-app .summary-dialog { width: min(640px, calc(100vw - 32px)); }
 .reader-app .summary-dialog .summary-body, .reader-app .summary-dialog > p { padding: 0 18px; }
 .reader-app .summary-text { white-space: pre-wrap; line-height: 1.55; margin: 4px 0 8px; overflow-wrap: anywhere; }
+.reader-app .summary-listen { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 8px; }
+.reader-app .summary-listen audio { width: 100%; max-width: 420px; height: 36px; }
+.reader-app .summary-listen small { color: var(--muted); }

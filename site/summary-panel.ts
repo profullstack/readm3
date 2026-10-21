@@ -5,18 +5,37 @@ import { toBase64 } from "./workspace.ts";
 /**
  * The Summarize dialog: an AI abstract and key points of the open document, text or
  * file. Signed in, the first few each week are free (server/billing.ts
- * FREE_DOCUMENTS_PER_WEEK), then each one is paid from the prepaid balance. A document
- * summarized once is not sent again while it is unchanged, so pressing the button twice
- * never charges twice.
+ * FREE_DOCUMENTS_PER_WEEK), then each one is paid from the prepaid balance. The server
+ * keeps every summary for the account, so a document summarized once is answered from
+ * that copy (on any device, after a reload) with no new call and no charge.
+ *
+ * Listen reads a summary aloud when the server has a voice (ElevenLabs): the first listen
+ * is paid from the balance, then the audio is kept and replays free.
  *
  * A PDF or image is sent as it is for the model to read; an office document or e-book is
  * sent as it is and the server reads the text out of it. An image the models cannot
  * take (SVG, AVIF, BMP, an icon, or one too large) is redrawn as PNG or JPEG here first.
  */
 interface Free { perWeek: number; left: number; resetsAt: string; }
-interface Summarized { summary: string; chargedMicros: number; free: boolean; freeSummaries: Free; balanceMicros: number; }
+interface Summarized { summary: string; summaryId?: string; cached?: boolean; listen?: boolean; chargedMicros: number; free: boolean; freeSummaries: Free; balanceMicros: number; }
 
 const done = new Map<string, Summarized>();
+/** Audio already fetched this session, by summary id, so a replay makes no request at all. */
+const heard = new Map<string, string>();
+
+/** A kept summary read aloud: an MP3 from the server, or the reason it could not be had. */
+async function speech(summaryId: string): Promise<{ url: string; chargedMicros: number; balanceMicros: number }> {
+  const known = heard.get(summaryId);
+  if (known) return { url: known, chargedMicros: 0, balanceMicros: NaN };
+  const response = await fetch(`/api/v1/summaries/${encodeURIComponent(summaryId)}/speech`, { method: "POST", credentials: "same-origin", cache: "no-store" });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({})) as { error?: string };
+    throw new ApiError(data.error || `Listening failed (${response.status})`, response.status);
+  }
+  const url = URL.createObjectURL(await response.blob());
+  heard.set(summaryId, url);
+  return { url, chargedMicros: Number(response.headers.get("x-charged-micros") ?? 0), balanceMicros: Number(response.headers.get("x-balance-micros")) };
+}
 const MAX_TEXT = 400 * 1024;
 const MAX_FILE = 20 * 1024 * 1024;
 const MAX_IMAGE = 3_750_000;
@@ -81,10 +100,42 @@ export async function showSummary(path: string, source: SummarySource, topUp: ()
   box.showModal();
 
   const say = (message: string) => body.replaceChildren(el("p", "history-empty", message));
+  const topUpButton = () => {
+    const top = el("button", "ghost", "Top up");
+    top.type = "button";
+    top.onclick = () => { box.close(); topUp(); };
+    return top;
+  };
   const show = (result: Summarized, again = false) => {
     body.replaceChildren(el("p", "summary-text", result.summary));
-    const cost = result.free ? "Free" : dollars(result.chargedMicros);
-    account.replaceChildren(`${again ? "Already summarized" : cost} · ${freeLine(result.freeSummaries)} · balance ${dollars(result.balanceMicros)}`);
+    const cost = again || result.cached ? "Saved summary, no charge" : result.free ? "Free" : dollars(result.chargedMicros);
+    account.replaceChildren(`${cost} · ${freeLine(result.freeSummaries)} · balance ${dollars(result.balanceMicros)}`);
+    if (!result.listen || !result.summaryId) return;
+    const summaryId = result.summaryId;
+    const player = el("div", "summary-listen");
+    const listen = el("button", "ghost", heard.has(summaryId) ? "Play" : "Listen");
+    listen.type = "button";
+    listen.setAttribute("aria-label", "Listen to this summary");
+    const status = el("small");
+    listen.onclick = async () => {
+      listen.disabled = true;
+      status.textContent = heard.has(summaryId) ? "" : "Preparing audio…";
+      try {
+        const audio = await speech(summaryId);
+        const element = document.createElement("audio");
+        element.controls = true;
+        element.autoplay = true;
+        element.src = audio.url;
+        status.textContent = audio.chargedMicros ? `Listen · ${dollars(audio.chargedMicros)} · replays are free` : "";
+        player.replaceChildren(element, status);
+      } catch (error) {
+        listen.disabled = false;
+        status.textContent = error instanceof Error ? error.message : "Listening failed.";
+        if (error instanceof ApiError && error.status === 402) player.append(" ", topUpButton());
+      }
+    };
+    player.append(listen, " ", status);
+    body.append(player);
   };
   let key = "text" in source ? `${path}\n${source.text}` : "";
   const cached = done.get(key);
@@ -130,11 +181,6 @@ export async function showSummary(path: string, source: SummarySource, topUp: ()
     show(result);
   } catch (error) {
     say(error instanceof Error ? error.message : "The summary failed.");
-    if (error instanceof ApiError && error.status === 402) {
-      const top = el("button", "ghost", "Top up");
-      top.type = "button";
-      top.onclick = () => { box.close(); topUp(); };
-      account.replaceChildren(top);
-    }
+    if (error instanceof ApiError && error.status === 402) account.replaceChildren(topUpButton());
   }
 }

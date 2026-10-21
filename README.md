@@ -421,8 +421,17 @@ the whole open document: a short abstract and its key points. Signed in, the fir
 **10 documents a week are free** (Monday 00:00 UTC to the next); after that each one is
 charged from the balance like a change summary. Free summaries carry no price arm, so
 the experiment counts only paid ones. Up to 400 KB of text; the first 60,000
-characters are sent. Pressing Summarize again on an unchanged document shows the same
-summary without a second call.
+characters are sent. Every summary is **kept for the account**, keyed by exactly what
+the model was given: the same document (or the same change) asked for again, on any
+device or after a reload, is answered from that copy with no model call, no charge and
+no free summary used.
+
+**Listen** (optional) reads a summary aloud with ElevenLabs. The first listen is
+charged from the balance at the account's price multiple of the voice's cost; the audio
+is kept with the summary, so every replay is free. The whole server reads at most
+`READM3_TTS_DAILY_CHARS` characters a day (default 5,000) so a shared ElevenLabs plan
+cannot run dry; past that, Listen pauses until midnight UTC and the summary stays
+readable.
 
 It works on every kind of file, not just text:
 
@@ -445,13 +454,18 @@ It works on every kind of file, not just text:
 | `GET /api/v1/billing/topups/<id>` | `pending` or `paid` |
 | `POST /api/v1/summaries` `{ path, before, after }` | the abstract, `chargedMicros`, new balance |
 | `POST /api/v1/summaries/document` `{ path, text }` or `{ path, data, mime? }` | a summary of a whole document, from its text or from the file as base64 `data` (PDF, PNG/JPEG/GIF/WebP, Office, OpenDocument, EPUB; the type comes from `mime` or the name); `free`, `chargedMicros`, `freeSummaries { perWeek, left, resetsAt }`, new balance |
+| `POST /api/v1/summaries/<summaryId>/speech` | a kept summary read aloud as `audio/mpeg`; `x-charged-micros` (0 on a replay) and `x-balance-micros` headers |
 | `GET /api/v1/billing/experiment` | admins: per arm accounts, payers, top-ups, summaries, revenue, model cost |
 | `POST /api/v1/billing/coinpay/webhook` | CoinPay's signed webhook (`t=…,v1=` HMAC-SHA256) |
 
 Server configuration: `ANTHROPIC_API_KEY` turns summaries on (`READM3_SUMMARY_MODEL`,
 default `claude-opus-5-5`, run at low effort) and `OPENAI_API_KEY` is the fallback when
 the Claude call fails (`READM3_OPENAI_MODEL`, default `gpt-5.2`); either one alone works.
-`READM3_FREE_SUMMARIES_PER_WEEK` changes the free allowance (default 10). `COINPAY_API_KEY`, `COINPAY_BUSINESS_ID`
+`READM3_FREE_SUMMARIES_PER_WEEK` changes the free allowance (default 10).
+`ELEVENLABS_API_KEY` turns Listen on (`READM3_TTS_VOICE`, default Matilda
+`XrExE9yKIg1WjnnlVkGX`; `READM3_TTS_MODEL`, default `eleven_flash_v2_5`;
+`READM3_TTS_MICROS_PER_CHAR`, our cost per character, default 100;
+`READM3_TTS_DAILY_CHARS`, default 5,000). `COINPAY_API_KEY`, `COINPAY_BUSINESS_ID`
 and `COINPAY_WEBHOOK_SECRET` open top-ups (`COINPAY_API_URL` defaults to
 coinpayportal.com). Without them the history still works and the paid parts say so.
 

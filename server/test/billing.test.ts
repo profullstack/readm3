@@ -2,7 +2,7 @@ import { test, expect, describe } from "bun:test";
 import { createHmac } from "node:crypto";
 import { Store, id } from "../store.ts";
 import { createApi } from "../api.ts";
-import { ARMS, attachmentPrompt, Billing, costMicros, documentPrompt, fallbackSummarizer, MAX_IMAGE_BYTES, openaiSummarizer, priceMicros, prompt, weekStart, type Attachment, type Summarize } from "../billing.ts";
+import { ARMS, attachmentPrompt, Billing, costMicros, documentPrompt, elevenlabsSpeaker, fallbackSummarizer, MAX_IMAGE_BYTES, openaiSummarizer, priceMicros, prompt, spokenText, weekStart, type Attachment, type Speak, type Summarize } from "../billing.ts";
 import { DOCX, zip } from "./zip.ts";
 import { Payments, verifySignature } from "../payments.ts";
 import { diffLines } from "../../src/diff.ts";
@@ -119,7 +119,7 @@ describe("document summaries", () => {
     const f = await fixture(async (_system, text) => { prompts.push(text); return { text: "A plan.", usage: { input_tokens: 1000, output_tokens: 100 }, refused: false }; });
     const args = { path: "plan.md", text: "# Plan\n\nShip it." };
     for (let i = 0; i < 10; i++) {
-      const done = await f.call("summaries/document", "POST", args, f.auth);
+      const done = await f.call("summaries/document", "POST", { ...args, text: `${args.text} ${i}` }, f.auth);
       expect(done.status).toBe(200);
       expect(done.data.free).toBe(true);
       expect(done.data.chargedMicros).toBe(0);
@@ -129,6 +129,11 @@ describe("document summaries", () => {
     const empty = await f.call("summaries/document", "POST", args, f.auth);
     expect(empty.status).toBe(402);
     expect(JSON.stringify(empty.data)).toContain("free summaries are used");
+    expect(prompts).toHaveLength(10);
+    // A document already summarized is answered from the kept copy even with no free summaries left.
+    const kept = await f.call("summaries/document", "POST", { ...args, text: `${args.text} 3` }, f.auth);
+    expect(kept.status).toBe(200);
+    expect(kept.data).toMatchObject({ cached: true, chargedMicros: 0, free: false });
     expect(prompts).toHaveLength(10);
     f.billing.credit(f.user.id, 1_000_000, "test:doc", "test");
     const paid = await f.call("summaries/document", "POST", args, f.auth);
@@ -159,6 +164,91 @@ describe("document summaries", () => {
     expect((await f.call("summaries/document", "POST", { path: "a.md", text: "hello" }, f.auth)).status).toBe(502);
     expect(f.billing.free(f.user.id).left).toBe(10);
     expect((await f.call("summaries/document", "POST", { path: "a.md", text: "hello" })).status).toBe(401);
+  });
+});
+
+describe("kept summaries and Listen", () => {
+  async function listening(speak: Speak, speech = { voice: "v", microsPerChar: 100, dailyChars: 5_000 }) {
+    const f = await fixture();
+    const billing = new Billing(f.store, async () => ({ text: "- Ships Friday.\n- Budget $4,200.", usage: { input_tokens: 1000, output_tokens: 100 }, refused: false }), "claude-opus-5-5", 10, speak, speech);
+    const api = createApi(f.store, "http://localhost", undefined, { billing, payments: f.payments });
+    const post = async (route: string, data?: unknown, auth: Record<string, string> = f.auth) => (await api(new Request(`http://localhost/api/v1/${route}`, {
+      method: "POST", headers: { ...(data ? { "content-type": "application/json" } : {}), ...auth }, body: data ? JSON.stringify(data) : undefined,
+    }), id()))!;
+    return { ...f, billing, post };
+  }
+
+  test("a summary is kept per account: the same document again is no call and no charge, another account is its own", async () => {
+    let calls = 0;
+    const f = await fixture(async () => { calls++; return { text: "A plan.", usage: { input_tokens: 1000, output_tokens: 100 }, refused: false }; });
+    const first = await f.call("summaries/document", "POST", { path: "a.md", text: "hello" }, f.auth);
+    const again = await f.call("summaries/document", "POST", { path: "a.md", text: "hello" }, f.auth);
+    expect(again.data).toMatchObject({ summary: "A plan.", summaryId: first.data.summaryId, cached: true, chargedMicros: 0 });
+    expect(calls).toBe(1);
+    expect(f.billing.free(f.user.id).left).toBe(9);
+    // A change summary is kept the same way.
+    f.billing.credit(f.user.id, 1_000_000, "test:k", "test");
+    await f.call("summaries", "POST", { path: "a.md", before: "a\n", after: "b\n" }, f.auth);
+    const change = await f.call("summaries", "POST", { path: "a.md", before: "a\n", after: "b\n" }, f.auth);
+    expect(change.data).toMatchObject({ cached: true, chargedMicros: 0, added: 1, removed: 1 });
+    expect(calls).toBe(2);
+    const other = await verifiedAccount(f.store, `Bo${id().slice(0, 6)}`);
+    expect((await f.call("summaries/document", "POST", { path: "a.md", text: "hello" }, { authorization: `Bearer ${other.token}` })).data.cached).toBe(false);
+    expect(calls).toBe(3);
+  });
+
+  test("Listen reads a kept summary aloud once, charged at the arm's price, then replays free", async () => {
+    const spoken: string[] = [];
+    const f = await listening(async (text) => { spoken.push(text); return new Uint8Array([0xff, 0xfb, 1, 2]); });
+    const made = await (await f.post("summaries/document", { path: "a.md", text: "hello" })).json() as any;
+    expect(made.listen).toBe(true);
+    expect((await f.post(`summaries/${made.summaryId}/speech`)).status).toBe(402);
+    f.billing.credit(f.user.id, 1_000_000, "test:l", "test");
+    const first = await f.post(`summaries/${made.summaryId}/speech`);
+    expect(first.status).toBe(200);
+    expect(first.headers.get("content-type")).toBe("audio/mpeg");
+    expect([...new Uint8Array(await first.arrayBuffer())]).toEqual([0xff, 0xfb, 1, 2]);
+    expect(spoken).toEqual(["Ships Friday.\nBudget $4,200."]);
+    const charged = Number(first.headers.get("x-charged-micros"));
+    expect(charged).toBe(priceMicros(spoken[0]!.length * 100, f.billing.arm(f.user)));
+    const replay = await f.post(`summaries/${made.summaryId}/speech`);
+    expect(replay.headers.get("x-charged-micros")).toBe("0");
+    expect(spoken).toHaveLength(1);
+    expect(f.billing.balance(f.user.id)).toBe(1_000_000 - charged);
+    // Only the account's own summaries, and only signed in.
+    const other = await verifiedAccount(f.store, `Cy${id().slice(0, 6)}`);
+    expect((await f.post(`summaries/${made.summaryId}/speech`, undefined, { authorization: `Bearer ${other.token}` })).status).toBe(404);
+    expect((await f.post(`summaries/${made.summaryId}/speech`, undefined, {})).status).toBe(401);
+  });
+
+  test("the daily character cap pauses Listen, a failed voice costs nothing, and no voice means no button", async () => {
+    const f = await listening(async () => new Uint8Array([1]), { voice: "v", microsPerChar: 100, dailyChars: 10 });
+    f.billing.credit(f.user.id, 1_000_000, "test:c", "test");
+    const made = await (await f.post("summaries/document", { path: "a.md", text: "hello" })).json() as any;
+    expect((await f.post(`summaries/${made.summaryId}/speech`)).status).toBe(503);
+    const failing = await listening(async () => { throw new Error("quota_exceeded"); });
+    failing.billing.credit(failing.user.id, 1_000_000, "test:f", "test");
+    const kept = await (await failing.post("summaries/document", { path: "a.md", text: "hello" })).json() as any;
+    expect((await failing.post(`summaries/${kept.summaryId}/speech`)).status).toBe(502);
+    expect(failing.billing.balance(failing.user.id)).toBe(1_000_000);
+    const quiet = await fixture();
+    const plain = await quiet.call("summaries/document", "POST", { path: "a.md", text: "hello" }, quiet.auth);
+    expect(plain.data.listen).toBe(false);
+    expect(spokenText("- one\n* two\n1. three\n\nend")).toBe("one\ntwo\nthree\nend");
+  });
+
+  test("ElevenLabs is asked for MP3 from the chosen voice and model", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const speak = elevenlabsSpeaker("xi-test", "voice1", "eleven_flash_v2_5", (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(new Uint8Array([9]), { headers: { "content-type": "audio/mpeg" } });
+    }) as unknown as typeof fetch);
+    expect([...await speak("Hi.")]).toEqual([9]);
+    expect(calls[0]!.url).toBe("https://api.elevenlabs.io/v1/text-to-speech/voice1?output_format=mp3_44100_64");
+    expect((calls[0]!.init.headers as Record<string, string>)["xi-api-key"]).toBe("xi-test");
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ text: "Hi.", model_id: "eleven_flash_v2_5" });
+    const broken = elevenlabsSpeaker("xi-test", "v", "m", (async () => new Response("{\"detail\":\"quota\"}", { status: 401 })) as unknown as typeof fetch);
+    await expect(broken("x")).rejects.toThrow("ElevenLabs 401");
   });
 });
 

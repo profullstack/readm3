@@ -33,7 +33,10 @@ const summarize = async (_system: string, prompt: string, attachment?: { mime: s
   text: attachment ? `Test summary of an attached ${attachment.mime}.` : `Test summary of ${prompt.length} characters: ${prompt.slice(0, 200)}`,
   usage: { input_tokens: 500, output_tokens: 50 }, refused: false,
 });
-serveSite({ accounts, port, hostname: "127.0.0.1", summarize, coinpay: { clientId: "readm3-test", clientSecret: "test-secret", url: `http://127.0.0.1:${port + 2}` } });
+// A stand-in voice: a few bytes of "audio", free per character so Listen needs no balance.
+process.env.READM3_TTS_MICROS_PER_CHAR = "0";
+const speak = async () => new Uint8Array([0xff, 0xfb, 0x90, 0x00]);
+serveSite({ accounts, port, hostname: "127.0.0.1", summarize, speak, coinpay: { clientId: "readm3-test", clientSecret: "test-secret", url: `http://127.0.0.1:${port + 2}` } });
 Bun.serve({ port: port + 1, hostname: "127.0.0.1", fetch(request) {
   const url = new URL(request.url);
   if (url.pathname === "/test/mail") return Response.json(mail.filter(message => message.to === url.searchParams.get("email")));
