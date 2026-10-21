@@ -13,7 +13,7 @@ import { Accounts } from "../server/accounts.ts";
 import { accountMailer } from "../server/account-mail.ts";
 import { Store } from "../server/store.ts";
 import { createApi } from "../server/api.ts";
-import { anthropicSummarizer, Billing, DEFAULT_MODEL, DEFAULT_OPENAI_MODEL, fallbackSummarizer, FREE_DOCUMENTS_PER_WEEK, openaiSummarizer, type Summarize } from "../server/billing.ts";
+import { anthropicSummarizer, Billing, DEFAULT_MODEL, DEFAULT_OPENAI_MODEL, DEFAULT_TTS_MODEL, DEFAULT_VOICE, elevenlabsSpeaker, fallbackSummarizer, FREE_DOCUMENTS_PER_WEEK, openaiSummarizer, TTS_DAILY_CHARS, TTS_MICROS_PER_CHAR, type Speak, type Summarize } from "../server/billing.ts";
 import { Payments, paymentOptions, type PaymentOptions } from "../server/payments.ts";
 import { CoinPay } from "../server/coinpay.ts";
 import { createOAuth } from "../server/oauth.ts";
@@ -111,7 +111,7 @@ function cacheFor(path: string): string {
   return "public, max-age=300";
 }
 
-export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorParameters<typeof CoinPay>[2]; port?: number; hostname?: string; summarize?: Summarize | null; payments?: PaymentOptions; blobDir?: string } = {}) {
+export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorParameters<typeof CoinPay>[2]; port?: number; hostname?: string; summarize?: Summarize | null; speak?: Speak | null; payments?: PaymentOptions; blobDir?: string } = {}) {
   const listenPort = options.port ?? port;
   const database = process.env.READM3_DB || join(dirname(dist), "..", "data", "readm3.sqlite");
   const accounts = options.accounts ?? new Accounts(
@@ -124,6 +124,8 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
   // ANTHROPIC_API_KEY turns on AI summaries (READM3_SUMMARY_MODEL picks the model), with
   // OPENAI_API_KEY as the fallback when Claude fails (READM3_OPENAI_MODEL); either one alone works.
   // READM3_FREE_SUMMARIES_PER_WEEK is the free document allowance (default 10).
+  // ELEVENLABS_API_KEY turns on Listen (READM3_TTS_VOICE, READM3_TTS_MODEL, READM3_TTS_MICROS_PER_CHAR,
+  // READM3_TTS_DAILY_CHARS caps the characters read aloud per day across the server).
   // COINPAY_API_KEY, COINPAY_BUSINESS_ID and COINPAY_WEBHOOK_SECRET open top-ups.
   const model = process.env.READM3_SUMMARY_MODEL || DEFAULT_MODEL;
   const openaiModel = process.env.READM3_OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
@@ -132,8 +134,13 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
     ...process.env.OPENAI_API_KEY ? [{ name: "openai", summarize: openaiSummarizer(process.env.OPENAI_API_KEY, openaiModel) }] : [],
   ]);
   const freePerWeek = Number(process.env.READM3_FREE_SUMMARIES_PER_WEEK ?? FREE_DOCUMENTS_PER_WEEK);
+  const voice = process.env.READM3_TTS_VOICE || DEFAULT_VOICE;
+  const speak = options.speak !== undefined ? options.speak
+    : process.env.ELEVENLABS_API_KEY ? elevenlabsSpeaker(process.env.ELEVENLABS_API_KEY, voice, process.env.READM3_TTS_MODEL || DEFAULT_TTS_MODEL) : null;
+  const setting = (name: string, fallback: number) => { const value = Number(process.env[name] ?? fallback); return Number.isFinite(value) && value >= 0 ? value : fallback; };
   const billing = new Billing(store, summarize, process.env.ANTHROPIC_API_KEY || !process.env.OPENAI_API_KEY ? model : openaiModel,
-    Number.isFinite(freePerWeek) && freePerWeek >= 0 ? freePerWeek : FREE_DOCUMENTS_PER_WEEK);
+    Number.isFinite(freePerWeek) && freePerWeek >= 0 ? freePerWeek : FREE_DOCUMENTS_PER_WEEK,
+    speak, { voice, microsPerChar: setting("READM3_TTS_MICROS_PER_CHAR", TTS_MICROS_PER_CHAR), dailyChars: setting("READM3_TTS_DAILY_CHARS", TTS_DAILY_CHARS) });
   const payments = new Payments(store, billing, options.payments ?? paymentOptions());
   const api = createApi(store, accounts.origin, new CoinPay(store, accounts, options.coinpay), { billing, payments });
   const syncApi = createSyncApi(store, accounts);

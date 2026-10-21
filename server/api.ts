@@ -295,6 +295,15 @@ export function createApi(
         limit(`summary:${user.id}`, 30);
         return json(await money.billing.documentSummary(user, await body(request, MAX_SUMMARY_BODY)));
       }
+      // A kept summary read aloud, as MP3; the charge and the new balance travel as headers.
+      const speech = path.match(/^summaries\/([A-Za-z0-9_-]{1,64})\/speech$/);
+      if (money && speech && request.method === "POST") {
+        limit(`listen:${user.id}`, 30);
+        const heard = await money.billing.listen(user, speech[1]!);
+        return new Response(heard.audio as Uint8Array<ArrayBuffer>, {
+          headers: { ...headers, "content-type": "audio/mpeg", "x-charged-micros": String(heard.chargedMicros), "x-balance-micros": String(heard.balanceMicros) },
+        });
+      }
       if (path === "actions" && request.method === "POST") {
         const data = await body(request);
         const args = data.args ?? {};

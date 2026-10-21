@@ -80,9 +80,19 @@ test("Summarize: a signed-in reader gets a free AI summary of the open document,
   const dialog = page.locator(".summary-dialog");
   await expect(dialog.locator(".summary-text")).toContainText("Test summary of");
   await expect(dialog.locator(".history-account")).toContainText("Free · 9 of 10 free summaries left this week");
+  // Listen reads it aloud: an audio player takes the button's place.
+  await dialog.getByRole("button", { name: "Listen to this summary" }).click();
+  await expect(dialog.locator(".summary-listen audio")).toHaveAttribute("src", /^blob:/);
   await dialog.getByRole("button", { name: "Close summary" }).click();
   await page.locator("#summarize").click();
-  await expect(page.locator(".summary-dialog .history-account")).toContainText("Already summarized · 9 of 10");
+  await expect(page.locator(".summary-dialog .history-account")).toContainText("Saved summary, no charge · 9 of 10");
+  // The server keeps it too: after a reload the same document is still free and not summarized again.
+  await page.locator(".summary-dialog").getByRole("button", { name: "Close summary" }).click();
+  await page.reload();
+  await passphrase.getByRole("button", { name: "Close dialog" }).click();
+  await page.locator("#summarize").click();
+  await expect(page.locator(".summary-dialog .history-account")).toContainText("Saved summary, no charge · 9 of 10");
+  await expect(page.locator(".summary-dialog").getByRole("button", { name: "Listen to this summary" })).toHaveText("Listen");
   await page.locator(".summary-dialog").getByRole("button", { name: "Close summary" }).click();
 
   // Every kind of file summarizes: a PDF goes as itself, an SVG is redrawn as PNG, a Word file as its text.

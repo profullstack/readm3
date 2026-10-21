@@ -13,6 +13,11 @@
  * week are free (FREE_DOCUMENTS_PER_WEEK), then they are charged like any other.
  *
  * Claude writes the summaries; OpenAI is the fallback when the Claude call fails.
+ *
+ * Every summary is kept per account, keyed by a hash of exactly what the model was given,
+ * so the same document (or change) asked for again is answered from the cache: no call,
+ * no charge, no free summary used. A kept summary can be read aloud (ElevenLabs); its
+ * audio is kept too, so it is paid for once and replays free.
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { createHash } from "node:crypto";
@@ -25,6 +30,9 @@ export const BILLING_SCHEMA = `
   CREATE TABLE IF NOT EXISTS billing_ledger (id TEXT PRIMARY KEY, userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('topup','charge','refund')), amountMicros INTEGER NOT NULL, ref TEXT UNIQUE, arm TEXT, detail TEXT NOT NULL DEFAULT '', createdAt TEXT NOT NULL);
   CREATE INDEX IF NOT EXISTS billing_ledger_user ON billing_ledger(userId,createdAt);
   CREATE TABLE IF NOT EXISTS pricing_arms (userId TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, arm TEXT NOT NULL, assignedAt TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS summary_cache (id TEXT PRIMARY KEY, userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, keyHash TEXT NOT NULL, kind TEXT NOT NULL, path TEXT NOT NULL, summary TEXT NOT NULL, model TEXT NOT NULL, createdAt TEXT NOT NULL, UNIQUE(userId,keyHash));
+  CREATE TABLE IF NOT EXISTS summary_audio (summaryId TEXT PRIMARY KEY REFERENCES summary_cache(id) ON DELETE CASCADE, voice TEXT NOT NULL, chars INTEGER NOT NULL, audio BLOB NOT NULL, createdAt TEXT NOT NULL);
+  CREATE INDEX IF NOT EXISTS summary_audio_day ON summary_audio(createdAt);
 `;
 
 /** The price experiment: each arm's multiple of the model's real cost. */
@@ -63,6 +71,34 @@ export type Usage = { input_tokens: number; output_tokens: number };
 export type Summarize = (system: string, prompt: string, attachment?: Attachment) => Promise<{ text: string; usage: Usage; refused: boolean; model?: string }>;
 /** A PDF or image the model reads itself, sent beside the prompt as base64. */
 export type Attachment = { mime: string; data: string; name: string };
+
+/** Text to speech: the words in, MP3 bytes out. Injected so tests never call the API. */
+export type Speak = (text: string) => Promise<Uint8Array>;
+/** Matilda, a premade "knowledgeable, professional" narration voice; READM3_TTS_VOICE picks another. */
+export const DEFAULT_VOICE = "XrExE9yKIg1WjnnlVkGX";
+export const DEFAULT_TTS_MODEL = "eleven_flash_v2_5";
+/** What a spoken character costs us on ElevenLabs (Flash is half a credit a character), in micro-dollars. */
+export const TTS_MICROS_PER_CHAR = 100;
+/** Characters read aloud per day across the whole server, so the ElevenLabs plan cannot run dry. */
+export const TTS_DAILY_CHARS = 5_000;
+const MAX_SPOKEN = 2_500;
+
+export function elevenlabsSpeaker(apiKey: string, voice = DEFAULT_VOICE, model = DEFAULT_TTS_MODEL, fetchImpl: typeof fetch = fetch): Speak {
+  return async (text) => {
+    const response = await fetchImpl(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_64`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "xi-api-key": apiKey, accept: "audio/mpeg" },
+      body: JSON.stringify({ text, model_id: model }),
+    });
+    if (!response.ok) throw new Error(`ElevenLabs ${response.status}: ${(await response.text()).slice(0, 300)}`);
+    return new Uint8Array(await response.arrayBuffer());
+  };
+}
+
+/** A summary as it should be heard: bullet marks dropped, cut to a length worth listening to. */
+export function spokenText(summary: string): string {
+  return summary.replace(/^\s*(?:[-*•]|\d+[.)])\s+/gm, "").replace(/\n{2,}/g, "\n").trim().slice(0, MAX_SPOKEN);
+}
 
 export function anthropicSummarizer(apiKey: string, model: string): Summarize {
   const client = new Anthropic({ apiKey });
@@ -184,7 +220,10 @@ export function prompt(path: string, diff: Diff): string {
 export class Billing {
   /** One summary at a time per account, so two requests cannot both spend the same balance. */
   private running = new Set<string>();
-  constructor(private store: Store, private summarize: Summarize | null, readonly model = DEFAULT_MODEL, readonly freePerWeek = FREE_DOCUMENTS_PER_WEEK) {
+  constructor(
+    private store: Store, private summarize: Summarize | null, readonly model = DEFAULT_MODEL, readonly freePerWeek = FREE_DOCUMENTS_PER_WEEK,
+    private speak: Speak | null = null, readonly speech = { voice: DEFAULT_VOICE, microsPerChar: TTS_MICROS_PER_CHAR, dailyChars: TTS_DAILY_CHARS },
+  ) {
     store.db.exec(BILLING_SCHEMA);
   }
 
@@ -238,6 +277,7 @@ export class Billing {
       multiplier: ARMS[arm],
       model: this.model,
       enabled: !!this.summarize,
+      listen: !!this.speak,
       freeSummaries: this.free(user.id),
       ledger: this.store.all<{ kind: string; amountMicros: number; detail: string; createdAt: string }>(
         "SELECT kind,amountMicros,detail,createdAt FROM billing_ledger WHERE userId=? ORDER BY createdAt DESC LIMIT 20", user.id,
@@ -307,6 +347,13 @@ export class Billing {
   /** Runs one summary and records it: free (amount 0, no arm) when allowed and one is left, else at the arm's price. */
   private async charged(user: User, path: string, system: string, text: string, freeAllowed: boolean, kind: "change" | "document", attachment?: Attachment) {
     const arm = this.arm(user);
+    const hash = createHash("sha256").update(system).update("\0").update(text);
+    if (attachment) hash.update("\0").update(attachment.mime).update("\0").update(attachment.data);
+    const keyHash = hash.digest("hex");
+    const kept = this.store.get<{ id: string; summary: string; model: string }>("SELECT id,summary,model FROM summary_cache WHERE userId=? AND keyHash=?", user.id, keyHash);
+    if (kept) {
+      return { summary: kept.summary, summaryId: kept.id, cached: true, listen: !!this.speak, chargedMicros: 0, costMicros: 0, arm, model: kept.model, free: false, freeSummaries: this.free(user.id), balanceMicros: this.balance(user.id) };
+    }
     const free = freeAllowed && this.free(user.id).left > 0;
     const estimate = this.estimate(arm, text, system, attachment);
     if (!free && this.balance(user.id) < estimate) {
@@ -330,7 +377,47 @@ export class Billing {
       id(), user.id, "charge", -charged, `${free ? "free-summary" : "summary"}:${id()}`, free ? null : arm,
       JSON.stringify({ kind, path, model, costMicros: cost, input: result.usage.input_tokens, output: result.usage.output_tokens }), now(),
     );
-    return { summary: result.text, chargedMicros: charged, costMicros: cost, arm, model, free, freeSummaries: this.free(user.id), balanceMicros: this.balance(user.id) };
+    const summaryId = id();
+    this.store.run(
+      "INSERT OR REPLACE INTO summary_cache (id,userId,keyHash,kind,path,summary,model,createdAt) VALUES (?,?,?,?,?,?,?,?)",
+      summaryId, user.id, keyHash, kind, path, result.text, model, now(),
+    );
+    return { summary: result.text, summaryId, cached: false, listen: !!this.speak, chargedMicros: charged, costMicros: cost, arm, model, free, freeSummaries: this.free(user.id), balanceMicros: this.balance(user.id) };
+  }
+
+  /**
+   * One of the account's kept summaries read aloud, as MP3. The first listen is charged
+   * from the balance at the arm's price; the audio is kept, so every replay is free. The
+   * whole server reads at most `speech.dailyChars` characters a day.
+   */
+  async listen(user: User, summaryId: string): Promise<{ audio: Uint8Array; chargedMicros: number; balanceMicros: number }> {
+    if (!this.speak) throw new HttpError(503, "Listening is not configured on this server.");
+    const kept = this.store.get<{ summary: string; path: string }>("SELECT summary,path FROM summary_cache WHERE id=? AND userId=?", summaryId, user.id);
+    if (!kept) throw new HttpError(404, "No such summary.");
+    const heard = this.store.get<{ audio: Uint8Array }>("SELECT audio FROM summary_audio WHERE summaryId=?", summaryId);
+    if (heard) return { audio: new Uint8Array(heard.audio), chargedMicros: 0, balanceMicros: this.balance(user.id) };
+    const text = spokenText(kept.summary);
+    const today = new Date().toISOString().slice(0, 10);
+    const spoken = this.store.get<{ n: number | null }>("SELECT SUM(chars) AS n FROM summary_audio WHERE createdAt>=?", today)?.n ?? 0;
+    if (spoken + text.length > this.speech.dailyChars) throw new HttpError(503, "Listening is paused for today; it starts again at midnight UTC. Your summary is still here to read.");
+    const arm = this.arm(user);
+    const cost = text.length * this.speech.microsPerChar;
+    const price = priceMicros(cost, arm);
+    if (this.balance(user.id) < price) throw new HttpError(402, `Listening to this summary costs about ${(price / 1e6).toFixed(4)} dollars. Top up to continue.`);
+    if (this.running.has(user.id)) throw new HttpError(429, "Something is already being prepared for this account.");
+    this.running.add(user.id);
+    let audio: Uint8Array;
+    try { audio = await this.speak(text); }
+    catch (error) { console.error("listen: ElevenLabs failed:", error instanceof Error ? error.message : error); throw new HttpError(502, "The audio could not be made. You were not charged; try again."); }
+    finally { this.running.delete(user.id); }
+    this.store.db.transaction(() => {
+      this.store.db.query("INSERT OR IGNORE INTO summary_audio (summaryId,voice,chars,audio,createdAt) VALUES (?,?,?,?,?)").run(summaryId, this.speech.voice, text.length, audio, now());
+      this.store.run(
+        "INSERT INTO billing_ledger (id,userId,kind,amountMicros,ref,arm,detail,createdAt) VALUES (?,?,?,?,?,?,?,?)",
+        id(), user.id, "charge", -price, `listen:${summaryId}`, arm, JSON.stringify({ kind: "listen", path: kept.path, chars: text.length, costMicros: cost }), now(),
+      );
+    })();
+    return { audio, chargedMicros: price, balanceMicros: this.balance(user.id) };
   }
 
   /** The experiment so far, per arm: accounts assigned, how many paid, money in, summaries, model cost. */
@@ -341,7 +428,7 @@ export class Billing {
           (SELECT COUNT(*) FROM pricing_arms WHERE arm=?1) AS accounts,
           (SELECT COUNT(DISTINCT l.userId) FROM billing_ledger l JOIN pricing_arms p ON p.userId=l.userId WHERE p.arm=?1 AND l.kind='topup') AS payers,
           (SELECT SUM(l.amountMicros) FROM billing_ledger l JOIN pricing_arms p ON p.userId=l.userId WHERE p.arm=?1 AND l.kind='topup') AS topups,
-          (SELECT COUNT(*) FROM billing_ledger WHERE arm=?1 AND kind='charge') AS summaries,
+          (SELECT COUNT(*) FROM billing_ledger WHERE arm=?1 AND kind='charge' AND ref LIKE 'summary:%') AS summaries,
           (SELECT -SUM(amountMicros) FROM billing_ledger WHERE arm=?1 AND kind='charge') AS charged,
           (SELECT SUM(json_extract(detail,'$.costMicros')) FROM billing_ledger WHERE arm=?1 AND kind='charge') AS cost`,
         arm,
