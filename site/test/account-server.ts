@@ -28,7 +28,11 @@ Bun.serve({ port: port + 2, hostname: "127.0.0.1", async fetch(request) {
   return Response.json({ error: "invalid_token" }, { status: 401 });
 } });
 // A stand-in model: says how long the document was, at a fixed token count.
-const summarize = async (_system: string, prompt: string) => ({ text: `Test summary of ${prompt.length} characters.`, usage: { input_tokens: 500, output_tokens: 50 }, refused: false });
+// A file the model reads itself arrives as an attachment, named by its type.
+const summarize = async (_system: string, prompt: string, attachment?: { mime: string }) => ({
+  text: attachment ? `Test summary of an attached ${attachment.mime}.` : `Test summary of ${prompt.length} characters: ${prompt.slice(0, 200)}`,
+  usage: { input_tokens: 500, output_tokens: 50 }, refused: false,
+});
 serveSite({ accounts, port, hostname: "127.0.0.1", summarize, coinpay: { clientId: "readm3-test", clientSecret: "test-secret", url: `http://127.0.0.1:${port + 2}` } });
 Bun.serve({ port: port + 1, hostname: "127.0.0.1", fetch(request) {
   const url = new URL(request.url);

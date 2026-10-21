@@ -2,7 +2,8 @@ import { test, expect, describe } from "bun:test";
 import { createHmac } from "node:crypto";
 import { Store, id } from "../store.ts";
 import { createApi } from "../api.ts";
-import { ARMS, Billing, costMicros, documentPrompt, fallbackSummarizer, openaiSummarizer, priceMicros, prompt, weekStart, type Summarize } from "../billing.ts";
+import { ARMS, attachmentPrompt, Billing, costMicros, documentPrompt, fallbackSummarizer, MAX_IMAGE_BYTES, openaiSummarizer, priceMicros, prompt, weekStart, type Attachment, type Summarize } from "../billing.ts";
+import { DOCX, zip } from "./zip.ts";
 import { Payments, verifySignature } from "../payments.ts";
 import { diffLines } from "../../src/diff.ts";
 import { verifiedAccount } from "./fixtures.ts";
@@ -158,6 +159,66 @@ describe("document summaries", () => {
     expect((await f.call("summaries/document", "POST", { path: "a.md", text: "hello" }, f.auth)).status).toBe(502);
     expect(f.billing.free(f.user.id).left).toBe(10);
     expect((await f.call("summaries/document", "POST", { path: "a.md", text: "hello" })).status).toBe(401);
+  });
+});
+
+describe("file summaries", () => {
+  const base64 = (bytes: Uint8Array | string) => Buffer.from(bytes).toString("base64");
+
+  test("a PDF and an image go to the model as attachments; a Word file goes as its text", async () => {
+    const calls: { prompt: string; attachment?: Attachment }[] = [];
+    const f = await fixture(async (_system, prompt, attachment) => { calls.push({ prompt, attachment }); return { text: "A plan.", usage: { input_tokens: 2000, output_tokens: 100 }, refused: false }; });
+    const pdf = base64("%PDF-1.7 fake");
+    const done = await f.call("summaries/document", "POST", { path: "docs/plan.pdf", data: pdf }, f.auth);
+    expect(done.status).toBe(200);
+    expect(done.data.free).toBe(true);
+    expect(calls[0]!.attachment).toEqual({ mime: "application/pdf", data: pdf, name: "plan.pdf" });
+    expect(calls[0]!.prompt).toBe(attachmentPrompt("docs/plan.pdf", "application/pdf"));
+    expect((await f.call("summaries/document", "POST", { path: "shot.webp", mime: "image/webp", data: base64("RIFF") }, f.auth)).status).toBe(200);
+    expect(calls[1]!.attachment!.mime).toBe("image/webp");
+    expect(calls[1]!.prompt).toContain("Describe what it shows");
+    expect((await f.call("summaries/document", "POST", { path: "plan.docx", data: base64(DOCX) }, f.auth)).status).toBe(200);
+    expect(calls[2]!.attachment).toBeUndefined();
+    expect(calls[2]!.prompt).toContain("Budget: $4,200 & rising");
+    expect(calls[2]!.prompt).toContain("Text read out of the file");
+    expect(f.billing.free(f.user.id).left).toBe(7);
+  });
+
+  test("unreadable, unsupported and oversized files are refused before any charge", async () => {
+    let called = 0;
+    const f = await fixture(async () => { called++; return { text: "x", usage: { input_tokens: 1, output_tokens: 1 }, refused: false }; });
+    const post = (args: Record<string, unknown>) => f.call("summaries/document", "POST", args, f.auth);
+    expect((await post({ path: "a.zip", data: base64("PK") })).status).toBe(415);
+    expect((await post({ path: "a.svg", data: base64("<svg/>") })).status).toBe(415);
+    expect((await post({ path: "a.pdf", data: "not base64!" })).status).toBe(400);
+    expect((await post({ path: "a.docx", data: base64("garbage") })).status).toBe(422);
+    expect((await post({ path: "a.docx", data: base64(zip({ "word/document.xml": "<w:document/>" })) })).status).toBe(422);
+    expect((await post({ path: "big.png", data: base64(new Uint8Array(MAX_IMAGE_BYTES + 1)) })).status).toBe(413);
+    expect(called).toBe(0);
+    expect(f.billing.free(f.user.id).left).toBe(10);
+  });
+
+  test("a paid PDF is estimated from its size, so a thin balance is refused before the call", async () => {
+    const f = await fixture();
+    for (let i = 0; i < 10; i++) f.store.run("INSERT INTO billing_ledger (id,userId,kind,amountMicros,ref,arm,detail,createdAt) VALUES (?,?,?,?,?,NULL,'{}',?)", id(), f.user.id, "charge", 0, `free-summary:${id()}`, new Date().toISOString());
+    f.billing.credit(f.user.id, 100_000, "test:pdf", "test");
+    const pdf = (bytes: number) => ({ path: "a.pdf", data: Buffer.alloc(bytes, 1).toString("base64") });
+    const large = await f.call("summaries/document", "POST", pdf(3_000_000), f.auth);
+    expect(large.status).toBe(402);
+    expect((await f.call("summaries/document", "POST", pdf(3_000), f.auth)).status).toBe(200);
+  });
+
+  test("the OpenAI fallback sends a PDF as a file part and an image as an image part", async () => {
+    const bodies: any[] = [];
+    const fakeFetch = (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }));
+    }) as unknown as typeof fetch;
+    const openai = openaiSummarizer("sk-test", "gpt-5.2", fakeFetch);
+    await openai("sys", "doc", { mime: "application/pdf", data: "QUJD", name: "a.pdf" });
+    await openai("sys", "img", { mime: "image/png", data: "QUJD", name: "a.png" });
+    expect(bodies[0].messages[1].content).toEqual([{ type: "file", file: { filename: "a.pdf", file_data: "data:application/pdf;base64,QUJD" } }, { type: "text", text: "doc" }]);
+    expect(bodies[1].messages[1].content[0]).toEqual({ type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } });
   });
 });
 
