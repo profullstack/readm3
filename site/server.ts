@@ -13,7 +13,7 @@ import { Accounts } from "../server/accounts.ts";
 import { accountMailer } from "../server/account-mail.ts";
 import { Store } from "../server/store.ts";
 import { createApi } from "../server/api.ts";
-import { anthropicSummarizer, Billing, DEFAULT_MODEL, type Summarize } from "../server/billing.ts";
+import { anthropicSummarizer, Billing, DEFAULT_MODEL, DEFAULT_OPENAI_MODEL, fallbackSummarizer, FREE_DOCUMENTS_PER_WEEK, openaiSummarizer, type Summarize } from "../server/billing.ts";
 import { Payments, paymentOptions, type PaymentOptions } from "../server/payments.ts";
 import { CoinPay } from "../server/coinpay.ts";
 import { createOAuth } from "../server/oauth.ts";
@@ -121,12 +121,19 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
   );
   const store = new Store(accounts.db);
   // COINPAY_OAUTH_CLIENT_ID/SECRET turn on Sign in with CoinPay; READM3_COINPAY_TRUSTED_CLIENTS lets apps call the API.
-  // ANTHROPIC_API_KEY turns on paid AI summaries (READM3_SUMMARY_MODEL picks the model);
+  // ANTHROPIC_API_KEY turns on AI summaries (READM3_SUMMARY_MODEL picks the model), with
+  // OPENAI_API_KEY as the fallback when Claude fails (READM3_OPENAI_MODEL); either one alone works.
+  // READM3_FREE_SUMMARIES_PER_WEEK is the free document allowance (default 10).
   // COINPAY_API_KEY, COINPAY_BUSINESS_ID and COINPAY_WEBHOOK_SECRET open top-ups.
   const model = process.env.READM3_SUMMARY_MODEL || DEFAULT_MODEL;
-  const summarize = options.summarize !== undefined ? options.summarize
-    : process.env.ANTHROPIC_API_KEY ? anthropicSummarizer(process.env.ANTHROPIC_API_KEY, model) : null;
-  const billing = new Billing(store, summarize, model);
+  const openaiModel = process.env.READM3_OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
+  const summarize = options.summarize !== undefined ? options.summarize : fallbackSummarizer([
+    ...process.env.ANTHROPIC_API_KEY ? [{ name: "anthropic", summarize: anthropicSummarizer(process.env.ANTHROPIC_API_KEY, model) }] : [],
+    ...process.env.OPENAI_API_KEY ? [{ name: "openai", summarize: openaiSummarizer(process.env.OPENAI_API_KEY, openaiModel) }] : [],
+  ]);
+  const freePerWeek = Number(process.env.READM3_FREE_SUMMARIES_PER_WEEK ?? FREE_DOCUMENTS_PER_WEEK);
+  const billing = new Billing(store, summarize, process.env.ANTHROPIC_API_KEY || !process.env.OPENAI_API_KEY ? model : openaiModel,
+    Number.isFinite(freePerWeek) && freePerWeek >= 0 ? freePerWeek : FREE_DOCUMENTS_PER_WEEK);
   const payments = new Payments(store, billing, options.payments ?? paymentOptions());
   const api = createApi(store, accounts.origin, new CoinPay(store, accounts, options.coinpay), { billing, payments });
   const syncApi = createSyncApi(store, accounts);

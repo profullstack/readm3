@@ -14,6 +14,7 @@ import type { SourceEditor } from "./code-editor.ts";
 import * as disk from "./disk.ts";
 import * as fileHistory from "./history.ts";
 import { awaitTopUp, showHistory, showTopUp } from "./history-panel.ts";
+import { showSummary } from "./summary-panel.ts";
 import { openPalette, rank, type PaletteItem } from "./palette.ts";
 import { binaryType, detectLanguage, languageForName, looksBinary, MARKDOWN } from "../src/code.ts";
 import { accepts, bytesOf, comparePaths, kindOf, MAX_FILE_BYTES, MAX_FILES, MAX_WORKSPACE_BYTES, persist, rawUrl, restore, toBase64, type Document, type Workspace } from "./workspace.ts";
@@ -80,6 +81,7 @@ function applyKind() {
   element("spoilers").hidden = current.kind !== "markdown";
   element("code-tools").hidden = current.kind !== "code";
   element("copy").hidden = current.kind === "binary" || isLarge();
+  element("summarize").hidden = current.kind === "binary" || isLarge();
   element("file-mark").textContent = current.kind === "markdown" ? "M↓" : current.kind === "code" ? current.language.extensions[0]!.toUpperCase() : current.binary.label.split(" ")[0]!.toUpperCase();
   element<HTMLButtonElement>("edit-mode").disabled = current.kind === "binary" || isLarge() || !!pasteDocument || (!!cloudDocument && !cloudDocument.canEdit);
   if (!cloudDocument && !pasteDocument) element("history").hidden = current.kind === "binary" || isLarge();
@@ -309,6 +311,7 @@ function commands(): PaletteItem[] {
     ] : [],
     ...cloudDocument?.canEdit ? [command("File: Save version", () => void saveCloud(), "Ctrl+S")] : [],
     command("File: Download", download),
+    ...isBinary() || isLarge() ? [] : [command("File: Summarize with AI", summarize)],
     command("View: Read", () => setMode(false), "Esc"),
     ...canEdit() ? [command("View: Edit", () => setMode(true), "e")] : [],
     command("View: Toggle sidebar", () => document.body.classList.toggle("sidebar-hidden")),
@@ -713,6 +716,12 @@ async function importFiles(files: disk.Picked[], name = "Your workspace") {
   finally { importBusy = false; filesInput.value = ""; folderInput.value = ""; }
 }
 
+/** An AI summary of the open document, as it reads now (unsaved edits included). */
+function summarize() {
+  if (isBinary() || isLarge()) return;
+  void showSummary(workspace.active, current().source, () => void showTopUp());
+}
+
 function openHistory() {
   if (cloudDocument || pasteDocument || isBinary()) return;
   const path = workspace.active;
@@ -851,6 +860,7 @@ function bindEvents() {
     try { await request(`pastes/${pasteToken}`, "DELETE"); location.href = "/viewer"; }
     catch (error) { notice(error instanceof Error ? error.message : "Could not delete this paste."); }
   };
+  element("summarize").onclick = summarize;
   element("copy").onclick = async () => {
     // Copy what is on screen: formatted JSON when it was shown formatted, the source otherwise.
     const text = codeView?.text ?? current().source;

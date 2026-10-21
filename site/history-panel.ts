@@ -10,8 +10,8 @@ import * as history from "./history.ts";
 export interface Account { balanceMicros: number; arm: string; multiplier: number; enabled: boolean; }
 interface Summarized { summary: string; chargedMicros: number; arm: string; balanceMicros: number; }
 
-const dollars = (micros: number) => `$${(micros / 1e6).toFixed(micros !== 0 && Math.abs(micros) < 10_000 ? 4 : 2)}`;
-const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string) => {
+export const dollars = (micros: number) => `$${(micros / 1e6).toFixed(micros !== 0 && Math.abs(micros) < 10_000 ? 4 : 2)}`;
+export const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string) => {
   const node = document.createElement(tag);
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;

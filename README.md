@@ -416,17 +416,28 @@ expires). Only the changed lines are sent, never the whole file. Each summary is
 at a multiple of what the model call cost; the multiple is a two-arm price experiment
 (2x or 4x), assigned once per account. A refused or failed call is not charged.
 
+**Summarize** (toolbar, or `File: Summarize with AI` in the palette) does the same for
+the whole open document: a short abstract and its key points. Signed in, the first
+**10 documents a week are free** (Monday 00:00 UTC to the next); after that each one is
+charged from the balance like a change summary. Free summaries carry no price arm, so
+the experiment counts only paid ones. Up to 400 KB of text; the first 60,000
+characters are sent. Pressing Summarize again on unchanged text shows the same summary
+without a second call.
+
 | Endpoint | |
 | --- | --- |
 | `GET /api/v1/billing` | balance, price arm and multiplier, recent ledger |
 | `POST /api/v1/billing/topups` `{ amountUsd, chain? }` | starts a CoinPay payment, returns `payUrl` |
 | `GET /api/v1/billing/topups/<id>` | `pending` or `paid` |
 | `POST /api/v1/summaries` `{ path, before, after }` | the abstract, `chargedMicros`, new balance |
+| `POST /api/v1/summaries/document` `{ path, text }` | a summary of a whole document; `free`, `chargedMicros`, `freeSummaries { perWeek, left, resetsAt }`, new balance |
 | `GET /api/v1/billing/experiment` | admins: per arm accounts, payers, top-ups, summaries, revenue, model cost |
 | `POST /api/v1/billing/coinpay/webhook` | CoinPay's signed webhook (`t=…,v1=` HMAC-SHA256) |
 
 Server configuration: `ANTHROPIC_API_KEY` turns summaries on (`READM3_SUMMARY_MODEL`,
-default `claude-opus-5-5`, run at low effort); `COINPAY_API_KEY`, `COINPAY_BUSINESS_ID`
+default `claude-opus-5-5`, run at low effort) and `OPENAI_API_KEY` is the fallback when
+the Claude call fails (`READM3_OPENAI_MODEL`, default `gpt-5.2`); either one alone works.
+`READM3_FREE_SUMMARIES_PER_WEEK` changes the free allowance (default 10). `COINPAY_API_KEY`, `COINPAY_BUSINESS_ID`
 and `COINPAY_WEBHOOK_SECRET` open top-ups (`COINPAY_API_URL` defaults to
 coinpayportal.com). Without them the history still works and the paid parts say so.
 

@@ -226,3 +226,6 @@ html, body.reader-app { height: 100%; overflow: hidden; }
 .reader-app .topup-dialog select { margin-left: 6px; }
 .reader-app .topup-dialog .primary-action { margin-top: 10px; }
 .reader-app .history-actions:empty { display: none; }
+.reader-app .summary-dialog { width: min(640px, calc(100vw - 32px)); }
+.reader-app .summary-dialog .summary-body, .reader-app .summary-dialog > p { padding: 0 18px; }
+.reader-app .summary-text { white-space: pre-wrap; line-height: 1.55; margin: 4px 0 8px; overflow-wrap: anywhere; }
