@@ -19,6 +19,7 @@ import { CoinPay } from "../server/coinpay.ts";
 import { createOAuth } from "../server/oauth.ts";
 import { createSyncApi } from "../server/sync-api.ts";
 import { Blobs, createBlobApi } from "../server/blobs.ts";
+import { createCrawlGate, type CrawlGate } from "../server/crawl-gate.ts";
 
 const dist = join(dirname(fileURLToPath(import.meta.url)), "dist");
 const port = Number(process.env.PORT ?? 3000);
@@ -111,7 +112,7 @@ function cacheFor(path: string): string {
   return "public, max-age=300";
 }
 
-export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorParameters<typeof CoinPay>[2]; port?: number; hostname?: string; summarize?: Summarize | null; speak?: Speak | null; payments?: PaymentOptions; blobDir?: string } = {}) {
+export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorParameters<typeof CoinPay>[2]; port?: number; hostname?: string; summarize?: Summarize | null; speak?: Speak | null; payments?: PaymentOptions; blobDir?: string; crawlGate?: CrawlGate | null } = {}) {
   const listenPort = options.port ?? port;
   const database = process.env.READM3_DB || join(dirname(dist), "..", "data", "readm3.sqlite");
   const accounts = options.accounts ?? new Accounts(
@@ -156,6 +157,7 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
   setInterval(() => { try { blobs.tick(); } catch (error) { console.error("readm3 storage charge:", error instanceof Error ? error.message : error); } }, 3600_000).unref();
   // `readm3 login`: OAuth 2.1 for the CLI (server/oauth.ts).
   const oauth = createOAuth(accounts);
+  const crawlGate = options.crawlGate !== undefined ? options.crawlGate : createCrawlGate();
   return Bun.serve({
     port: listenPort,
     hostname: options.hostname ?? "0.0.0.0",
@@ -180,6 +182,12 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
         } catch {
           return Response.json({ status: "error", db: "down" }, { status: 503, headers });
         }
+      }
+
+      // Training crawlers buy a day pass before anything else is done for them.
+      if (crawlGate) {
+        const sold = await crawlGate.handle(request);
+        if (sold) return sold;
       }
 
       // Railway overwrites X-Real-IP at the edge; never trust client-supplied X-Forwarded-For.
