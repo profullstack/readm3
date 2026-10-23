@@ -4,7 +4,7 @@ import { refreshUsage, showUsage } from "./usage.ts";
 import { formatStorage, INLINE_MAX_BYTES, MAX_ACCOUNT_FILES, MAX_BLOB_BYTES, newBlobRef } from "../src/blob-store.ts";
 import { pasteDialog, publish, sharing, history as versionHistory } from "./sharing.ts";
 import { showSync } from "./sync.ts";
-import { askPassphrase, autoSyncEnabled, forgetPassphrase, schedule as scheduleSync, setAutoSync, startAutoSync, syncNow } from "./autosync.ts";
+import { askPassphrase, autoSyncEnabled, DEFAULT_SYNC_LIMIT_MB, forgetPassphrase, schedule as scheduleSync, setAutoSync, setSyncLimitMb, startAutoSync, syncLimitMb, syncNow } from "./autosync.ts";
 import { renderMarkdown } from "../src/markdown.ts";
 import type { Flavor } from "../src/flavors.ts";
 import type { ReaderSettings } from "../src/sync-schema.ts";
@@ -502,7 +502,10 @@ function renderStored() {
     })
     .catch((error) => {
       if (!still()) return;
-      status.textContent = `${error instanceof Error ? error.message : "This file could not be opened."}${signedIn ? "" : " Sign in to fetch it from your account."}`;
+      // A file the desktop app reads from disk is there only while the app has it open.
+      status.textContent = diskSynced.has(doc.path) || diskEntries.has(doc.path)
+        ? "This file is read from disk. Open its folder again (File: Open folder…) to read it."
+        : `${error instanceof Error ? error.message : "This file could not be opened."}${signedIn ? "" : " Sign in to fetch it from your account."}`;
       previousRender = "";
     });
 }
@@ -683,23 +686,28 @@ async function importFiles(files: disk.Picked[], name = "Your workspace") {
     let needAccount = 0;
     let overCount = 0;
     let unreadable = 0;
-    for (const { file, path, handle } of files) {
+    for (const { file, path, handle, size = file.size, onDisk } of files) {
       if (!accepts(path)) continue;
       // Past the account's file count nothing more is read.
       if (signedIn && incoming.length >= MAX_ACCOUNT_FILES) { overCount++; continue; }
       // A PDF or image is kept as base64, a third larger than the file; the limits apply to what is stored.
-      const cost = binaryType(path) ? Math.ceil(file.size * 4 / 3) : file.size;
-      if (cost > MAX_FILE_BYTES) {
+      const cost = binaryType(path) ? Math.ceil(size * 4 / 3) : size;
+      // A large file, PDF or image the desktop app opened stays on disk and is read from there: no copy.
+      const readFromDisk = !!onDisk && !!handle && (cost > MAX_FILE_BYTES || !!binaryType(path));
+      if (cost > MAX_FILE_BYTES || readFromDisk) {
         // Larger files are stored apart as they are (site/blobs.ts), which needs an account.
-        if (!signedIn) { needAccount++; continue; }
-        if (file.size > MAX_BLOB_BYTES) { skipped++; continue; }
+        if (!signedIn && (!readFromDisk || incoming.length >= MAX_FILES)) { needAccount++; continue; }
+        if (size > MAX_BLOB_BYTES) { skipped++; continue; }
         if (!binaryType(path) && looksBinary(await file.slice(0, 8192).text())) { unreadable++; continue; }
-        const doc: Document = { path, source: "", blob: newBlobRef(file.size) };
+        // Opening the folder again keeps a file's stored reference, so sync does not upload it again.
+        const known = readFromDisk ? workspace.documents.find((doc) => doc.path === path && doc.blob?.size === size && !doc.blob.digest)?.blob : undefined;
+        const doc: Document = { path, source: "", blob: known ?? newBlobRef(size) };
         if (!binaryType(path) && !languageForName(path)) {
           const language = detectLanguage(path, await file.slice(0, 65536).text());
           if (language !== MARKDOWN) doc.language = language;
         }
-        await stored.keep(doc.blob!, file);
+        if (readFromDisk) stored.fromDisk(doc.blob!, () => handle!.getFile());
+        else await stored.keep(doc.blob!, file);
         incoming.push(doc);
         handles.push(handle);
         continue;
@@ -807,11 +815,16 @@ async function checkDisk() {
 /** What an input or a drop hands over: files with their relative paths, no way back to disk. */
 const copies = (files: Iterable<File>): disk.Picked[] => [...files].map((file) => ({ file, path: file.webkitRelativePath || file.name }));
 
+/** Progress while the desktop app reads a folder of thousands of files. */
+const reading: disk.Progress = (done, total) => {
+  if (total >= 200) saveStatus.textContent = done < total ? `Reading files from disk… ${done.toLocaleString()} of ${total.toLocaleString()}` : "Opening…";
+};
+
 async function openFromDisk(folder: boolean) {
   if (!disk.supported()) { (folder ? folderInput : filesInput).click(); return; }
   try {
-    if (folder) { const picked = await disk.pickFolder(); if (picked) await importFiles(picked.files, picked.name); }
-    else { const picked = await disk.pickFiles(); if (picked) await importFiles(picked); }
+    if (folder) { const picked = await disk.pickFolder(reading); if (picked) await importFiles(picked.files, picked.name); }
+    else { const picked = await disk.pickFiles(reading); if (picked) await importFiles(picked); }
   } catch (error) { notice(error instanceof Error ? error.message : "Could not open from disk."); }
 }
 
@@ -876,7 +889,10 @@ function loadPreferences() {
 
 function bindEvents() {
   element("sync-workspace").onclick = () => void showSync({
-    auto: { enabled: autoSyncEnabled, set: setAutoSync, now: syncNow, changePassphrase: (userId) => void askPassphrase("create", userId), forgetPassphrase },
+    auto: {
+      enabled: autoSyncEnabled, set: setAutoSync, now: syncNow, changePassphrase: (userId) => void askPassphrase("create", userId), forgetPassphrase,
+      limit: { get: syncLimitMb, set: setSyncLimitMb, fallback: DEFAULT_SYNC_LIMIT_MB },
+    },
     read: () => workspace,
     settings: () => ({ theme: theme.value, flavor: flavor.value as Flavor }),
     apply: (incoming, settings) => applySynced(incoming as Workspace | undefined, settings),
@@ -1100,7 +1116,7 @@ function receiveLaunches() {
     const open = (files: disk.DesktopFile[]) => {
       if (!files.length) return;
       const folder = files.find((file) => file.relative)?.relative!.split("/")[0];
-      void disk.fromDesktop(files).then((picked) => importFiles(picked, folder)).catch(() => notice("A file could not be read from disk."));
+      void disk.fromDesktop(files, reading).then((picked) => importFiles(picked, folder)).catch(() => notice("A file could not be read from disk."));
     };
     void disk.desktop.takeLaunchFiles().then(open);
     disk.desktop.onOpenFiles(open);

@@ -8,7 +8,13 @@ import { accepts, readKey, writeKey } from "./workspace.ts";
  * Browsers without the API keep the old behaviour: files are copied in, Ctrl+S downloads.
  */
 export interface DiskEntry { handle: FileSystemFileHandle; saved: number; }
-export interface Picked { file: File; path: string; handle?: FileSystemFileHandle; }
+/**
+ * `onDisk`: opened by the desktop app, so the editor reads it from disk rather than keeping
+ * a copy. A large one comes as its first 64 KB, enough to tell what it is, with `size`
+ * saying how large the whole file is.
+ */
+export interface Picked { file: File; path: string; handle?: FileSystemFileHandle; size?: number; onDisk?: boolean; }
+export type Progress = (done: number, total: number) => void;
 
 /** The parts of the API that TypeScript's DOM library does not describe yet. */
 interface PickerWindow {
@@ -32,12 +38,12 @@ export function fingerprint(text: string): number {
 /** null when the person closes the picker, which is not an error. */
 const cancelled = (error: unknown) => error instanceof DOMException && error.name === "AbortError";
 
-export async function pickFolder(): Promise<{ name: string; files: Picked[] } | null> {
-  // The desktop app opens folders with the system dialog and reads them itself (desktop/main.cjs).
+export async function pickFolder(onProgress?: Progress): Promise<{ name: string; files: Picked[] } | null> {
+  // The desktop app opens folders with the system dialog and lists them itself (desktop/main.cjs).
   if (desktop?.pick) {
     const files = await desktop.pick(true);
     if (!files) return null;
-    return { name: files.find((file) => file.relative)?.relative!.split("/")[0] ?? "Your workspace", files: await fromDesktop(files) };
+    return { name: files.find((file) => file.relative)?.relative!.split("/")[0] ?? "Your workspace", files: await fromDesktop(files, onProgress) };
   }
   let root: Directory;
   try { root = await picker().showDirectoryPicker({ id: "readm3", mode: "readwrite" }) as Directory; }
@@ -58,10 +64,10 @@ export async function pickFolder(): Promise<{ name: string; files: Picked[] } | 
   return { name: root.name, files };
 }
 
-export async function pickFiles(): Promise<Picked[] | null> {
+export async function pickFiles(onProgress?: Progress): Promise<Picked[] | null> {
   if (desktop?.pick) {
     const files = await desktop.pick(false);
-    return files && fromDesktop(files);
+    return files && fromDesktop(files, onProgress);
   }
   let handles: FileSystemFileHandle[];
   try { handles = await picker().showOpenFilePicker({ id: "readm3", multiple: true }); }
@@ -76,9 +82,9 @@ export async function launched(handles: readonly FileSystemHandle[]): Promise<Pi
 }
 
 /**
- * A file the desktop app opened for the page: its path, its name and its bytes; `relative`
- * when it came in a folder. A file over 4 MB comes with its size and no bytes; the page
- * reads it in ranges.
+ * A file the desktop app opened for the page: its path, its name and its size; `relative`
+ * when it came in a folder. The page reads the bytes (read-file, read-range). Builds before
+ * 0.22.0 sent the bytes of files up to 4 MB along (`data`).
  */
 export interface DesktopFile { path: string; name: string; relative?: string; size?: number; data?: Uint8Array; }
 interface DesktopBridge {
@@ -100,17 +106,27 @@ export const desktop = typeof window === "undefined" ? undefined : (window as un
  * picker. It lasts for the session: it cannot be stored, and that is fine, because the
  * desktop hands the file over again the next time it is opened.
  */
-export async function fromDesktop(files: DesktopFile[]): Promise<Picked[]> {
+export async function fromDesktop(files: DesktopFile[], onProgress?: Progress): Promise<Picked[]> {
   const picked: Picked[] = [];
-  for (const entry of files) {
+  for (const [i, entry] of files.entries()) {
     // A large file from a desktop build without ranges cannot be read; it is left out.
     if (!entry.data && !desktop!.readRange) continue;
-    const file = entry.data ? new File([entry.data.buffer as ArrayBuffer], entry.name) : await whole(entry);
-    picked.push({ file, path: entry.relative ?? entry.name, handle: desktopHandle(entry) });
+    const handle = desktopHandle(entry);
+    try {
+      let file: File;
+      if (entry.data) file = new File([entry.data.buffer as ArrayBuffer], entry.name);
+      // Past 4 MB only the start is read now; the rest stays on disk until it is opened.
+      else if (entry.size! > LARGE) file = new File([await desktop!.readRange!(entry.path, 0, SAMPLE) as BlobPart], entry.name);
+      else file = await handle.getFile();
+      picked.push({ file, path: entry.relative ?? entry.name, handle, size: entry.size ?? file.size, onDisk: true });
+    } catch { /* Unreadable now (moved, permissions): the rest still opens. */ }
+    if (onProgress && (i % 50 === 49 || i === files.length - 1)) onProgress(i + 1, files.length);
   }
   return picked;
 }
 
+const LARGE = 4 * 1024 * 1024;
+const SAMPLE = 64 * 1024;
 const RANGE = 8 * 1024 * 1024;
 /** A large file, read range by range into Blob parts, which the browser keeps on disk. */
 async function whole(entry: DesktopFile): Promise<File> {
@@ -126,7 +142,8 @@ function desktopHandle(entry: DesktopFile): FileSystemFileHandle {
     kind: "file", name: entry.name,
     // Read from disk each time, so the editor sees a file change under it and a save is not undone.
     getFile: async () => {
-      if (!entry.data && entry.size !== undefined) return whole(entry);
+      // A large file is read a range at a time, never whole through one message.
+      if (!entry.data && entry.size !== undefined && (entry.size > LARGE || !desktop!.readFile)) return whole(entry);
       if (!desktop!.readFile) return new File([entry.data!.buffer as ArrayBuffer], entry.name);
       const { data, modified } = await desktop!.readFile(entry.path);
       return new File([data.buffer as ArrayBuffer], entry.name, { lastModified: modified });

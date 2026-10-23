@@ -20,9 +20,19 @@ export interface StorageAccount {
 }
 
 const localKey = (id: string) => `blob:${id}`;
-export const local = (ref: Pick<BlobRef, "id">) => readKey<Blob>(localKey(ref.id)).catch(() => undefined);
+/**
+ * Files the desktop app opened from disk: read from there each time, never copied into
+ * browser storage. A reader lasts for the session; opening the folder again restores it.
+ */
+const onDisk = new Map<string, () => Promise<Blob>>();
+export const fromDisk = (ref: Pick<BlobRef, "id">, read: () => Promise<Blob>) => { onDisk.set(ref.id, read); };
+export async function local(ref: Pick<BlobRef, "id">): Promise<Blob | undefined> {
+  const read = onDisk.get(ref.id);
+  if (read) { try { return await read(); } catch { /* Moved or deleted on disk: a kept or synced copy may still exist. */ } }
+  return readKey<Blob>(localKey(ref.id)).catch(() => undefined);
+}
 export const keep = (ref: Pick<BlobRef, "id">, blob: Blob) => writeKey(localKey(ref.id), blob);
-export const forget = (ref: Pick<BlobRef, "id">) => writeKey(localKey(ref.id), undefined).catch(() => undefined);
+export const forget = (ref: Pick<BlobRef, "id">) => { onDisk.delete(ref.id); return writeKey(localKey(ref.id), undefined).catch(() => undefined); };
 
 export const account = () => request<StorageAccount>("blobs");
 export const remove = (id: string) => request(`blobs/${id}`, "DELETE");

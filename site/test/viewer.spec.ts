@@ -143,6 +143,60 @@ test("in the desktop app, opens and saves through the system dialogs, never the 
   expect(await page.evaluate(() => (window as unknown as { written: Record<string, string> }).written["/home/me/Welcome.md"])).toContain("Your docs. Your space.");
 });
 
+test("in the desktop app, a folder comes as a list and large files and images are read from disk, not copied", async ({ page }) => {
+  await page.addInitScript(() => {
+    const text = new TextEncoder();
+    const big = "x".repeat(5 * 1024 * 1024 - 7) + "\nend\n";
+    const disk: Record<string, Uint8Array> = {
+      "/d/notes.md": text.encode("# Notes\n"),
+      "/d/huge.log": text.encode(big),
+      // A one-pixel PNG.
+      "/d/dot.png": Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="), (c) => c.charCodeAt(0)),
+    };
+    const reads = { file: [] as string[], range: [] as number[] };
+    Object.assign(window, {
+      reads,
+      readm3Desktop: {
+        takeLaunchFiles: async () => [],
+        onOpenFiles: () => {},
+        // As main.cjs lists them since 0.22.0: names and sizes, no bytes.
+        pick: async () => Object.entries(disk).map(([path, bytes]) => ({ path, name: path.split("/").at(-1), relative: `d/${path.split("/").at(-1)}`, size: bytes.length })),
+        readFile: async (path: string) => { reads.file.push(path); return { data: disk[path], modified: 1 }; },
+        readRange: async (path: string, start: number, end: number) => { reads.range.push(end - start); return disk[path].slice(start, end); },
+        writeFile: async () => {},
+      },
+    });
+  });
+  await page.reload();
+  await page.locator("#open-folder").click();
+  await expect(page.locator("#workspace-name")).toHaveText("d");
+  await expect(page.locator('#file-list button[title="d/huge.log"]')).toBeVisible();
+  const reads = () => page.evaluate(() => (window as unknown as { reads: { file: string[]; range: number[] } }).reads);
+  // Opening read the small files and only the first 64 KB of the large one.
+  expect((await reads()).range).toEqual([64 * 1024]);
+  expect((await reads()).file).not.toContain("/d/huge.log");
+  // Nothing large was copied into browser storage.
+  const keptBlobs = () => page.evaluate(() => new Promise<number>((done) => {
+    const open = indexedDB.open("readm3");
+    open.onsuccess = () => {
+      const db = open.result;
+      const names = [...db.objectStoreNames];
+      if (!names.length) { done(0); return; }
+      let count = 0;
+      const tx = db.transaction(names, "readonly");
+      for (const name of names) tx.objectStore(name).getAllKeys().onsuccess = (event) => { count += ((event.target as IDBRequest).result as IDBValidKey[]).filter((key) => String(key).startsWith("blob:")).length; };
+      tx.oncomplete = () => done(count);
+    };
+    open.onerror = () => done(0);
+  }));
+  expect(await keptBlobs()).toBe(0);
+  await page.locator('#file-list button[title="d/huge.log"]').click();
+  await expect(page.locator("#code-content .large-preview")).toContainText("xxxx");
+  await page.locator('#file-list button[title="d/dot.png"]').click();
+  await expect(page.locator("#media-content img")).toBeVisible();
+  expect(await keptBlobs()).toBe(0);
+});
+
 test("keeps a rolling history: opened, saved, changed on disk, with snippets and restore", async ({ page }) => {
   // A fake disk whose file can change under the editor, as a regenerated output.json does.
   await page.addInitScript(() => {
