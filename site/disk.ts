@@ -33,6 +33,12 @@ export function fingerprint(text: string): number {
 const cancelled = (error: unknown) => error instanceof DOMException && error.name === "AbortError";
 
 export async function pickFolder(): Promise<{ name: string; files: Picked[] } | null> {
+  // The desktop app opens folders with the system dialog and reads them itself (desktop/main.cjs).
+  if (desktop?.pick) {
+    const files = await desktop.pick(true);
+    if (!files) return null;
+    return { name: files.find((file) => file.relative)?.relative!.split("/")[0] ?? "Your workspace", files: await fromDesktop(files) };
+  }
   let root: Directory;
   try { root = await picker().showDirectoryPicker({ id: "readm3", mode: "readwrite" }) as Directory; }
   catch (error) { if (cancelled(error)) return null; throw error; }
@@ -53,6 +59,10 @@ export async function pickFolder(): Promise<{ name: string; files: Picked[] } | 
 }
 
 export async function pickFiles(): Promise<Picked[] | null> {
+  if (desktop?.pick) {
+    const files = await desktop.pick(false);
+    return files && fromDesktop(files);
+  }
   let handles: FileSystemFileHandle[];
   try { handles = await picker().showOpenFilePicker({ id: "readm3", multiple: true }); }
   catch (error) { if (cancelled(error)) return null; throw error; }
@@ -78,6 +88,9 @@ interface DesktopBridge {
   readFile?(path: string): Promise<{ data: Uint8Array; modified: number }>;
   readRange?(path: string, start: number, end: number): Promise<Uint8Array>;
   writeFile(path: string, data: string | Uint8Array): Promise<void>;
+  /** Absent in desktop builds before 0.21.0, which used the page's pickers. */
+  pick?(folder: boolean): Promise<DesktopFile[] | null>;
+  saveAs?(name: string): Promise<{ path: string; name: string } | null>;
 }
 /** Present only inside the readm3 desktop app (desktop/preload.cjs). */
 export const desktop = typeof window === "undefined" ? undefined : (window as unknown as { readm3Desktop?: DesktopBridge }).readm3Desktop;
@@ -88,36 +101,41 @@ export const desktop = typeof window === "undefined" ? undefined : (window as un
  * desktop hands the file over again the next time it is opened.
  */
 export async function fromDesktop(files: DesktopFile[]): Promise<Picked[]> {
-  const RANGE = 8 * 1024 * 1024;
-  /** A large file, read range by range into Blob parts, which the browser keeps on disk. */
-  const whole = async (entry: DesktopFile): Promise<File> => {
-    const parts: Blob[] = [];
-    for (let start = 0; start < entry.size!; start += RANGE)
-      parts.push(new Blob([await desktop!.readRange!(entry.path, start, Math.min(entry.size!, start + RANGE)) as BlobPart]));
-    return new File(parts, entry.name);
-  };
   const picked: Picked[] = [];
   for (const entry of files) {
     // A large file from a desktop build without ranges cannot be read; it is left out.
     if (!entry.data && !desktop!.readRange) continue;
     const file = entry.data ? new File([entry.data.buffer as ArrayBuffer], entry.name) : await whole(entry);
-    const handle = {
-      kind: "file", name: entry.name,
-      // Read from disk each time, so the editor sees a file change under it and a save is not undone.
-      getFile: async () => {
-        if (!entry.data) return whole(entry);
-        if (!desktop!.readFile) return new File([entry.data.buffer as ArrayBuffer], entry.name);
-        const { data, modified } = await desktop!.readFile(entry.path);
-        return new File([data.buffer as ArrayBuffer], entry.name, { lastModified: modified });
-      },
-      createWritable: async () => {
-        const parts: BlobPart[] = [];
-        return { write: async (data: BlobPart) => { parts.push(data); }, close: async () => { await desktop!.writeFile(entry.path, new Uint8Array(await new Blob(parts).arrayBuffer())); } };
-      },
-    } as unknown as FileSystemFileHandle;
-    picked.push({ file, path: entry.relative ?? entry.name, handle });
+    picked.push({ file, path: entry.relative ?? entry.name, handle: desktopHandle(entry) });
   }
   return picked;
+}
+
+const RANGE = 8 * 1024 * 1024;
+/** A large file, read range by range into Blob parts, which the browser keeps on disk. */
+async function whole(entry: DesktopFile): Promise<File> {
+  const parts: Blob[] = [];
+  for (let start = 0; start < entry.size!; start += RANGE)
+    parts.push(new Blob([await desktop!.readRange!(entry.path, start, Math.min(entry.size!, start + RANGE)) as BlobPart]));
+  return new File(parts, entry.name);
+}
+
+/** A handle over a path the desktop app may read and write; a Save As path has no size or bytes yet. */
+function desktopHandle(entry: DesktopFile): FileSystemFileHandle {
+  return {
+    kind: "file", name: entry.name,
+    // Read from disk each time, so the editor sees a file change under it and a save is not undone.
+    getFile: async () => {
+      if (!entry.data && entry.size !== undefined) return whole(entry);
+      if (!desktop!.readFile) return new File([entry.data!.buffer as ArrayBuffer], entry.name);
+      const { data, modified } = await desktop!.readFile(entry.path);
+      return new File([data.buffer as ArrayBuffer], entry.name, { lastModified: modified });
+    },
+    createWritable: async () => {
+      const parts: BlobPart[] = [];
+      return { write: async (data: BlobPart) => { parts.push(data); }, close: async () => { await desktop!.writeFile(entry.path, new Uint8Array(await new Blob(parts).arrayBuffer())); } };
+    },
+  } as unknown as FileSystemFileHandle;
 }
 
 /** Writes the file, asking for write access first if this session has not been granted it. */
@@ -134,6 +152,10 @@ export async function write(handle: FileSystemFileHandle, data: string | Uint8Ar
 
 /** Save As: a new file chosen by the person, or null if they close the picker. */
 export async function saveAs(name: string): Promise<FileSystemFileHandle | null> {
+  if (desktop?.saveAs) {
+    const chosen = await desktop.saveAs(name);
+    return chosen && desktopHandle(chosen);
+  }
   try { return await picker().showSaveFilePicker({ id: "readm3", suggestedName: name }); }
   catch (error) { if (cancelled(error)) return null; throw error; }
 }

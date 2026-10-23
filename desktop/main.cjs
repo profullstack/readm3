@@ -15,7 +15,7 @@
  * person's password manager is: OAuth with a loopback redirect, then one exchange of the
  * token for a session cookie in this window (POST /oauth/desktop-session).
  */
-const { app, BrowserWindow, Menu, ipcMain, net, protocol, session, shell } = require("electron");
+const { app, BrowserWindow, Menu, dialog, ipcMain, net, protocol, session, shell } = require("electron");
 const { createHash, randomBytes } = require("node:crypto");
 const { createServer } = require("node:http");
 const { open, readFile, readdir, writeFile, stat } = require("node:fs/promises");
@@ -257,6 +257,30 @@ else {
         const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
         return new Uint8Array(buffer.subarray(0, bytesRead));
       } finally { await handle.close(); }
+    });
+    // Open Folder and Open Files use the system dialog and are read here, like a launch. The
+    // page's own picker (showDirectoryPicker) never returns in Electron for a folder Chromium
+    // calls sensitive, such as ~/Desktop, and every later click fails with "picker already active".
+    ipcMain.handle("pick", async (event, folder) => {
+      if (!trusted(event.senderFrame?.url ?? "")) throw new Error("Not allowed.");
+      const { canceled, filePaths } = await dialog.showOpenDialog(window, {
+        title: folder ? "Open Folder" : "Open Files",
+        properties: folder ? ["openDirectory"] : ["openFile", "multiSelections"],
+      });
+      return canceled ? null : load(filePaths);
+    });
+    // Save As in the system dialog; the chosen path becomes one this process may write.
+    ipcMain.handle("save-as", async (event, name) => {
+      if (!trusted(event.senderFrame?.url ?? "")) throw new Error("Not allowed.");
+      const { canceled, filePath } = await dialog.showSaveDialog(window, { defaultPath: typeof name === "string" ? basename(name) : undefined });
+      if (canceled || !filePath) return null;
+      opened.add(filePath);
+      return { path: filePath, name: basename(filePath) };
+    });
+    // A page picker that lands on a sensitive folder waits for this answer, forever if no one gives it.
+    // The person chose the folder in the system dialog, so readm3's own pages may have it.
+    session.defaultSession.on("file-system-access-restricted", (details, callback) => {
+      callback(trusted(details.origin) ? "allow" : "deny");
     });
     ipcMain.handle("write-file", async (event, path, data) => {
       if (!trusted(event.senderFrame?.url ?? "")) throw new Error("Not allowed.");
