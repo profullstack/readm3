@@ -151,6 +151,35 @@ test("a signed-in account opens a file over 4 MB read-only and syncs it as an en
   expect((await stat((await (await downloading).path())!)).size).toBe(big.length);
 });
 
+test("files over the sync size limit stay on this device until the limit is turned off", async ({ page, context }) => {
+  await register(context, username());
+  // 500 MB by default; a small limit keeps the test's files small.
+  await page.addInitScript(() => { if (localStorage.getItem("readm3:sync-limit-mb") === null) localStorage.setItem("readm3:sync-limit-mb", "8"); });
+  await page.goto("/viewer");
+  await setPassphrase(page);
+  const line = "a line of a large log\n";
+  const big = Buffer.from(line.repeat(Math.ceil(9 * 1024 * 1024 / line.length)));
+  const medium = Buffer.from(line.repeat(Math.ceil(6 * 1024 * 1024 / line.length)));
+  await page.locator("#files-input").setInputFiles([
+    { name: "big.log", mimeType: "text/plain", buffer: big },
+    { name: "medium.log", mimeType: "text/plain", buffer: medium },
+  ]);
+  const uploaded = async () => {
+    const account = await (await page.request.get("/api/v1/blobs")).json();
+    return account.blobs.filter((blob: { complete: boolean }) => blob.complete).map((blob: { size: number }) => blob.size).sort();
+  };
+  await expect.poll(uploaded, { timeout: 20_000 }).toEqual([medium.length]);
+  await expect(page.locator("#sync-note")).toContainText("1 file over 8 MB kept on this device");
+  await expect(page.locator('#file-list button[title="big.log"]')).toBeVisible();
+  await openSync(page);
+  await expect(page.locator("#sync-limit-on")).toBeChecked();
+  await expect(page.locator("#sync-limit-mb")).toHaveValue("8");
+  await page.locator("#sync-limit-on").uncheck();
+  await expect(page.locator("#sync-limit-mb")).toBeDisabled();
+  await expect.poll(uploaded, { timeout: 20_000 }).toEqual([big.length, medium.length].sort());
+  expect(await page.evaluate(() => localStorage.getItem("readm3:sync-limit-mb"))).toBe("0");
+});
+
 test("the header shows usage against the plan's limits, signed out and signed in", async ({ page, context }) => {
   await page.goto("/viewer");
   const usage = page.locator("#usage");

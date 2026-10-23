@@ -14,7 +14,11 @@ function loadMarker(key: string): Marker | undefined {
 function saveMarker(key: string, marker: Marker) { sessionStorage.setItem(`readm3:${key}`, JSON.stringify(marker)); }
 export interface SyncWorkspace {
   /** The automatic sync switch for this device (site/autosync.ts). */
-  auto?: { enabled(): boolean; set(on: boolean): void; now(): Promise<void>; changePassphrase(userId: string): void; forgetPassphrase(userId: string): Promise<void> };
+  auto?: {
+    enabled(): boolean; set(on: boolean): void; now(): Promise<void>; changePassphrase(userId: string): void; forgetPassphrase(userId: string): Promise<void>;
+    /** Files larger than this many MB stay on this device; 0 syncs every file. */
+    limit: { get(): number; set(mb: number): void; fallback: number };
+  };
   read(): SyncedWorkspace;
   settings(): ReaderSettings;
   apply(workspace: SyncedWorkspace | undefined, settings: ReaderSettings | undefined): Promise<void>;
@@ -88,9 +92,32 @@ export async function showSync(workspace: SyncWorkspace) {
       auto.checked = workspace.auto.enabled();
       auto.onchange = () => workspace.auto!.set(auto.checked);
       autoLabel.append(auto, " Sync automatically on this device (recommended). Every signed-in device keeps the same files; edits on two devices are merged per file, and a file changed on both keeps a conflict copy.");
+      // Large files (films, disk images) stay on this device unless the person turns this off.
+      const { limit } = workspace.auto;
+      const limitLabel = document.createElement("label");
+      const skip = document.createElement("input");
+      skip.type = "checkbox";
+      skip.id = "sync-limit-on";
+      skip.checked = limit.get() > 0;
+      const size = document.createElement("input");
+      size.type = "number";
+      size.id = "sync-limit-mb";
+      size.min = "1";
+      size.step = "1";
+      size.style.width = "6em";
+      size.value = String(limit.get() || limit.fallback);
+      size.disabled = !skip.checked;
+      const apply = () => {
+        size.disabled = !skip.checked;
+        const mb = Math.round(Number(size.value));
+        limit.set(skip.checked ? (Number.isFinite(mb) && mb >= 1 ? mb : limit.fallback) : 0);
+      };
+      skip.onchange = apply;
+      size.onchange = apply;
+      limitLabel.append(skip, " Don't sync files larger than ", size, " MB. They stay on this device.");
       const e2e = document.createElement("p");
       e2e.textContent = "End-to-end encrypted: files are compressed and encrypted on this device with your sync passphrase before upload. readm3.com cannot read them.";
-      box.body.append(autoLabel, e2e);
+      box.body.append(autoLabel, limitLabel, e2e);
       const actions = document.createElement("div");
       actions.className = "cloud-actions";
       const act = (label: string, run: () => void | Promise<void>) => {

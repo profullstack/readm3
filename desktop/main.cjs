@@ -7,8 +7,8 @@
  * served as app://readm3 when readm3.com cannot be reached on a first launch.
  *
  * Files and folders named on the command line (`readm3 edit .`, like `subl .`), or
- * handed over by the desktop's "Open with", are read here and given to the page
- * through preload.cjs, which can write back only to files this process gave it.
+ * handed over by the desktop's "Open with", are listed here and read by the page
+ * through preload.cjs, which can read and write only files this process listed.
  *
  * readm3:// links ("Open in app" on readm3.com) open a readm3.com page in this window, and
  * "Sign in with your browser" signs the window in through the system browser, where the
@@ -24,8 +24,6 @@ const { fileURLToPath, pathToFileURL } = require("node:url");
 
 const ORIGIN = (process.env.READM3_URL || "https://readm3.com").replace(/\/$/, "");
 const LOCAL = "app://readm3";
-/** Larger files go to the page without their bytes; it reads them in ranges (read-range). */
-const INLINE_BYTES = 4 * 1024 * 1024;
 /** The largest file a signed-in account may keep (src/blob-store.ts); the page applies its own limits again. */
 const MAX_FILE_BYTES = 5 * 1024 ** 3;
 const MAX_RANGE = 16 * 1024 * 1024;
@@ -46,15 +44,16 @@ let pending = [];
 let window;
 
 /**
- * Reads files, and every file under a folder. A folder's files carry `relative`, their
+ * Lists files, and every file under a folder. A folder's files carry `relative`, their
  * path from the folder's parent ("notes/todo.md"), so the page opens them as the folder.
+ * No bytes travel with the list: the page reads each file when it needs it (read-file,
+ * read-range), so a folder of thousands of files is never one message of gigabytes.
  */
 async function load(paths, cwd = process.cwd()) {
   const files = [];
   const add = async (path, info, relative) => {
     if (info.size > MAX_FILE_BYTES || files.length >= MAX_FILES) return;
-    const data = info.size > INLINE_BYTES ? undefined : new Uint8Array(await readFile(path));
-    files.push({ path, name: basename(path), relative, size: info.size, data });
+    files.push({ path, name: basename(path), relative, size: info.size });
     opened.add(path);
   };
   const walk = async (directory, prefix) => {

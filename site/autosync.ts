@@ -26,6 +26,28 @@ const OFF = "readm3:autosync";
 export const autoSyncEnabled = (): boolean => { try { return localStorage.getItem(OFF) !== "off"; } catch { return true; } };
 export function setAutoSync(on: boolean) { try { localStorage.setItem(OFF, on ? "on" : "off"); } catch { /* This device only. */ } if (on) void syncNow(); else host?.status("Sync is off on this device"); }
 
+/**
+ * Files larger than this stay on this device: a folder of films or a disk image is not
+ * worth uploading to edit Markdown next to it. 0 syncs every file. Set per device.
+ */
+const LIMIT = "readm3:sync-limit-mb";
+export const DEFAULT_SYNC_LIMIT_MB = 500;
+export function syncLimitMb(): number {
+  try {
+    const saved = localStorage.getItem(LIMIT);
+    const mb = saved === null ? DEFAULT_SYNC_LIMIT_MB : Number(saved);
+    return Number.isFinite(mb) && mb >= 0 ? mb : DEFAULT_SYNC_LIMIT_MB;
+  } catch { return DEFAULT_SYNC_LIMIT_MB; }
+}
+export function setSyncLimitMb(mb: number) {
+  try { localStorage.setItem(LIMIT, String(Math.max(0, Math.round(mb)))); } catch { /* This device only. */ }
+  void syncNow();
+}
+/** Only stored files can pass the limit: inline text is 4 MB at most. */
+export function keptOnDevice(doc: { blob?: BlobRef }, limitMb = syncLimitMb()): boolean {
+  return limitMb > 0 && !!doc.blob && doc.blob.size > limitMb * 1024 * 1024;
+}
+
 export interface AutoSyncHost {
   read(): SyncedWorkspace;
   settings(): ReaderSettings;
@@ -233,10 +255,17 @@ async function pass(user: CloudUser) {
       remoteWorkspace = files["workspace.json"] ? JSON.parse(files["workspace.json"].content) : undefined;
       remoteSettings = files["settings.json"] ? JSON.parse(files["settings.json"].content) : undefined;
     }
-    const local = structuredClone(h.read());
-    const localDigests = digests(local);
+    const all = structuredClone(h.read());
+    const localDigests = digests(all);
+    // Files past the size limit take no part in the merge, on either side: this device never
+    // uploads its own, and one another device synced (a higher limit there) is left as it is.
+    const limit = syncLimitMb();
+    const deviceOnly = all.documents.filter((doc) => keptOnDevice(doc, limit));
+    const accountOnly = remoteWorkspace?.documents.filter((doc) => keptOnDevice(doc, limit)) ?? [];
+    const local = { ...all, documents: all.documents.filter((doc) => !keptOnDevice(doc, limit)) };
+    const remoteSynced = remoteWorkspace && { ...remoteWorkspace, documents: remoteWorkspace.documents.filter((doc) => !keptOnDevice(doc, limit)) };
     const merge = mergeWorkspaces({
-      local, remote: remoteWorkspace, base: state?.base, starter: await starterDigests(),
+      local, remote: remoteSynced, base: state?.base, starter: await starterDigests(),
       conflictLabel: `${h.device} ${new Date().toISOString().slice(0, 10)}`,
     });
     // Settings: this device's choice wins only if it changed since the last sync.
@@ -250,9 +279,10 @@ async function pass(user: CloudUser) {
     const readableOnServer = !!remote && !isSealed(remote.snapshot.files);
     let spills = state?.spills ?? {};
     if (!(onlyStarter && !remote) && (merge.upload || (settingsChanged && remote) || readableOnServer || rekey)) {
-      const outgoing = await forUpload(merge.workspace, remoteWorkspace, spills);
+      const outgoing = await forUpload(merge.workspace, remoteSynced, spills);
       spills = outgoing.spills;
-      const plain = { "settings.json": { content: serialize(settings) }, "workspace.json": { content: serialize(outgoing.workspace) } };
+      const uploaded = { ...outgoing.workspace, documents: [...outgoing.workspace.documents, ...accountOnly].sort((a, b) => a.path.localeCompare(b.path)) };
+      const plain = { "settings.json": { content: serialize(settings) }, "workspace.json": { content: serialize(uploaded) } };
       validateSyncFiles(plain);
       const sealed = { [SEALED_FILE]: { content: JSON.stringify(await seal(plain, syncKey)) } };
       try {
@@ -262,7 +292,7 @@ async function pass(user: CloudUser) {
         rekey = false;
         if (saved.userId !== user.id) throw new Error("your account changed");
         revision = saved.revision;
-        void collect(outgoing.workspace, outgoing.account);
+        void collect(uploaded, outgoing.account);
       } catch (error) {
         if (error instanceof ApiError && error.status === 409) continue; // Another device saved first.
         throw error;
@@ -270,12 +300,20 @@ async function pass(user: CloudUser) {
     }
     // Edits made while this pass ran are not overwritten: the next pass merges them.
     if (!sameDigests(digests(h.read()), localDigests)) { again = true; return; }
-    if (merge.download || serialize(settings) !== localSettings) await h.apply(merge.workspace, settings);
+    if (merge.download || serialize(settings) !== localSettings) {
+      // The merge never saw the large files, so they are put back: this device's own first.
+      const merged = new Set(merge.workspace.documents.map((doc) => doc.path));
+      const mine = new Set(deviceOnly.map((doc) => doc.path));
+      const documents = [...merge.workspace.documents, ...deviceOnly.filter((doc) => !merged.has(doc.path)),
+        ...accountOnly.filter((doc) => !merged.has(doc.path) && !mine.has(doc.path))];
+      await h.apply({ ...merge.workspace, documents: documents.sort((a, b) => a.path.localeCompare(b.path)) }, settings);
+    }
     await store(key, { revision, base: digests(merge.workspace), settings: serialize(settings), spills } satisfies State);
     known = revision;
+    const kept = deviceOnly.length ? ` · ${deviceOnly.length} file${deviceOnly.length === 1 ? "" : "s"} over ${limit.toLocaleString()} MB kept on this device` : "";
     h.status(merge.conflicts.length
-      ? `Synced · ${merge.conflicts.length} conflict cop${merge.conflicts.length === 1 ? "y" : "ies"} kept`
-      : `Synced to your account · ${time()}`);
+      ? `Synced · ${merge.conflicts.length} conflict cop${merge.conflicts.length === 1 ? "y" : "ies"} kept${kept}`
+      : `Synced to your account · ${time()}${kept}`);
     return;
   }
   throw new Error("other devices kept saving; trying again shortly");
