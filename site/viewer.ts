@@ -68,7 +68,7 @@ const isMarkdown = () => kind().kind === "markdown";
  * signed out, the workspace keeps its small local limits.
  */
 let signedIn = false;
-const ACCOUNT_LIMITS = "Sign in (free) for files up to 5 GB and up to 5,000 files.";
+const ACCOUNT_LIMITS = "Sign in (free) for files up to 5 GB and up to 1,000,000 files.";
 /** A stored file too large for the workspace (not a spilled small one): shown read-only. */
 const isLarge = (doc = current()) => !!doc.blob && !doc.blob.digest;
 const PREVIEW_BYTES = 1024 * 1024;
@@ -167,6 +167,23 @@ let noticeTimer: ReturnType<typeof setTimeout>;
 let importBusy = false;
 let saveFailed = false;
 const collapsed = new Set<string>();
+/**
+ * A workspace of thousands of files (a whole ~/Desktop) shows its top folders with every
+ * folder below them folded, except the way to the open file; a small one shows everything.
+ */
+function foldLarge(open: string) {
+  collapsed.clear();
+  if (workspace.documents.length <= 2000) return;
+  const parts = open.split("/");
+  const keep = new Set(parts.slice(0, -1).map((_, depth) => parts.slice(0, depth + 1).join("/")));
+  for (const doc of workspace.documents) {
+    const folders = doc.path.split("/");
+    for (let depth = 1; depth < folders.length - 1; depth++) {
+      const path = folders.slice(0, depth + 1).join("/");
+      if (!keep.has(path)) collapsed.add(path);
+    }
+  }
+}
 
 function notice(message: string) {
   element("notice").textContent = message;
@@ -211,7 +228,7 @@ async function applySynced(incoming: Workspace | undefined, settings: ReaderSett
       await persist(incoming);
       workspace = incoming;
       filter.value = "";
-      collapsed.clear();
+      foldLarge(workspace.active);
     }
     if (settings?.theme && [...theme.options].some((option) => option.value === settings.theme)) theme.value = settings.theme;
     if (settings?.flavor) flavor.value = settings.flavor;
@@ -349,7 +366,7 @@ function renderFiles(focusPath?: string) {
       }
       if (!query && collapsed.has(path)) { hidden = true; break; }
     }
-    if (!hidden) fileList.append(fileRow(doc.path, parts.at(-1)!, parts.length - 1, false));
+    if (!hidden) fileList.append(fileRow(doc.path, parts.at(-1)!, parts.length - 1, false, doc));
   }
   if (!docs.length) {
     const empty = document.createElement("p");
@@ -362,18 +379,18 @@ function renderFiles(focusPath?: string) {
   if (focusPath) Array.from(fileList.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.dataset.path === focusPath)?.focus();
 }
 
-function fileRow(path: string, name: string, depth: number, directory: boolean) {
+function fileRow(path: string, name: string, depth: number, directory: boolean, doc?: Document) {
   const row = document.createElement("button");
   row.className = `file-row${directory ? " folder-row" : ""}`;
   row.dataset.path = path;
   row.style.paddingLeft = `${10 + depth * 15}px`;
   row.title = path;
   if (!directory && path === workspace.active) row.setAttribute("aria-current", "page");
-  if (!directory && unsavedOnDisk(workspace.documents.find((doc) => doc.path === path)!)) row.classList.add("unsaved");
+  if (doc && unsavedOnDisk(doc)) row.classList.add("unsaved");
   const icon = document.createElement("span");
   icon.className = "file-icon";
   icon.setAttribute("aria-hidden", "true");
-  const fileKind = directory ? null : kindOf(workspace.documents.find((doc) => doc.path === path)!);
+  const fileKind = doc ? kindOf(doc) : null;
   icon.textContent = directory ? (filter.value || !collapsed.has(path) ? "▾" : "▸") : fileKind!.kind === "markdown" ? "M↓" : fileKind!.kind === "code" ? "{}" : "▣";
   const label = document.createElement("span");
   label.className = "row-name";
@@ -669,8 +686,8 @@ function addDocuments(incoming: Document[], name?: string): Document[] {
   workspace.documents = [...map.values()].sort((a, b) => comparePaths(a.path, b.path));
   if (name) workspace.name = name;
   filter.value = "";
-  collapsed.clear();
   const first = added.find((doc) => /^readme\b/i.test(doc.path.split("/").at(-1)!)) ?? added[0];
+  foldLarge(first.path);
   openDocument(first.path);
   return added;
 }
@@ -686,6 +703,7 @@ async function importFiles(files: disk.Picked[], name = "Your workspace") {
     let needAccount = 0;
     let overCount = 0;
     let unreadable = 0;
+    const existing = new Map(workspace.documents.map((doc) => [doc.path, doc]));
     for (const { file, path, handle, size = file.size, onDisk } of files) {
       if (!accepts(path)) continue;
       // Past the account's file count nothing more is read.
@@ -700,7 +718,8 @@ async function importFiles(files: disk.Picked[], name = "Your workspace") {
         if (size > MAX_BLOB_BYTES) { skipped++; continue; }
         if (!binaryType(path) && looksBinary(await file.slice(0, 8192).text())) { unreadable++; continue; }
         // Opening the folder again keeps a file's stored reference, so sync does not upload it again.
-        const known = readFromDisk ? workspace.documents.find((doc) => doc.path === path && doc.blob?.size === size && !doc.blob.digest)?.blob : undefined;
+        const before = readFromDisk ? existing.get(path)?.blob : undefined;
+        const known = before && before.size === size && !before.digest ? before : undefined;
         const doc: Document = { path, source: "", blob: known ?? newBlobRef(size) };
         if (!binaryType(path) && !languageForName(path)) {
           const language = detectLanguage(path, await file.slice(0, 65536).text());

@@ -20,7 +20,7 @@ import { digestDocument, digests, mergeWorkspaces } from "../src/sync-merge.ts";
 import { isSealed, validateSyncFiles, type ReaderSettings, type SyncedWorkspace } from "../src/sync-schema.ts";
 import { store, stored } from "./sync.ts";
 import * as blobs from "./blobs.ts";
-import { formatStorage, newBlobRef, SNAPSHOT_INLINE_BYTES, type BlobRef } from "../src/blob-store.ts";
+import { formatStorage, MAX_SYNC_FILES, newBlobRef, SNAPSHOT_INLINE_BYTES, type BlobRef } from "../src/blob-store.ts";
 
 const OFF = "readm3:autosync";
 export const autoSyncEnabled = (): boolean => { try { return localStorage.getItem(OFF) !== "off"; } catch { return true; } };
@@ -264,6 +264,10 @@ async function pass(user: CloudUser) {
     const accountOnly = remoteWorkspace?.documents.filter((doc) => keptOnDevice(doc, limit)) ?? [];
     const local = { ...all, documents: all.documents.filter((doc) => !keptOnDevice(doc, limit)) };
     const remoteSynced = remoteWorkspace && { ...remoteWorkspace, documents: remoteWorkspace.documents.filter((doc) => !keptOnDevice(doc, limit)) };
+    // Past what one sealed snapshot carries, sync waits rather than drop files from the account copy.
+    if (local.documents.length + accountOnly.length > MAX_SYNC_FILES) {
+      throw new Paused(`Sync paused · ${local.documents.length.toLocaleString()} files; sync carries up to ${MAX_SYNC_FILES.toLocaleString()}. Your files are safe on this device.`);
+    }
     const merge = mergeWorkspaces({
       local, remote: remoteSynced, base: state?.base, starter: await starterDigests(),
       conflictLabel: `${h.device} ${new Date().toISOString().slice(0, 10)}`,

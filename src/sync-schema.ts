@@ -1,7 +1,7 @@
 /** Browser-safe account data contract. Only these two files may be synced. */
 import { isFlavor, type Flavor } from "./flavors.ts";
 import { envelopeProblem, SEALED_FILE } from "./sync-crypto.ts";
-import { blobRefProblem, INLINE_MAX_BYTES, MAX_ACCOUNT_FILES, SNAPSHOT_INLINE_BYTES, type BlobRef } from "./blob-store.ts";
+import { blobRefProblem, INLINE_MAX_BYTES, MAX_SYNC_FILES, SNAPSHOT_INLINE_BYTES, type BlobRef } from "./blob-store.ts";
 
 /**
  * A workspace file. `source` is the text, or base64 bytes when the path names a PDF or
@@ -33,7 +33,7 @@ export function validateWorkspace(value: unknown): SyncedWorkspace {
   if (!value || typeof value !== "object") throw new Error("Workspace must be an object.");
   const ws = value as SyncedWorkspace;
   if (Object.keys(ws).some((key) => !["name", "active", "documents"].includes(key))) throw new Error("Workspace can only contain name, active and documents.");
-  if (typeof ws.name !== "string" || ws.name.length > 200 || !Array.isArray(ws.documents) || !ws.documents.length || ws.documents.length > MAX_ACCOUNT_FILES) throw new Error("Workspace needs a name and 1–5,000 files.");
+  if (typeof ws.name !== "string" || ws.name.length > 200 || !Array.isArray(ws.documents) || !ws.documents.length || ws.documents.length > MAX_SYNC_FILES) throw new Error(`Workspace needs a name and 1–${MAX_SYNC_FILES.toLocaleString("en-US")} files.`);
   const paths = new Set<string>();
   let total = 0;
   const encoder = new TextEncoder();

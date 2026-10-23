@@ -28,7 +28,7 @@ const LOCAL = "app://readm3";
 const MAX_FILE_BYTES = 5 * 1024 ** 3;
 const MAX_RANGE = 16 * 1024 * 1024;
 /** A signed-in workspace's file count (src/blob-store.ts); the walk stops there. */
-const MAX_FILES = 5000;
+const MAX_FILES = 1_000_000;
 const IGNORED = new Set(["node_modules", "dist", "build", "out", "target", "vendor", "coverage", "venv", "__pycache__", ".git"]);
 const NEVER = /\.(?:zip|gz|tgz|bz2|xz|7z|rar|tar|exe|dll|so|dylib|o|a|class|jar|war|wasm|bin|dat|db|sqlite|sqlite3|mp3|mp4|m4a|mov|avi|mkv|webm|ogg|wav|flac|woff2?|ttf|otf|eot|psd|ai|doc|docx|xls|xlsx|ppt|pptx|iso|dmg|pkg|deb|rpm|apk|lock)$/i;
 /** The bundled editor: inside the package, or the repo's site build when run with `electron .`. */
