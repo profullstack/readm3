@@ -21,7 +21,12 @@ export const GiB = 1024 ** 3;
 /** The largest single file an account may keep. */
 export const MAX_BLOB_BYTES = 5 * GiB;
 /** Files in one signed-in workspace (signed out, the workspace keeps 1,000). */
-export const MAX_ACCOUNT_FILES = 5000;
+export const MAX_ACCOUNT_FILES = 1_000_000;
+/**
+ * Files one synced workspace carries. Every file's reference is about 100 bytes sealed
+ * (its own random key does not compress), so this many fit the 32 MB snapshot with room.
+ */
+export const MAX_SYNC_FILES = 250_000;
 /** Storage every signed-in account gets free; more is pay as you go from the prepaid balance. */
 export const FREE_STORAGE_BYTES = 5 * GiB;
 /** Pay as you go: micro-dollars per GiB stored per month, over the free allowance. */

@@ -1,7 +1,7 @@
 /**
  * The usage meter in the editor's header: files and storage against the plan's limits.
  * Signed out it measures this device's workspace (1,000 files, 20 MB); signed in it
- * measures the account (5,000 files, 5 GB stored free, then pay as you go). A click
+ * measures the account (1,000,000 files, 5 GB stored free, then pay as you go). A click
  * opens the limits, the price, the balance and a way to add funds or sign in.
  */
 import { modal } from "./cloud.ts";
@@ -88,7 +88,7 @@ export function showUsage() {
   const note = document.createElement("p");
   note.textContent = last.signedIn
     ? "Files over 4 MB are stored end-to-end encrypted on your account. Storage over the free allowance is charged hourly from your balance; with no balance, new uploads past it wait, and nothing stored is deleted."
-    : "A free account raises the limits to 5,000 files of up to 5 GB each, with 5 GB of encrypted storage that syncs to every device.";
+    : "A free account raises the limits to 1,000,000 files of up to 5 GB each, with 5 GB of encrypted storage that syncs to every device.";
   const actions = document.createElement("p");
   if (last.signedIn) {
     const add = document.createElement("button");

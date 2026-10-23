@@ -180,6 +180,28 @@ test("files over the sync size limit stay on this device until the limit is turn
   expect(await page.evaluate(() => localStorage.getItem("readm3:sync-limit-mb"))).toBe("0");
 });
 
+test("signed in, a folder past the old 5,000-file cap opens whole with its subfolders folded", async ({ page, context }) => {
+  await register(context, username());
+  await page.addInitScript(() => {
+    const file = (name: string) => ({ kind: "file", name, getFile: async () => new File([`# ${name}\n`], name) });
+    const directory = (name: string, entries: unknown[]) => ({ kind: "directory", name, values: async function* () { yield* entries; } });
+    const sections = Array.from({ length: 60 }, (_, s) => directory(`section-${s}`, Array.from({ length: 100 }, (_, i) => file(`page-${i}.md`))));
+    Object.assign(window, { showDirectoryPicker: async () => directory("site", [file("README.md"), ...sections]) });
+  });
+  await page.goto("/viewer");
+  await setPassphrase(page);
+  await page.locator("#open-folder").click();
+  await expect(page.locator("#workspace-name")).toHaveText("site");
+  await expect(page.locator("#document-name")).toHaveText("site/README.md");
+  // 6,001 files plus the starter documents, all kept.
+  expect(Number(await page.locator("#file-count").textContent())).toBeGreaterThan(6000);
+  // Folded: the site folder, README and the 60 section folders, plus the starter rows.
+  expect(await page.locator("#file-list button").count()).toBeLessThan(100);
+  await page.locator('#file-list .folder-row[title="site/section-7"]').click();
+  await expect(page.locator('#file-list button[title="site/section-7/page-42.md"]')).toBeVisible();
+  await expect(page.locator("#sync-note")).toContainText("Synced", { timeout: 30_000 });
+});
+
 test("the header shows usage against the plan's limits, signed out and signed in", async ({ page, context }) => {
   await page.goto("/viewer");
   const usage = page.locator("#usage");
@@ -194,7 +216,7 @@ test("the header shows usage against the plan's limits, signed out and signed in
   await register(context, username());
   await page.reload();
   await setPassphrase(page);
-  await expect(usage).toHaveAttribute("title", /\/ 5\.0 GB · \d+ \/ 5,000 files/);
+  await expect(usage).toHaveAttribute("title", /\/ 5\.0 GB · \d+ \/ 1,000,000 files/);
   await usage.click();
   await expect(dialog).toContainText("Free account");
   await expect(dialog).toContainText("$0.05 per GB a month");
