@@ -98,6 +98,51 @@ test("opens a folder from disk, marks unsaved files, and writes them back with C
   expect(await page.evaluate(() => (window as unknown as { written: Record<string, string> }).written["saved-Welcome.md"])).toContain("Your docs. Your space.");
 });
 
+test("in the desktop app, opens and saves through the system dialogs, never the page's pickers", async ({ page }) => {
+  // The page's pickers hang in Electron on a folder such as ~/Desktop; the desktop bridge must be used instead.
+  await page.addInitScript(() => {
+    const written: Record<string, string> = {};
+    const bytes = (text: string) => new TextEncoder().encode(text);
+    const disk: Record<string, string> = { "/home/me/Desktop/todo.md": "# Todo\n", "/home/me/Desktop/sub/a.txt": "a\n" };
+    Object.assign(window, {
+      written,
+      showDirectoryPicker: async () => { throw new Error("page picker used"); },
+      showOpenFilePicker: async () => { throw new Error("page picker used"); },
+      showSaveFilePicker: async () => { throw new Error("page picker used"); },
+      readm3Desktop: {
+        takeLaunchFiles: async () => [],
+        onOpenFiles: () => {},
+        pick: async (folder: boolean) => folder
+          ? [{ path: "/home/me/Desktop/todo.md", name: "todo.md", relative: "Desktop/todo.md", size: 7, data: bytes(disk["/home/me/Desktop/todo.md"]) },
+            { path: "/home/me/Desktop/sub/a.txt", name: "a.txt", relative: "Desktop/sub/a.txt", size: 2, data: bytes(disk["/home/me/Desktop/sub/a.txt"]) }]
+          : null,
+        saveAs: async (name: string) => ({ path: `/home/me/${name}`, name }),
+        readFile: async (path: string) => ({ data: bytes(written[path] ?? disk[path]), modified: 1 }),
+        readRange: async () => new Uint8Array(),
+        writeFile: async (path: string, data: string | Uint8Array) => { written[path] = typeof data === "string" ? data : new TextDecoder().decode(data); },
+      },
+    });
+  });
+  await page.reload();
+  await page.locator("#open-folder").click();
+  await expect(page.locator("#workspace-name")).toHaveText("Desktop");
+  await expect(page.locator('#file-list button[title="Desktop/sub/a.txt"]')).toBeVisible();
+  await page.locator('#file-list button[title="Desktop/todo.md"]').click();
+  await expect(page.locator("#save-status")).toHaveText("Saved to disk");
+  await page.locator("#reader").press("e");
+  await editorInput(page).fill("# Todo\n\n- done\n");
+  await page.keyboard.press("Control+s");
+  await expect(page.locator("#save-status")).toHaveText("Saved to disk · todo.md");
+  expect(await page.evaluate(() => (window as unknown as { written: Record<string, string> }).written["/home/me/Desktop/todo.md"])).toBe("# Todo\n\n- done\n");
+  // Closing the dialog is not an error.
+  await page.locator("#open-files").click();
+  await expect(page.locator("#notice")).toBeHidden();
+  await page.locator('#file-list button[title="Welcome.md"]').click();
+  await page.locator("#reader").press("Control+s");
+  await expect(page.locator("#save-status")).toHaveText("Saved to disk · Welcome.md");
+  expect(await page.evaluate(() => (window as unknown as { written: Record<string, string> }).written["/home/me/Welcome.md"])).toContain("Your docs. Your space.");
+});
+
 test("keeps a rolling history: opened, saved, changed on disk, with snippets and restore", async ({ page }) => {
   // A fake disk whose file can change under the editor, as a regenerated output.json does.
   await page.addInitScript(() => {
