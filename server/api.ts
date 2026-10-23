@@ -25,10 +25,53 @@ const MAX_SUMMARY_BODY = 28 * 1024 * 1024;
 async function body(request: Request, max = MAX_BODY): Promise<Record<string, unknown>> {
   if (!request.headers.get("content-type")?.startsWith("application/json"))
     throw new HttpError(415, "Use application/json.");
+  const bytes = await readBytes(request, max);
+  try {
+    const value = JSON.parse(new TextDecoder().decode(bytes));
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw 0;
+    return value;
+  } catch {
+    throw new HttpError(400, "A JSON object is required.");
+  }
+}
+/**
+ * A paste sent as the file itself: an upload (`curl -F file=@app.log`), whose file
+ * name is the title, or the bare bytes (`curl --data-binary @app.log`). Title,
+ * expiresIn and language come from the query string or the form's other fields. A
+ * PDF or image becomes the base64 a JSON paste would carry; anything else is UTF-8.
+ */
+async function filePaste(request: Request, url: URL): Promise<Record<string, unknown>> {
+  const args: Record<string, unknown> = {};
+  for (const key of ["title", "expiresIn", "language"])
+    if (url.searchParams.has(key)) args[key] = url.searchParams.get(key);
+  let bytes: Uint8Array;
+  if (request.headers.get("content-type")?.startsWith("multipart/form-data")) {
+    if (Number(request.headers.get("content-length")) > MAX_BODY)
+      throw new HttpError(413, "Request too large.");
+    const form = await request.formData().catch(() => {
+      throw new HttpError(400, "The upload could not be read.");
+    });
+    let file: File | undefined;
+    for (const [key, value] of form) {
+      if (typeof value !== "string") file ??= value;
+      else if (["title", "expiresIn", "language"].includes(key)) args[key] ??= value;
+    }
+    if (!file) throw new HttpError(400, "Send the file as a form field: -F file=@app.log");
+    if (file.size > MAX_BODY) throw new HttpError(413, "Request too large.");
+    if (args.title === undefined && file.name) args.title = file.name;
+    bytes = new Uint8Array(await file.arrayBuffer());
+  } else bytes = await readBytes(request, MAX_BODY);
+  const title = typeof args.title === "string" ? args.title : undefined;
+  args.source = binaryType(title)
+    ? Buffer.from(bytes).toString("base64")
+    : new TextDecoder().decode(bytes);
+  return args;
+}
+async function readBytes(request: Request, max: number): Promise<Uint8Array> {
   if (Number(request.headers.get("content-length")) > max)
     throw new HttpError(413, "Request too large.");
   const stream = request.body?.getReader();
-  if (!stream) throw new HttpError(400, "A JSON body is required.");
+  if (!stream) throw new HttpError(400, "A request body is required.");
   const chunks: Uint8Array[] = [];
   let size = 0;
   try {
@@ -51,13 +94,7 @@ async function body(request: Request, max = MAX_BODY): Promise<Record<string, un
     bytes.set(chunk, offset);
     offset += chunk.length;
   }
-  try {
-    const value = JSON.parse(new TextDecoder().decode(bytes));
-    if (!value || typeof value !== "object" || Array.isArray(value)) throw 0;
-    return value;
-  } catch {
-    throw new HttpError(400, "A JSON object is required.");
-  }
+  return bytes;
 }
 const buckets = new Map<string, { count: number; until: number }>();
 function limit(key: string, max = 30) {
@@ -208,7 +245,12 @@ export function createApi(
       if (paste) {
         if (!paste[1] && request.method === "POST") {
           limit(`paste-create:${ip}`, 10);
-          const created = createPaste(store, await body(request));
+          const created = createPaste(
+            store,
+            request.headers.get("content-type")?.startsWith("application/json")
+              ? await body(request)
+              : await filePaste(request, url),
+          );
           return json(
             {
               id: created.id,

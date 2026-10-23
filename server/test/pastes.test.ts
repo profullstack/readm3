@@ -182,6 +182,44 @@ describe("anonymous pastes", () => {
     expect((await call("pastes", "POST", { source: "plain text, not base64!", title: "x.pdf" })).status).toBe(400);
   });
 
+  test("a file is pasted as an upload or as bare bytes, as curl sends it", async () => {
+    const { store } = fixture();
+    const api = createApi(store, "http://localhost");
+    const post = async (body: BodyInit, query = "", headers: Record<string, string> = {}) => {
+      const response = (await api(
+        new Request("http://localhost/api/v1/pastes" + query, { method: "POST", body, headers }),
+        id(),
+      ))!;
+      return { status: response.status, data: (await response.json()) as any };
+    };
+    const log = "2026-10-23 12:00:01 ERROR boom\n  at main (app.js:1)\n";
+    const form = new FormData();
+    form.append("file", new File([log], "app.log"));
+    form.append("expiresIn", "1h");
+    const uploaded = await post(form);
+    expect(uploaded.status).toBe(201);
+    expect(uploaded.data.title).toBe("app.log");
+    expect(Date.parse(uploaded.data.expiresAt) - Date.now()).toBeLessThan(3601 * 1000);
+    const raw = (await api(new Request(uploaded.data.raw.replace(/^.*\/p\//, "http://localhost/api/v1/pastes/")), id()))!;
+    expect(await raw.text()).toBe(log);
+
+    const named = await post(log, "?title=crash.log", { "content-type": "application/x-www-form-urlencoded" });
+    expect(named.status).toBe(201);
+    expect(named.data.title).toBe("crash.log");
+
+    const pdf = Buffer.from("%PDF-1.4 not really");
+    const upload = new FormData();
+    upload.append("file", new File([pdf], "spec.pdf"));
+    const created = await post(upload);
+    expect(created.data.mime).toBe("application/pdf");
+    const bytes = (await api(new Request(`http://localhost/api/v1/pastes/${tokenOf(created.data.url)}/raw`), id()))!;
+    expect(Buffer.from(await bytes.arrayBuffer()).equals(pdf)).toBe(true);
+
+    const empty = new FormData();
+    empty.append("title", "x.log");
+    expect((await post(empty)).status).toBe(400);
+  });
+
   test("a paste stored before languages existed reads as Markdown", async () => {
     const { store, call } = fixture();
     const created = await call("pastes", "POST", { source: "# Old\n" });
