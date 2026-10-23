@@ -191,7 +191,8 @@ test("signed in, a folder past the old 5,000-file cap opens whole with its subfo
   await page.goto("/viewer");
   await setPassphrase(page);
   await page.locator("#open-folder").click();
-  await expect(page.locator("#workspace-name")).toHaveText("site");
+  // Reading 6,001 files takes a few seconds on a slow CI runner.
+  await expect(page.locator("#workspace-name")).toHaveText("site", { timeout: 60_000 });
   await expect(page.locator("#document-name")).toHaveText("site/README.md");
   // 6,001 files plus the starter documents, all kept.
   expect(Number(await page.locator("#file-count").textContent())).toBeGreaterThan(6000);
