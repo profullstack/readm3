@@ -2,6 +2,8 @@ import { Database } from "bun:sqlite";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { saveSignupProfile, validateProfile } from "@profullstack/profile";
+import { profiles } from "./profile.ts";
 
 const secret = () => randomBytes(32).toString("base64url");
 const id = () => randomBytes(12).toString("base64url");
@@ -13,7 +15,7 @@ export type Account = { id: string; username: string; displayName: string; admin
 export type Mail = { to: string; url: string };
 export type SendMail = (mail: Mail) => Promise<void>;
 export class AccountError extends Error {
-  constructor(public status: number, message: string) { super(message); }
+  constructor(public status: number, message: string, public errors?: Record<string, string>) { super(message); }
 }
 const publicColumns = "u.id,u.username,u.displayName,u.admin,u.createdAt,e.email,e.emailVerifiedAt";
 /**
@@ -67,6 +69,11 @@ export class Accounts {
       ${IDENTITY_SCHEMA}
       ${OAUTH_SCHEMA}
     `);
+    // The signup form's profile fields ride on the emailed link until it is spent.
+    const challengeColumns = this.db.query("PRAGMA table_info(email_challenges)").all() as { name: string }[];
+    if (!challengeColumns.some(column => column.name === "profile"))
+      this.db.exec("ALTER TABLE email_challenges ADD COLUMN profile TEXT");
+    profiles(this.db);
   }
   private rate(key: string, limit: number, seconds: number) {
     const current = Date.now();
@@ -105,22 +112,29 @@ export class Accounts {
   }
   private challenge(token: unknown) {
     if (typeof token !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(token)) throw new AccountError(400, "This sign-in link is invalid or has expired. Request a new link.");
-    const row = this.db.query("SELECT email FROM email_challenges WHERE tokenHash=? AND expiresAt>?").get(hash(token), stamp()) as { email: string } | null;
+    const row = this.db.query("SELECT email, profile FROM email_challenges WHERE tokenHash=? AND expiresAt>?").get(hash(token), stamp()) as { email: string; profile: string | null } | null;
     if (!row) throw new AccountError(400, "This sign-in link is invalid or has expired. Request a new link.");
     return row;
   }
-  private async requestLink(input: unknown, ip: string, requestedNext?: unknown) {
+  private async requestLink(input: unknown, ip: string, requestedNext?: unknown, signup?: Record<string, unknown>) {
     const next = typeof requestedNext === "string" && SAFE_NEXT.test(requestedNext) ? requestedNext : null;
     this.rate(`send-ip:${ip}`, 20, 3600);
     const email = typeof input === "string" ? input.trim().toLowerCase() : "";
     if (email.length > 254 || !/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i.test(email) || email.split("@")[0].length > 64) {
       throw new AccountError(400, "Enter a valid email address.");
     }
+    // Creating an account asks for the shared profile fields; a plain sign-in never does.
+    let profile: string | null = null;
+    if (signup) {
+      const check = validateProfile({ ...signup, email });
+      if (!check.ok) throw new AccountError(400, Object.values(check.errors)[0] ?? "Some fields need fixing.", check.errors);
+      profile = JSON.stringify(check.profile);
+    }
     this.rate(`send-email-minute:${email}`, 1, 60);
     this.rate(`send-email-hour:${email}`, 5, 3600);
     const token = secret();
     this.db.query("DELETE FROM email_challenges WHERE expiresAt<=?").run(stamp());
-    this.db.query("INSERT INTO email_challenges VALUES (?,?,?,?)").run(hash(token), email, new Date(Date.now() + 15 * 60000).toISOString(), stamp());
+    this.db.query("INSERT INTO email_challenges (tokenHash,email,expiresAt,createdAt,profile) VALUES (?,?,?,?,?)").run(hash(token), email, new Date(Date.now() + 15 * 60000).toISOString(), stamp(), profile);
     try { await this.sendMail({ to: email, url: `${this.origin}/account${next ? "?next=" + encodeURIComponent(next) : ""}#verify=${token}` }); }
     catch {
       this.db.query("DELETE FROM email_challenges WHERE tokenHash=?").run(hash(token));
@@ -130,7 +144,7 @@ export class Accounts {
   }
   private verify(token: unknown, oldToken: string) {
     return this.db.transaction(() => {
-      const { email } = this.challenge(token);
+      const { email, profile } = this.challenge(token);
       let identity = this.db.query("SELECT userId FROM account_emails WHERE email=?").get(email) as { userId: string } | null;
       if (!identity) {
         const userId = id();
@@ -142,8 +156,14 @@ export class Accounts {
       }
       this.db.query("DELETE FROM email_challenges WHERE email=?").run(email);
       const session = this.startSession(identity.userId, oldToken, "Email sign-in");
-      return { user: this.authenticate(session)!, session };
+      return { user: this.authenticate(session)!, session, profile };
     })();
+  }
+  /** Save the fields typed on the signup form. A failure never costs anybody their sign-in: the account page asks again. */
+  private async saveProfile(userId: string, email: string | null, profile: string | null) {
+    if (!profile) return;
+    try { await saveSignupProfile(await profiles(this.db).ready, userId, JSON.parse(profile), { email }); }
+    catch (error) { console.error("Signup profile save failed", error instanceof Error ? error.message : error); }
   }
   async handle(request: Request, ip = "unknown"): Promise<Response | null> {
     const path = new URL(request.url).pathname;
@@ -162,11 +182,12 @@ export class Accounts {
       let args: Record<string, unknown>;
       try { args = JSON.parse(body); if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error(); }
       catch { throw new AccountError(400, "Invalid request."); }
-      if (path === "/api/auth/email") return reply(await this.requestLink(args.email, ip, args.next));
+      if (path === "/api/auth/email") return reply(await this.requestLink(args.email, ip, args.next, args.mode === "signup" ? args : undefined));
       if (path === "/api/auth/preview" || path === "/api/auth/verify") {
         this.rate(`verify:${ip}`, 60, 60);
-        if (path.endsWith("preview")) return reply(this.challenge(args.token));
+        if (path.endsWith("preview")) return reply({ email: this.challenge(args.token).email });
         const result = this.verify(args.token, this.token(request));
+        await this.saveProfile(result.user.id, result.user.email, result.profile);
         return reply({ user: result.user }, 200, this.cookie(result.session));
       }
       if (path === "/api/auth/logout") {
@@ -187,7 +208,7 @@ export class Accounts {
       }
       return reply({ error: "Not found." }, 404);
     } catch (error) {
-      if (error instanceof AccountError) return reply({ error: error.message }, error.status);
+      if (error instanceof AccountError) return reply({ error: error.message, ...(error.errors ? { errors: error.errors } : {}) }, error.status);
       console.error("Account request failed", error instanceof Error ? error.name : "Unknown error");
       return reply({ error: "Something went wrong. Please try again." }, 500);
     }

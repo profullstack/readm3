@@ -10,6 +10,7 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="__ACCOUNT_STYLES__">
   <script type="module" src="__ACCOUNT_SCRIPT__"></script>
+  <script defer src="__PROFILE_SCRIPT__"></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to account</a>
@@ -35,8 +36,10 @@
         <form id="email-form">
           <label for="email">Email address</label>
           <input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" maxlength="254" required>
+          <div id="signup-fields" hidden>__SIGNUP_FIELDS__</div>
           <button id="send-link" class="primary">Continue with email <span aria-hidden="true">→</span></button>
         </form>
+        <button id="signup-toggle" class="text-button" type="button" aria-controls="signup-fields" aria-expanded="false">New to readm3? Create an account</button>
         <button id="desktop-sign-in" class="primary" type="button" hidden>Sign in with your browser <span aria-hidden="true">→</span></button>
         <a id="coinpay-sign-in" class="secondary" href="/api/v1/coinpay/oauth/start" hidden>Sign in with CoinPay</a>
         <p class="fine-print">No password to remember. Every sign-in link is private, expires in 15 minutes, and works once.</p>
@@ -64,6 +67,11 @@
           <label for="display-name">Display name</label>
           <input id="display-name" name="displayName" autocomplete="nickname" maxlength="80" required>
           <button class="secondary">Save name</button>
+        </form>
+        <form id="details-form" class="details-form">
+          <p class="details-note">Your details. Private to your account, never shown to others.</p>
+          __DETAILS_FIELDS__
+          <button class="secondary">Save details</button>
         </form>
         <div id="coinpay-link" class="coinpay-link" hidden>
           <p id="coinpay-linked"></p>

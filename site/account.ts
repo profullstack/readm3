@@ -6,6 +6,19 @@ const requestedNext = new URLSearchParams(location.search).get("next");
 const next = requestedNext && /^\/(?:admin|viewer|oauth\/authorize)(?:\?|$)/.test(requestedNext) ? requestedNext : null;
 let email = "";
 let token: string | null = null;
+/** "Create an account" adds the shared profile fields to the email form; plain sign-in never asks for them. */
+let signup = false;
+const PROFILE_FIELDS = ["first_name", "last_name", "company_domain", "job_title", "linkedin_url"] as const;
+const fieldValues = (prefix: string) =>
+  Object.fromEntries(PROFILE_FIELDS.map(name => [name, el<HTMLInputElement>(`${prefix}${name}`).value]));
+function setSignup(on: boolean) {
+  signup = on;
+  el("signup-fields").hidden = !on;
+  // A disabled fieldset's required boxes do not block a plain sign-in.
+  el("signup-fields").querySelector("fieldset")!.disabled = !on;
+  el("signup-toggle").textContent = on ? "Already have an account? Sign in" : "New to readm3? Create an account";
+  el("signup-toggle").setAttribute("aria-expanded", String(on));
+}
 function readLink() {
   token = new URLSearchParams(location.hash.slice(1)).get("verify");
   if (location.hash) history.replaceState(null, "", location.pathname + location.search);
@@ -79,6 +92,23 @@ function profile(user: Account) {
   el("account-email").textContent = user.email ?? "Signed in with CoinPay";
   el("verified-badge").textContent = user.email ? "Email verified" : "CoinPay account";
   el<HTMLInputElement>("display-name").value = user.displayName;
+  void loadDetails();
+}
+async function profileApi(method: "GET" | "PATCH", body?: unknown) {
+  const response = await fetch("/api/v1/me/profile", {
+    method, credentials: "same-origin", cache: "no-store",
+    headers: body === undefined ? {} : { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.errors ? Object.values(result.errors)[0] as string : result.error || "Could not save your details.");
+  return result as { profile: Record<string, string | null> | null };
+}
+async function loadDetails() {
+  try {
+    const { profile } = await profileApi("GET");
+    for (const name of PROFILE_FIELDS) el<HTMLInputElement>(`details-${name}`).value = profile?.[name] ?? "";
+  } catch { /* the fields stay empty; saving still works */ }
 }
 function cooldown(seconds: number) {
   clearInterval(timer);
@@ -93,7 +123,7 @@ function cooldown(seconds: number) {
   tick(); timer = setInterval(tick, 1000);
 }
 async function sendLink() {
-  const response = await api<{ retryAfter: number }>("email", { email, next });
+  const response = await api<{ retryAfter: number }>("email", { email, next, ...(signup ? { mode: "signup", ...fieldValues("signup-") } : {}) });
   show("check-email"); el("sent-email").textContent = email;
   cooldown(response.retryAfter);
 }
@@ -105,6 +135,14 @@ el("resend").addEventListener("click", () => {
   void action(el<HTMLButtonElement>("resend"), sendLink).then(() => {
     // action's finalizer reenables its button; restore the send cooldown.
     if (!el("check-email").hidden && el("error").hidden) cooldown(60);
+  });
+});
+el("signup-toggle").addEventListener("click", () => { setSignup(!signup); el(signup ? "signup-first_name" : "email").focus(); });
+el<HTMLFormElement>("details-form").addEventListener("submit", event => {
+  event.preventDefault();
+  void action(el("details-form").querySelector("button")!, async () => {
+    await profileApi("PATCH", fieldValues("details-"));
+    await loadDetails(); message("status", "Your details have been saved.");
   });
 });
 for (const id of ["different-email", "cancel-verify"]) el(id).addEventListener("click", () => { token = null; show("sign-in"); el("email").focus(); });
@@ -132,6 +170,7 @@ el("coinpay-unlink").addEventListener("click", () => void action(el<HTMLButtonEl
 if (inDesktop) {
   // An emailed link opens in the browser and would sign the browser in, not this app.
   el("email-form").hidden = true;
+  el("signup-toggle").hidden = true;
   el("desktop-sign-in").hidden = false;
   const fine = document.querySelector<HTMLElement>("#sign-in .fine-print");
   if (fine) fine.textContent = "Your browser opens readm3.com. Sign in there with your email or CoinPay, approve the desktop app, and come back.";
@@ -157,4 +196,5 @@ async function initialize() {
 }
 window.addEventListener("pageshow", event => { if (event.persisted) { show("loading"); void initialize(); } });
 window.addEventListener("hashchange", () => { readLink(); show("loading"); void initialize(); });
+setSignup(false);
 void initialize();
