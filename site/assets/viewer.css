@@ -235,3 +235,36 @@ html, body.reader-app { height: 100%; overflow: hidden; }
 .reader-app .summary-listen { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 8px; }
 .reader-app .summary-listen audio { width: 100%; max-width: 420px; height: 36px; }
 .reader-app .summary-listen small { color: var(--muted); }
+
+/* Tables (CSV, TSV): a sticky header that sorts, numbered rows, a filter. Same theme variables as code. */
+.code-view.table-view { width: 100%; min-width: 0; }
+.table-view { font: 13px/1.6 var(--mono); color: var(--fg); display: flex; flex-direction: column; gap: 10px; }
+.table-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.table-filter { flex: 1 1 260px; min-width: 0; padding: 7px 10px; font: 12px var(--mono); color: var(--fg); background: var(--surface); border: 1px solid var(--border); border-radius: 5px; }
+.table-filter:focus { border-color: var(--primary); outline: none; }
+.table-count { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.reader-app .table-tools button { padding: 5px 9px; font-size: 11px; color: var(--muted); }
+.table-scroll { overflow: auto; max-width: 100%; max-height: calc(100dvh - 260px); border: 1px solid var(--border); border-radius: 6px; }
+.data-table { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; }
+.data-table th, .data-table td { padding: 3px 12px; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); border-right: 1px solid color-mix(in srgb, var(--border) 60%, transparent); text-align: left; white-space: pre; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
+.data-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.data-table thead th { position: sticky; top: 0; z-index: 2; background: var(--surface); padding: 0; white-space: nowrap; max-width: none; border-bottom: 1px solid var(--border); }
+.data-table .rownum { position: sticky; left: 0; z-index: 1; background: var(--surface); color: var(--muted); text-align: right; font-weight: 400; font-size: 11px; user-select: none; }
+.data-table thead .rownum { z-index: 3; padding: 3px 12px; }
+.data-table tbody tr { cursor: pointer; }
+.data-table tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--fg) 2.5%, transparent); }
+.data-table tbody tr:hover td, .data-table tbody tr:focus td { background: color-mix(in srgb, var(--primary) 9%, transparent); }
+.reader-app .column-sort { border: 0; border-radius: 0; background: transparent; padding: 5px 4px 5px 12px; font: 600 12px var(--mono); color: var(--fg); }
+.reader-app .column-sort:hover { background: transparent; border: 0; color: var(--primary); }
+.column-type { margin-left: 4px; color: var(--muted); font-weight: 400; font-size: 10px; }
+.reader-app .column-sort[aria-sort="ascending"] .column-type, .reader-app .column-sort[aria-sort="descending"] .column-type { color: var(--primary); font-size: 11px; }
+.reader-app .column-stats { border: 0; background: transparent; padding: 5px 10px 5px 2px; font-size: 11px; color: var(--muted); visibility: hidden; }
+.data-table thead th:hover .column-stats, .reader-app .column-stats:focus-visible { visibility: visible; }
+.reader-app .column-stats:hover { background: transparent; border: 0; color: var(--primary); }
+.reader-app .table-more { align-self: flex-start; font-size: 11px; color: var(--muted); }
+.sheet-list { display: grid; grid-template-columns: minmax(80px, max-content) 1fr; gap: 8px 20px; margin: 20px 0 0; font: 12px/1.6 var(--mono); }
+.sheet-list dt { color: var(--primary); overflow-wrap: anywhere; }
+.sheet-list dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sheet-list dd.empty::before { content: "(empty)"; color: var(--muted); }
+@media (hover: none) { .reader-app .column-stats { visibility: visible; } }
+@media (max-width: 700px) { .table-scroll { max-height: calc(100dvh - 300px); } .data-table th, .data-table td { max-width: 24ch; } }

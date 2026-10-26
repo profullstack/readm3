@@ -31,7 +31,8 @@
     "protocols": [{ "name": "readm3", "schemes": ["readm3"] }],
     "fileAssociations": [
       { "ext": ["md", "markdown"], "name": "Markdown", "role": "Editor" },
-      { "ext": ["txt", "json", "yaml", "yml", "toml", "js", "ts", "py", "sh", "css", "html"], "name": "Text", "role": "Editor" }
+      { "ext": ["txt", "json", "yaml", "yml", "toml", "js", "ts", "py", "sh", "css", "html"], "name": "Text", "role": "Editor" },
+      { "ext": ["csv", "tsv"], "name": "Table", "role": "Viewer" }
     ],
     "mac": {
       "artifactName": "readm3-mac-${arch}.${ext}",
@@ -58,12 +59,12 @@
       "category": "Development",
       "synopsis": "A plain, fast text editor for Markdown and code.",
       "description": "readm3 is a quiet text editor: line numbers, multiple cursors, find and replace, folding, quick open and a command palette, with Markdown rendered as a document. It opens folders from disk and saves back to them, and works offline.",
-      "mimeTypes": ["text/plain", "text/markdown", "application/json", "text/x-python", "text/javascript", "text/css", "text/html", "application/xml", "text/x-shellscript", "application/x-yaml", "text/x-c", "text/x-c++", "text/x-go", "text/x-rust", "text/x-java"],
+      "mimeTypes": ["text/plain", "text/markdown", "application/json", "text/x-python", "text/javascript", "text/css", "text/html", "application/xml", "text/x-shellscript", "application/x-yaml", "text/x-c", "text/x-c++", "text/x-go", "text/x-rust", "text/x-java", "text/csv", "text/tab-separated-values"],
       "desktop": {
         "entry": {
           "Name": "readm3",
           "GenericName": "Text Editor",
-          "Keywords": "text;editor;markdown;code;",
+          "Keywords": "text;editor;markdown;code;csv;tsv;table;",
           "StartupWMClass": "readm3"
         }
       }

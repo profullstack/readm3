@@ -51,6 +51,7 @@ import swift from "highlight.js/lib/languages/swift";
 import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
+import { looksLikeTable, TABLE_LANGUAGE } from "./csv.ts";
 
 export interface Language {
   /** The highlight.js grammar name; also what the API reports as `language`. */
@@ -104,7 +105,9 @@ export const LANGUAGES: Language[] = [
   { id: "diff", label: "Diff", extensions: ["diff", "patch"], mime: "text/x-diff" },
   { id: "graphql", label: "GraphQL", extensions: ["graphql", "gql"], mime: "application/graphql" },
   { id: "protobuf", label: "Protocol Buffers", extensions: ["proto"], mime: "text/plain" },
-  { id: "plaintext", label: "Plain text", extensions: ["txt", "text", "log", "csv", "tsv"], mime: "text/plain", auto: false },
+  // Tables have no grammar: every surface draws them as a grid (src/csv.ts) instead of highlighting them.
+  { id: TABLE_LANGUAGE, label: "CSV / TSV", extensions: ["csv", "tsv", "tab", "psv"], mime: "text/csv", auto: false },
+  { id: "plaintext", label: "Plain text", extensions: ["txt", "text", "log"], mime: "text/plain", auto: false },
 ];
 
 const grammars: Record<string, Parameters<typeof hljs.registerLanguage>[1]> = {
@@ -284,6 +287,7 @@ export function sniffLanguage(source: string): string {
   if (/^\s*<\?xml\b/.test(head) || /^\s*<!doctype html\b|^\s*<html\b/i.test(head)) return "xml";
   if (/^diff --git |^--- a\/.*\n\+\+\+ b\//m.test(head) || /^@@ -\d+(,\d+)? \+\d+(,\d+)? @@/m.test(source)) return "diff";
   if (looksLikeMarkdown(source)) return MARKDOWN;
+  if (looksLikeTable(source)) return TABLE_LANGUAGE;
   const [best, second] = scoreSignals(source);
   if (best && best.score >= 2 && best.score > (second?.score ?? 0)) return best.language;
   // The grammar scorer only decides when the signals could not, and only when it is sure.

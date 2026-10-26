@@ -13,7 +13,8 @@ now in a browser. Pick a file on the left. Make yourself at home.
 
 Any text file appears in the explorer: Markdown renders as a document, and
 JSON, code, config and logs are shown as highlighted, foldable code you can edit.
-PDFs and images open in the browser's own viewer. Build output, dependencies,
+A CSV or TSV reads as a table: click a column to sort, type in the filter
+(`city:london age>30`), click a row to see it whole. PDFs and images open in the browser's own viewer. Build output, dependencies,
 and hidden directories stay out of the way. README files sort first.
 
 ## A little less reaching for the mouse

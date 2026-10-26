@@ -561,3 +561,79 @@ test("links to the reader from the homepage and serves worker updates uncached",
   // Railway rejects malformed encodings at its edge before they reach this server.
   if (!process.env.READM3_TEST_URL) expect((await request.get("/%E0%A4%A")).status()).toBe(404);
 });
+
+test("reads a CSV as a table: sorts, filters, opens a row and a column's stats, and edits the text", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const csv = 'name,city,age\nAda,London,36\nGrace,"Arlington, VA",85\nLinus,Helsinki,54\nMargaret,Boston,\n';
+  await page.locator("#files-input").setInputFiles({ name: "people.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await expect(page.locator("#document-name")).toHaveText("people.csv");
+  // A table opens to read, not in the editor the way code does.
+  await expect(page.locator("#editor")).toBeHidden();
+  await expect(page.locator("#file-mark")).toHaveText("CSV");
+  await expect(page.locator("#code-tools")).toBeHidden();
+  const view = page.locator("#code-content.table-view");
+  await expect(view.locator(".table-count")).toHaveText("4 rows · 3 columns");
+  await expect(view.locator("thead th")).toHaveCount(4);
+  const names = () => view.locator("tbody tr td:first-of-type").allTextContents();
+  expect(await names()).toEqual(["Ada", "Grace", "Linus", "Margaret"]);
+  await expect(view.locator("tbody tr").nth(1).locator("td").nth(1)).toHaveText("Arlington, VA");
+  await expect(view.locator("tbody td.num").first()).toHaveText("36");
+
+  const age = view.locator(".column-sort").nth(2);
+  await age.click();
+  await expect(age).toHaveAttribute("aria-sort", "ascending");
+  expect(await names()).toEqual(["Ada", "Linus", "Grace", "Margaret"]);
+  await age.click();
+  expect(await names()).toEqual(["Grace", "Linus", "Ada", "Margaret"]);
+  await age.click();
+  await expect(age).toHaveAttribute("aria-sort", "none");
+
+  // `/` reaches the row filter while a table is open, and the filter language works.
+  await page.locator("#reader").focus();
+  await page.keyboard.press("/");
+  await expect(view.locator(".table-filter")).toBeFocused();
+  await page.keyboard.type("age>40");
+  await expect(view.locator(".table-count")).toHaveText("2 of 4 rows · 3 columns");
+  expect(await names()).toEqual(["Grace", "Linus"]);
+  await view.locator(".table-tools button", { hasText: "Copy view" }).click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('name,city,age\nGrace,"Arlington, VA",85\nLinus,Helsinki,54\n');
+
+  await view.locator("tbody tr").first().click();
+  const sheet = page.locator("#table-dialog");
+  await expect(sheet).toBeVisible();
+  await expect(sheet.locator("h2")).toHaveText("Row 2");
+  await expect(sheet.locator("dd").nth(1)).toHaveText("Arlington, VA");
+  await page.keyboard.press("Escape");
+  await expect(sheet).toBeHidden();
+
+  await view.locator("thead th").nth(3).hover();
+  await view.locator(".column-stats").nth(2).click();
+  await expect(sheet.locator("h2")).toHaveText("age");
+  await expect(sheet).toContainText("Over the filtered rows.");
+  await expect(sheet.locator("dt", { hasText: "mean" }).locator("+ dd")).toHaveText("69.5");
+  await page.keyboard.press("Escape");
+
+  // Editing is the same text editor as code; reading again shows the change.
+  await page.locator("#edit-mode").click();
+  await expect(page.locator("#editor")).toBeVisible();
+  await editorInput(page).press("Control+End");
+  await editorInput(page).type("Ken,Tokyo,70\n");
+  await page.locator("#read-mode").click();
+  await expect(view.locator(".table-count")).toHaveText("3 of 5 rows · 3 columns");
+  expect(await names()).toEqual(["Grace", "Linus", "Ken"]);
+});
+
+test("a pasted table with no name is sniffed as CSV and shown as a table at its private link", async ({ page, request }) => {
+  const created = await request.post("/api/v1/pastes", { data: { source: "id\tcity\tscore\n1\tOslo\t9.5\n2\tLima\t7\n3\tPune\t8.25\n" } });
+  expect(created.status()).toBe(201);
+  const paste = await created.json();
+  expect(paste.language).toBe("csv");
+  expect(paste.title).toBe("paste.csv");
+  expect(paste.mime).toBe("text/csv");
+  await page.goto(paste.url);
+  const view = page.locator("#code-content.table-view");
+  await expect(view.locator(".table-count")).toHaveText("3 rows · 3 columns");
+  await expect(view.locator(".media-note")).toContainText("tab-separated");
+  await expect(view.locator("tbody tr").nth(2).locator("td").nth(1)).toHaveText("Pune");
+  await expect(page.locator("#edit-mode")).toBeDisabled();
+});
