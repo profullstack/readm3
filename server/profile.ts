@@ -14,7 +14,11 @@ const stores = new WeakMap<Database, { store: ProfileStore; ready: Promise<Profi
 export function profiles(db: Database) {
   let entry = stores.get(db);
   if (!entry) {
-    const store = createProfileStore(db, { keyType: "text" });
+    // bun:sqlite's cached db.query() statements, not the package's db.prepare(): a
+    // prepared statement nobody finalizes keeps the file open after close(), which
+    // Windows refuses to delete.
+    const adapter = { dialect: "sqlite" as const, query: async (text: string, params: unknown[] = []) => db.query(text).all(...(params as never[])) as Record<string, unknown>[] };
+    const store = createProfileStore(adapter, { keyType: "text" });
     const ready = migrate(store).then(async () => {
       await backfill(db, store);
       return store;
