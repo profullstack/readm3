@@ -137,3 +137,22 @@ describe("folding", () => {
     assert.deepEqual(foldRegions([]), []);
   });
 });
+
+describe("tables", () => {
+  test("csv, tsv, tab and psv files are tables, not plain text", () => {
+    for (const name of ["a.csv", "b.TSV", "c.tab", "d.psv"]) assert.equal(languageForName(name)?.id, "csv");
+    assert.equal(languageForName("notes.txt")?.id, "plaintext");
+    assert.equal(languageOf("csv").mime, "text/csv");
+  });
+
+  test("a pasted table with no name is sniffed as csv; prose and code are not", () => {
+    assert.equal(detectLanguage(undefined, "id,name,score\n1,Ada,9.5\n2,Grace,8\n3,Linus,7\n"), "csv");
+    assert.equal(detectLanguage(undefined, "when\twho\n2026-01-01\tme\n2026-01-02\tyou\n"), "csv");
+    assert.equal(sniffLanguage("Hello, world.\nThis is a note, really.\nNothing more, honestly.\n"), "markdown");
+    assert.equal(sniffLanguage("const a = [1, 2];\nconst b = f(a, 3);\nconsole.log(a, b);\n"), "javascript");
+  });
+
+  test("a table highlights as plain text when something asks", () => {
+    assert.deepEqual(highlightLines("a,b\n1,2", "csv"), ["a,b", "1,2"]);
+  });
+});

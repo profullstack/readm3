@@ -15,6 +15,7 @@ import {
   type ColorDepth,
   type Theme,
 } from "@profullstack/hqtui";
+import { isTableName, parseTable, toMarkdownTable } from "./csv.ts";
 import { renderMarkdown, type RenderOptions, type Span } from "./markdown.ts";
 import { colorOf } from "./roles.ts";
 
@@ -108,7 +109,9 @@ export function resolveWidth(explicit?: number): number {
 }
 
 export function printDocument(options: PrintOptions = {}): void {
-  const source = options.path && options.path !== "-" ? readFileSync(options.path, "utf8") : readStdin();
+  const raw = options.path && options.path !== "-" ? readFileSync(options.path, "utf8") : readStdin();
+  // A CSV or TSV prints as an aligned table rather than as its text.
+  const source = isTableName(options.path) ? toMarkdownTable(parseTable(raw, { name: options.path })) : raw;
   const theme = resolveTheme(options.theme);
   const text = renderAnsi(source, resolveWidth(options.width), theme, resolveDepth(options.color), {
     flavor: options.flavor,

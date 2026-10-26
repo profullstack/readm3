@@ -69,6 +69,7 @@ npx  @profullstack/readm3
 readm3                  # browse markdown under the current directory
 readm3 ./docs           # browse a directory
 readm3 CHANGELOG.md     # open a file, browse its directory
+readm3 sales.csv        # a CSV or TSV opens as a sortable, filterable grid
 readm3 --theme nord     # pick a palette
 ```
 
@@ -82,6 +83,7 @@ readm3 --print CHANGELOG.md          # rendered, colored, to the terminal
 readm3 --print README.md | less -R   # into a pager
 curl -s https://example.com/x.md | readm3 --print
 readm3 --print notes.md | grep TODO  # no escapes when stdout is a pipe
+readm3 --print data.csv              # a CSV or TSV prints as an aligned table
 ```
 
 Color follows the usual rules: on when stdout is a terminal, off when it is not,
@@ -89,7 +91,7 @@ and `NO_COLOR` / `FORCE_COLOR` are honored. `--color always|never|auto` override
 that either way. With `--print`, `--width` sets the render width rather than the
 sidebar.
 
-The browser only shows markdown. Directories with nothing beneath them are
+The browser shows markdown and tables (`.csv`, `.tsv`, `.tab`, `.psv`). Directories with nothing beneath them are
 pruned, `node_modules` and friends are never walked, and README sorts first.
 
 ## Keys
@@ -107,6 +109,43 @@ pruned, `node_modules` and friends are never walked, and README sorts first.
 
 The mouse works too: the wheel scrolls whichever pane it is over, and a click
 opens a file.
+
+### Tables
+
+A CSV or TSV opens as a grid instead of as text, in the spirit of
+[tabiew](https://github.com/shshemi/tabiew): a frozen header, row numbers, a cell
+cursor, and columns that scroll in from the side. The delimiter (comma, tab,
+semicolon, pipe) and the header row are detected, quoted fields with commas and
+line breaks are read correctly, and every column is typed (number, date, yes/no,
+text) so sorting and comparisons read values the way people do.
+
+| | |
+|---|---|
+| `←` `↑` `↓` `→` `h` `j` `k` `l` | move the cell cursor (`←` on the first column returns to the files) |
+| `0` `$` | first / last column |
+| `o` | sort by the cursor's column: ascending, descending, off |
+| `/` | filter the rows |
+| `enter` | the row as a sheet, every column on its own line |
+| `c` | the column's statistics: rows, empty, distinct, min, max, sum, mean, median, top values |
+| `v` | the raw text instead of the grid |
+| `e` | edit the text, as with any file |
+
+The filter takes space-separated terms that must all match: `london` (any cell),
+`city:london` (that column contains it), `status=open`, `country!=US`, `age>30`,
+`price<=9.99`, `joined>=2024-01-01`, `#3>10` (the third column), and `!draft` to
+negate. Quote a value with spaces: `city:"new york"`.
+
+The same grid is in the web editor, the desktop app and on paste links: click a
+column to sort, Σ for its statistics, a row to see it whole, and **Copy view** /
+**Download view** for just the rows you kept. A paste with no file name is
+recognised as a table from its content. The terminal grid is hqtui's `dataGrid`
+widget; the parsing is `src/csv.ts`, shared by every surface.
+
+Agents get it through the MCP server (`readm3 mcp`) as `table_query`: point it at
+CSV text, a local `path`, a paste link or a raw `url`, with an optional `filter`,
+`sort`/`descending`, `limit`/`offset` and a `stats` column, and it returns the typed
+columns, the match count and just the rows asked for, so a 50,000-row file never
+has to go into context whole. It runs locally and needs no account.
 
 ### Editing
 

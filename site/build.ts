@@ -250,12 +250,13 @@ function home(): string {
   <p>For the files people actually work on: READMEs, project plans, meeting notes, and proposals.</p></div>
   <div class="grid">
     <div class="card"><h3>Write, preview, repeat.</h3><p>Open a file or start from scratch. Edit the Markdown, switch to a clean preview, and download the source whenever you need it.</p></div>
-    <div class="card"><h3>Paste anything, no account.</h3><p>Text, code, JSON, a PDF or an image behind a secret link that expires. Markdown renders, code is highlighted and folds, and only a hash of the secret is kept. <a href="/paste">readm3.com/paste</a>, or <code>readm3 paste FILE</code>.</p></div>
+    <div class="card"><h3>Paste anything, no account.</h3><p>Text, code, JSON, a CSV, a PDF or an image behind a secret link that expires. Markdown renders, code is highlighted and folds, a table is a sortable grid, and only a hash of the secret is kept. <a href="/paste">readm3.com/paste</a>, or <code>readm3 paste FILE</code>.</p></div>
     <div class="card"><h3>“Can view” or “can edit.”</h3><p>Share a link with a reviewer or invite someone to make changes. You own your files and decide who gets access.</p></div>
     <div class="card"><h3>Keep the story of the document.</h3><p>Every online save creates a version. See who changed it, share a specific version, or restore an earlier draft without losing the history.</p></div>
     <div class="card"><h3>A workspace for your team.</h3><p>Organize people into organizations and teams. Share with a whole group, a few collaborators, or anyone with your link.</p></div>
     <div class="card"><h3>A plain text editor.</h3><p>Line numbers, multiple cursors, find and replace, folding, <code>Ctrl+P</code> to any file and <code>Ctrl+Shift+P</code> for every command. Open a folder from disk and <code>Ctrl+S</code> saves back to it. <a href="/viewer">Open the editor</a>.</p></div>
     <div class="card"><h3>Files up to 5 GB, a million of them.</h3><p>A free account lifts the limits: up to 1,000,000 files (250,000 of them synced), each up to 5 GB, with 5 GB of end-to-end encrypted storage that syncs to every device. Need more? Pay as you go, $0.05 per GB a month, from a CoinPay balance.</p></div>
+    <div class="card"><h3>CSV and TSV as a table.</h3><p>Open a <code>.csv</code> or <code>.tsv</code> and it reads as a grid, not a wall of commas: click a column to sort, filter rows with <code>city:london age&gt;30 !draft</code>, open a row as a sheet, see a column's min, max, mean and top values, and copy or download just the rows you kept. The same in the terminal (<code>readm3 data.csv</code>), the desktop app, and on a paste link. <a href="/viewer">Try it</a>.</p></div>
     <div class="card"><h3>Summarize any document.</h3><p>Press Summarize in the editor for a short abstract and the key points of the open file, written by Claude. The first 10 documents a week are free on a free account; after that, pay as you go from a CoinPay balance, usually a fraction of a cent each. <a href="/viewer">Try it</a>.</p></div>
     <div class="card"><h3>Take the editor with you.</h3><p>Install readm3 from your browser, or get the desktop app: Linux <a href="${REPO}/releases/latest/download/readm3-linux-x86_64.AppImage">AppImage</a> or <a href="${REPO}/releases/latest/download/readm3-linux-x86_64.flatpak">Flatpak</a>, macOS for <a href="${REPO}/releases/latest/download/readm3-mac-arm64.dmg">Apple silicon</a> or <a href="${REPO}/releases/latest/download/readm3-mac-x64.dmg">Intel</a>, <a href="${REPO}/releases/latest/download/readm3-windows-x64-setup.exe">Windows</a>. Then <code>readm3 edit .</code> opens a folder from the terminal, like <code>subl .</code>. Local files work offline; shared documents stay connected.</p></div>
     <div class="card"><h3>Use the tools you already use.</h3><p>The web editor, CLI, API, and MCP work with the same documents and permissions. Your terminal and your agents can join the workflow.</p></div>
@@ -414,7 +415,8 @@ const llms = `# readm3
 ## What it is
 
 readm3 opens a directory of markdown files and renders them in the terminal in truecolor.
-The browser pane shows only markdown, prunes directories with nothing beneath them, never
+CSV and TSV files open as a grid with a cell cursor, sort, row filter, row sheet and column
+statistics. The browser pane shows only markdown and tables, prunes directories with nothing beneath them, never
 walks node_modules, and sorts README first. The reader pane renders headings, emphasis,
 inline code, links, fenced and indented code blocks, nested and task lists, blockquotes,
 tables with per-column alignment, rules, images as labelled placeholders, and YAML front
@@ -450,6 +452,7 @@ terminal.
 - Editor: ${SITE}/viewer (installable, offline text editor for Markdown and code: multiple cursors, find and replace, Ctrl+P quick open, command palette, saves back to files on disk)
 - Desktop app: ${REPO}/releases/latest (the same editor for Linux as AppImage and Flatpak, macOS dmg, Windows installer); \`readm3 edit PATH...\` opens files and folders in it
 - Summaries: Summarize in ${SITE}/viewer, or POST /api/v1/summaries/document { path, text } signed in (10 free documents a week, then pay as you go)
+- Tables: CSV and TSV (also .tab, .psv) open as a sortable, filterable grid in the terminal reader (hqtui data grid), ${SITE}/viewer, the desktop app and paste links; \`readm3 --print data.csv\` prints an aligned table. Filter language: free text, col:text, col=v, col!=v, col>n, col<=n, !negate, #3 for the third column
 - Paste: ${SITE}/paste (anonymous pastes of any text, PDF or image behind an expiring secret link; CLI, curl, API and MCP examples)
 - Site: ${SITE}
 - Source: ${REPO}

@@ -1,8 +1,9 @@
 /**
- * The file browser's model: a pruned tree of markdown files under a root.
+ * The file browser's model: a pruned tree of markdown and table (CSV, TSV) files
+ * under a root.
  *
- * Directories with no markdown anywhere beneath them are dropped, so the pane
- * shows a map of the documentation rather than a map of the repository.
+ * Directories with neither anywhere beneath them are dropped, so the pane shows a
+ * map of the documentation and data rather than a map of the repository.
  */
 import { readdirSync, statSync } from "node:fs";
 import { basename, join, relative, sep } from "node:path";
@@ -34,6 +35,9 @@ export interface ScanOptions {
 }
 
 export const MARKDOWN = /\.(?:md|markdown|mdown|mkd|mdx)$/i;
+
+/** What the reader opens: Markdown renders, a table (src/csv.ts) is drawn as a grid. */
+export const READABLE = /\.(?:md|markdown|mdown|mkd|mdx|csv|tsv|tab|psv)$/i;
 
 export const DEFAULT_IGNORE = [
   "node_modules",
@@ -97,7 +101,7 @@ export function scan(root: string, options: ScanOptions = {}): Entry[] {
         if (children.length === 0) continue;
         budget.left--;
         entries.push({ name, path, dir: true, children, expanded: depth < 1 });
-      } else if (MARKDOWN.test(name)) {
+      } else if (READABLE.test(name)) {
         budget.left--;
         entries.push({ name, path, dir: false, children: [], expanded: false });
       }
@@ -121,7 +125,7 @@ export function flatten(entries: Entry[], depth = 0, parent = -1, out: FlatEntry
   return out;
 }
 
-/** Every markdown file in the tree, in display order. */
+/** Every file in the tree, in display order. */
 export function files(entries: Entry[], out: Entry[] = []): Entry[] {
   for (const entry of entries) {
     if (entry.dir) files(entry.children, out);

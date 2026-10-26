@@ -10,6 +10,8 @@ import type { Flavor } from "../src/flavors.ts";
 import type { ReaderSettings } from "../src/sync-schema.ts";
 import { toHtml } from "./html.ts";
 import { renderCode, type CodeView } from "./code-view.ts";
+import { renderTable } from "./table-view.ts";
+import { TABLE_LANGUAGE } from "../src/csv.ts";
 import type { SourceEditor } from "./code-editor.ts";
 import * as disk from "./disk.ts";
 import * as fileHistory from "./history.ts";
@@ -63,6 +65,8 @@ const kind = () => kindOf(current());
 const isCode = () => kind().kind === "code";
 const isBinary = () => kind().kind === "binary";
 const isMarkdown = () => kind().kind === "markdown";
+/** A CSV or TSV: text like code (edited the same way), but read as a table. */
+const isTable = () => { const active = kind(); return active.kind === "code" && active.language.id === TABLE_LANGUAGE; };
 /**
  * Signed in, the free tier has no file count and files up to 5 GB (src/blob-store.ts);
  * signed out, the workspace keeps its small local limits.
@@ -79,7 +83,7 @@ function applyKind() {
   const current = kind();
   element("flavor-label").hidden = current.kind !== "markdown";
   element("spoilers").hidden = current.kind !== "markdown";
-  element("code-tools").hidden = current.kind !== "code";
+  element("code-tools").hidden = current.kind !== "code" || isTable();
   element("copy").hidden = current.kind === "binary" || isLarge();
   // Any file can be summarized but text too large to open here (a large PDF or image still can).
   element("summarize").hidden = isLarge() && current.kind !== "binary";
@@ -391,7 +395,7 @@ function fileRow(path: string, name: string, depth: number, directory: boolean, 
   icon.className = "file-icon";
   icon.setAttribute("aria-hidden", "true");
   const fileKind = doc ? kindOf(doc) : null;
-  icon.textContent = directory ? (filter.value || !collapsed.has(path) ? "▾" : "▸") : fileKind!.kind === "markdown" ? "M↓" : fileKind!.kind === "code" ? "{}" : "▣";
+  icon.textContent = directory ? (filter.value || !collapsed.has(path) ? "▾" : "▸") : fileKind!.kind === "markdown" ? "M↓" : fileKind!.kind === "code" ? (fileKind!.language.id === TABLE_LANGUAGE ? "▦" : "{}") : "▣";
   const label = document.createElement("span");
   label.className = "row-name";
   label.textContent = name;
@@ -533,10 +537,21 @@ function renderDocument() {
   const active = kind();
   if (active.kind === "code") {
     const key = JSON.stringify(["code", workspace.active, current().source, active.language.id]);
-    if (key !== previousRender) {
+    if (key !== previousRender && isTable()) {
       content.hidden = true;
       mediaContent.hidden = true;
       codeContent.hidden = false;
+      codeView = null;
+      renderTable(codeContent, current().source, workspace.active, {
+        copy: (text) => navigator.clipboard.writeText(text).then(() => notice("Copied the rows shown as CSV."), () => notice("The browser refused clipboard access. Use Download view instead.")),
+        save: (text, name) => saveBlob(new Blob([text], { type: "text/csv;charset=utf-8" }), name),
+      });
+      previousRender = key;
+    } else if (key !== previousRender) {
+      content.hidden = true;
+      mediaContent.hidden = true;
+      codeContent.hidden = false;
+      codeContent.classList.remove("table-view");
       codeView = renderCode(codeContent, current().source, active.language.id);
       previousRender = key;
       if (codeView.formatted) notice("Minified JSON shown formatted. Download gives the file exactly as it is.");
@@ -641,8 +656,8 @@ function openDocument(path: string, focus = true) {
   renderTabs();
   applyKind();
   documentInfo();
-  // Code opens ready to type, as in any text editor; Markdown opens rendered, as in a reader.
-  setMode(isCode() && canEdit(), focus);
+  // Code opens ready to type, as in any text editor; Markdown and tables open rendered, as in a reader.
+  setMode(isCode() && !isTable() && canEdit(), focus);
   reader.scrollTop = 0;
   progress();
   setFilesOpen(false);
@@ -1007,7 +1022,13 @@ function onKey(event: KeyboardEvent) {
     event.preventDefault(); return;
   }
   if (typing) return;
-  if (event.key === "/") { event.preventDefault(); setFilesOpen(true); filter.focus(); return; }
+  if (event.key === "/") {
+    event.preventDefault();
+    // Reading a table, `/` filters its rows, as in the terminal reader.
+    const rows = !editing && isTable() ? codeContent.querySelector<HTMLInputElement>(".table-filter") : null;
+    if (rows) { rows.focus(); return; }
+    setFilesOpen(true); filter.focus(); return;
+  }
   if (event.key === "?") { event.preventDefault(); helpDialog.showModal(); return; }
   if (fileList.contains(target)) {
     const rows = [...fileList.querySelectorAll<HTMLButtonElement>("button")];

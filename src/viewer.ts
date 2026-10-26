@@ -5,6 +5,10 @@
  * `markdown.ts`; editing shows the same buffer raw, with a caret. Both read the
  * same text, so leaving edit mode is all it takes to see the change rendered —
  * there is no separate preview to keep in step.
+ *
+ * A CSV or TSV reads as a grid instead (src/csv.ts parses it, hqtui's data grid
+ * draws it): a cell cursor, sort by column, a row filter, a row sheet and column
+ * statistics, the way tabiew does it. Editing it is the same raw editor.
  */
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
@@ -36,6 +40,19 @@ import {
   undo,
   type Editor,
 } from "./editor.ts";
+import {
+  alignOf,
+  columnStats,
+  delimiterName,
+  displayCell,
+  isTableName,
+  nextSort,
+  parseTable,
+  statsRows,
+  viewRows,
+  type Sort,
+  type Table,
+} from "./csv.ts";
 import { DEFAULT_FLAVOR, type Flavor } from "./flavors.ts";
 import { renderMarkdown, type Line } from "./markdown.ts";
 import { colorOf } from "./roles.ts";
@@ -111,6 +128,25 @@ export async function run(options: ViewerOptions): Promise<void> {
   /** Bumped on every edit, so the rendered document is rebuilt exactly then. */
   let stamp = 0;
 
+  // ---- the table view, for a CSV or TSV
+  /** The open file parsed, rebuilt when the text changes. */
+  let grid: { stamp: number; path: string; table: Table } | null = null;
+  /** Row indices shown: filtered, then sorted. */
+  let gridRows: number[] = [];
+  let gridKey = "";
+  let rowFilter = "";
+  let rowFiltering = false;
+  let sort: Sort | null = null;
+  let cursor = { row: 0, col: 0 };
+  let gridOffset = { row: 0, col: 0 };
+  /** Body rows that fit, as the grid last measured them; page keys move by this. */
+  let gridPage = 10;
+  /** Show the table's text rather than the grid. */
+  let rawTable = false;
+  /** The cursor row as a sheet, or the cursor column's statistics. */
+  let sheet = false;
+  let stats = false;
+
   /** A yes/no the next keypress answers. */
   let pending: { message: string; run: () => void } | null = null;
 
@@ -148,6 +184,14 @@ export async function run(options: ViewerOptions): Promise<void> {
       buffer = createEditor(readFileSync(path, "utf8"));
       openPath = path;
       doc = null;
+      grid = null;
+      gridKey = "";
+      rowFilter = "";
+      rowFiltering = false;
+      sort = null;
+      cursor = { row: 0, col: 0 };
+      gridOffset = { row: 0, col: 0 };
+      rawTable = false;
       scroll = 0;
       editTop = 0;
       editLeft = 0;
@@ -190,6 +234,104 @@ export async function run(options: ViewerOptions): Promise<void> {
   };
 
   const maxScroll = (): number => Math.max(0, (doc?.lines.length ?? 0) - viewport.h);
+
+  /** Whether the open file is drawn as a grid right now. */
+  const tableMode = (): boolean => !!openPath && isTableName(openPath) && !rawTable && mode === "read";
+
+  const currentTable = (): Table | null => {
+    if (!openPath || !buffer || !isTableName(openPath)) return null;
+    if (!grid || grid.stamp !== stamp || grid.path !== openPath) {
+      grid = { stamp, path: openPath, table: parseTable(bufferText(buffer), { name: openPath }) };
+      gridKey = "";
+    }
+    return grid.table;
+  };
+
+  /** The rows shown, recomputed only when the text, the filter or the sort changed. */
+  const shownRows = (): number[] => {
+    const table = currentTable();
+    if (!table) return [];
+    const key = JSON.stringify([grid?.stamp, openPath, rowFilter, sort]);
+    if (key !== gridKey) {
+      gridRows = viewRows(table, { filter: rowFilter, sort });
+      gridKey = key;
+    }
+    cursor.row = clamp(cursor.row, 0, Math.max(0, gridRows.length - 1));
+    cursor.col = clamp(cursor.col, 0, Math.max(0, table.columns.length - 1));
+    return gridRows;
+  };
+
+  /** The table's text inside a fence, so `v` shows it raw through the same renderer. */
+  const fenced = (text: string): string => {
+    const longest = Math.max(2, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+    const fence = "`".repeat(longest + 1);
+    return `${fence}csv\n${text}${text.endsWith("\n") ? "" : "\n"}${fence}\n`;
+  };
+
+  /** Keys while the grid has focus. */
+  const tableKey = (key: string): void => {
+    const rows = shownRows();
+    const table = currentTable();
+    if (!table) return;
+    const last = Math.max(0, rows.length - 1);
+    const page = Math.max(1, gridPage - 1);
+    switch (key) {
+      case "up":
+      case "k":
+        cursor.row = clamp(cursor.row - 1, 0, last);
+        return;
+      case "down":
+      case "j":
+        cursor.row = clamp(cursor.row + 1, 0, last);
+        return;
+      case "pageup":
+      case "b":
+        cursor.row = clamp(cursor.row - page, 0, last);
+        return;
+      case "pagedown":
+      case "space":
+        cursor.row = clamp(cursor.row + page, 0, last);
+        return;
+      case "home":
+      case "g":
+        cursor.row = 0;
+        return;
+      case "end":
+      case "G":
+      case "shift+g":
+        cursor.row = last;
+        return;
+      case "right":
+      case "l":
+        cursor.col = clamp(cursor.col + 1, 0, table.columns.length - 1);
+        return;
+      case "left":
+      case "h":
+        if (cursor.col === 0) pane = "tree";
+        else cursor.col--;
+        return;
+      case "0":
+      case "^":
+        cursor.col = 0;
+        return;
+      case "$":
+        cursor.col = table.columns.length - 1;
+        return;
+      case "o":
+        // A new order is read from its top, as in a spreadsheet.
+        sort = nextSort(sort, cursor.col);
+        cursor.row = 0;
+        return;
+      case "enter":
+        if (rows.length) sheet = true;
+        return;
+      case "c":
+        stats = true;
+        return;
+      default:
+        return;
+    }
+  };
 
   const moveSelection = (delta: number): void => {
     if (flat.length === 0) return;
@@ -348,14 +490,34 @@ export async function run(options: ViewerOptions): Promise<void> {
       return;
     }
 
-    if (help) {
+    if (help || sheet || stats) {
       help = false;
+      sheet = false;
+      stats = false;
       app.invalidate();
       return;
     }
 
     if (mode === "edit" && buffer) {
       editKey(event);
+      app.invalidate();
+      return;
+    }
+
+    if (rowFiltering) {
+      if (key === "escape") {
+        rowFiltering = false;
+        rowFilter = "";
+      } else if (name === "enter") {
+        rowFiltering = false;
+      } else if (name === "backspace") {
+        rowFilter = rowFilter.slice(0, -1);
+      } else if (name === "up" || name === "down") {
+        tableKey(name);
+      } else if (char && !event.ctrl && !event.alt) {
+        rowFilter += char;
+        cursor.row = 0;
+      }
       app.invalidate();
       return;
     }
@@ -424,8 +586,20 @@ export async function run(options: ViewerOptions): Promise<void> {
         return;
       }
       case "/":
-        filtering = true;
-        pane = "tree";
+        // Over a grid, `/` filters its rows; anywhere else, the file list.
+        if (pane === "view" && tableMode()) rowFiltering = true;
+        else {
+          filtering = true;
+          pane = "tree";
+        }
+        app.invalidate();
+        return;
+      case "v":
+        if (openPath && isTableName(openPath)) {
+          rawTable = !rawTable;
+          doc = null;
+          pane = "view";
+        }
         app.invalidate();
         return;
       case "[":
@@ -437,7 +611,9 @@ export async function run(options: ViewerOptions): Promise<void> {
         app.invalidate();
         return;
       case "escape":
-        if (filter) {
+        if (pane === "view" && tableMode() && rowFilter) {
+          rowFilter = "";
+        } else if (filter) {
           filter = "";
           rebuild(openPath);
         } else {
@@ -501,6 +677,12 @@ export async function run(options: ViewerOptions): Promise<void> {
       return;
     }
 
+    if (tableMode()) {
+      tableKey(key);
+      app.invalidate();
+      return;
+    }
+
     const page = Math.max(1, viewport.h - 2);
     switch (key) {
       case "up":
@@ -544,6 +726,9 @@ export async function run(options: ViewerOptions): Promise<void> {
     const openRel = openPath ? pathLabel(root, openPath) : "";
     const total = doc?.lines.length ?? 0;
     const percent = total <= viewport.h ? 100 : Math.round((Math.min(scroll + viewport.h, total) / total) * 100);
+    const gridding = tableMode();
+    const table = gridding ? currentTable() : null;
+    const rows = gridding ? shownRows() : [];
 
     ui.column({}, (screen) => {
       screen.row({ size: "fill" }, (panes) => {
@@ -564,7 +749,7 @@ export async function run(options: ViewerOptions): Promise<void> {
             else if (selected >= treeOffset + capacity) treeOffset = selected - capacity + 1;
             treeOffset = clamp(treeOffset, 0, Math.max(0, flat.length - capacity));
             if (flat.length === 0) {
-              p.text(filter ? "No match." : "No markdown here.", { fg: theme.muted });
+              p.text(filter ? "No match." : "No markdown or CSV here.", { fg: theme.muted });
               return;
             }
             p.list({
@@ -607,13 +792,23 @@ export async function run(options: ViewerOptions): Promise<void> {
           {
             title: openRel ? ` ${dirty() ? "● " : ""}${openRel} ` : " readm3 ",
             titleColor: editing ? theme.warning : theme.title,
-            subtitle: openPath ? (editing ? "EDIT" : `${percent}%`) : undefined,
+            subtitle: openPath
+              ? editing
+                ? "EDIT"
+                : table
+                  ? `${rows.length === table.rows.length ? "" : `${rows.length.toLocaleString()} of `}${table.rows.length.toLocaleString()} rows · ${table.columns.length} cols · ${delimiterName(table.delimiter)}`
+                  : `${percent}%`
+              : undefined,
             footer:
               openPath && editing && buffer
                 ? `${buffer.row + 1}:${buffer.col + 1}`
-                : openPath && total > 0
-                  ? `${Math.min(scroll + viewport.h, total)}/${total}`
-                  : undefined,
+                : table
+                  ? rows.length
+                    ? `${cursor.row + 1}/${rows.length} · ${table.columns[cursor.col]?.name ?? ""}`
+                    : "no rows"
+                  : openPath && total > 0
+                    ? `${Math.min(scroll + viewport.h, total)}/${total}`
+                    : undefined,
             borderColor: editing ? theme.warning : pane === "view" ? theme.borderFocused : theme.border,
             padding: [0, 1],
           },
@@ -651,13 +846,63 @@ export async function run(options: ViewerOptions): Promise<void> {
               return;
             }
 
+            if (table) {
+              if (rowFiltering || rowFilter) {
+                p.row({ height: 1 }, (r) => {
+                  r.text(`/${rowFilter}${rowFiltering ? "▏" : ""}`, { width: stringWidth(rowFilter) + 2, fg: theme.warning });
+                  r.text(rowFiltering ? "  col:text  col>n  col=v  !term" : "  esc clears", { fg: theme.muted });
+                });
+              }
+              if (table.columns.length === 0) {
+                p.text("This file has no rows.", { fg: theme.muted });
+                return;
+              }
+              p.dataGrid({
+                columns: table.columns.map((column) => ({ title: column.name, align: alignOf(column.type) })),
+                rows: table.rows,
+                order: rows,
+                selectedRow: rows.length ? cursor.row : -1,
+                selectedColumn: cursor.col,
+                rowOffset: gridOffset.row,
+                columnOffset: gridOffset.col,
+                sort,
+                zebra: true,
+                scrollbar: true,
+                onLayout: (frame) => {
+                  gridOffset = { row: frame.rowOffset, col: frame.columnOffset };
+                  gridPage = Math.max(1, frame.capacity);
+                },
+                onScroll: (delta) => {
+                  cursor.row = clamp(cursor.row + delta * 3, 0, Math.max(0, rows.length - 1));
+                  pane = "view";
+                  app.invalidate();
+                },
+                onSelectCell: (row, column) => {
+                  cursor = { row, col: column >= 0 ? column : cursor.col };
+                  pane = "view";
+                  app.invalidate();
+                },
+                onActivateCell: () => {
+                  sheet = true;
+                  app.invalidate();
+                },
+                onHeaderClick: (column) => {
+                  cursor.col = column;
+                  tableKey("o");
+                  pane = "view";
+                  app.invalidate();
+                },
+              });
+              return;
+            }
+
             if (!doc || doc.path !== openPath || doc.width !== w || doc.stamp !== stamp || doc.spoilers !== spoilers) {
               doc = {
                 path: openPath,
                 width: w,
                 stamp,
                 spoilers,
-                lines: renderMarkdown(bufferText(buffer), w, { flavor, spoilers }),
+                lines: renderMarkdown(isTableName(openPath) ? fenced(bufferText(buffer)) : bufferText(buffer), w, { flavor, spoilers }),
               };
             }
             scroll = clamp(scroll, 0, Math.max(0, doc.lines.length - h));
@@ -708,12 +953,30 @@ export async function run(options: ViewerOptions): Promise<void> {
                 { key: "^k", label: "kill" },
                 { key: "^g", label: "keys" },
               ]
+            : rowFiltering
+              ? [
+                  { key: "type", label: "filter rows" },
+                  { key: "↵", label: "keep" },
+                  { key: "esc", label: "clear" },
+                ]
             : filtering
               ? [
                   { key: "type", label: "filter" },
                   { key: "↵", label: "open" },
                   { key: "esc", label: "clear" },
                 ]
+              : pane === "view" && gridding
+                ? [
+                    { key: "←↑↓→", label: "move" },
+                    { key: "o", label: "sort" },
+                    { key: "/", label: "filter" },
+                    { key: "↵", label: "row" },
+                    { key: "c", label: "stats" },
+                    { key: "v", label: "text" },
+                    { key: "e", label: "edit" },
+                    { key: "?", label: "keys" },
+                    { key: "q", label: "quit" },
+                  ]
               : pane === "tree"
                 ? [
                     { key: "↑↓", label: "move" },
@@ -748,10 +1011,47 @@ export async function run(options: ViewerOptions): Promise<void> {
           m.text("y to continue, any other key to stay", { fg: theme.muted, align: "center" });
           m.spacer("fill");
         });
+      } else if (sheet && table && rows.length) {
+        const record = table.rows[rows[cursor.row]!] ?? [];
+        const height = clamp(table.columns.length + 6, 8, Math.max(8, app.height - 2));
+        const labelWidth = clamp(Math.max(...table.columns.map((c) => stringWidth(c.name))) + 2, 8, 28);
+        const valueWidth = Math.max(...record.map((cell) => stringWidth(displayCell(cell))), 12);
+        // As wide as the row needs, so a short value sits beside its name, not across the screen.
+        const width = clamp(labelWidth + valueWidth + 6, 40, Math.max(40, app.width - 8));
+        screen.modal({ title: ` row ${(rows[cursor.row] ?? 0) + 1} `, width, height }, (m) => {
+          m.keyValues(
+            table.columns.map((column, i) => ({ label: column.name, value: displayCell(record[i] ?? "") })),
+            { labelColor: theme.accent, labelWidth },
+          );
+          m.spacer("fill");
+          m.text("Any key closes.", { fg: theme.muted, align: "center" });
+        });
+      } else if (stats && table) {
+        const lines = statsRows(columnStats(table, cursor.col, rows));
+        screen.modal({ title: ` ${table.columns[cursor.col]?.name ?? ""} `, width: 56, height: clamp(lines.length + 6, 10, Math.max(10, app.height - 2)) }, (m) => {
+          m.keyValues(lines.map((line) => ({ label: line.label, value: displayCell(line.value) })), { labelColor: theme.accent, labelWidth: 12 });
+          m.spacer("fill");
+          m.text(rowFilter ? "Over the filtered rows. Any key closes." : "Any key closes.", { fg: theme.muted, align: "center" });
+        });
       } else if (help) {
         screen.modal({ title: " readm3 — keys ", width: 56, height: 24 }, (m) => {
           m.keyValues(
-            mode === "edit"
+            mode !== "edit" && gridding
+                ? [
+                    { label: "← ↑ ↓ → h j k l", value: "move the cell cursor" },
+                    { label: "0 / $", value: "first / last column" },
+                    { label: "g / G  space b", value: "top / bottom, page" },
+                    { label: "o", value: "sort by column ▲ ▼ off" },
+                    { label: "/", value: "filter: text col:x col>n !x" },
+                    { label: "enter", value: "the row as a sheet" },
+                    { label: "c", value: "column statistics" },
+                    { label: "v", value: "grid / raw text" },
+                    { label: "e / i", value: "edit the file" },
+                    { label: "esc", value: "clear the filter" },
+                    { label: "tab", value: "switch pane" },
+                    { label: "q / ctrl+c", value: "quit" },
+                  ]
+                : mode === "edit"
               ? [
                   { label: "esc", value: "back to the preview" },
                   { label: "ctrl+g", value: "this help" },

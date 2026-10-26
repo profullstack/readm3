@@ -4,11 +4,14 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { readFileSync } from "node:fs";
 import { cloudAction, cloudRequest, pasteLocation, sharedLocation } from "./cloud-client.ts";
+import { queryTable } from "./csv.ts";
 const string = { type: "string" };
 const role = { type: "string", enum: ["view", "edit"] };
 const definitions: [string, string, Record<string, unknown>, string[]][] = [
   ["paste_create", "Create an anonymous paste: any text file behind a secret link, no account needed. Markdown renders as a document; code (JSON, JavaScript, Python, YAML, SQL and 30 more) is highlighted with folding. The language is detected from the title's extension, else from the content; pass language to force one. Expires after 7 days by default (1h, 1d, 7d or 30d), 256 KB at most. Returns the URL and a raw URL; keep them, the server cannot show them again. The result's sensitive field lists any key, token, password, email address, public IP or named home directory in what the link exposes (secrets masked); when its level is \"secret\", tell the user before passing the link on.", { source: string, title: { type: "string", description: "A file name; its extension decides the language." }, language: { type: "string", description: "A highlight.js name such as json, javascript, python, bash, yaml or markdown. Detected when omitted." }, expiresIn: { type: "string", enum: ["1h", "1d", "7d", "30d"] } }, ["source"]],
+  ["table_query", "Read a CSV or TSV the way the readm3 table view does, without loading it all into context. Give exactly one of source (the text), path (a local file) or url (a readm3 paste link or a raw http(s) file URL). The delimiter, header row and column types (number, date, boolean, text) are detected. filter keeps rows matching every space-separated term: free text, col:text, col=v, col!=v, col>n, col>=n, col<n, col<=n, #3 for the third column, ! to negate, quotes for spaces (city:\"new york\"). sort orders by a column name or number, empties last. Returns columns, total and matched counts, up to limit rows (default 50, max 1000) from offset as objects keyed by column name with their 1-based row number, and with stats a column's count, empty, distinct, min, max, sum, mean, median and top values over the matched rows.", { source: string, path: string, url: string, filter: string, sort: string, descending: { type: "boolean" }, limit: { type: "integer", minimum: 0, maximum: 1000 }, offset: { type: "integer", minimum: 0 }, stats: string }, []],
   ["paste_get", "Read an anonymous paste by its URL. Returns the source with its title, language and mime type.", { url: string }, ["url"]],
   ["paste_delete", "Delete an anonymous paste by its URL. The link stops working for everyone.", { url: string }, ["url"]],
   ["settings_get", "Read the verified account's latest settings and Markdown workspace snapshot, including its revision.", {}, []],
@@ -260,6 +263,42 @@ const definitions: [string, string, Record<string, unknown>, string[]][] = [
     ["url", "source", "baseVersion"],
   ],
 ];
+/** table_query: the text from wherever it was pointed at, then src/csv.ts does the rest. */
+async function tableQuery(args: Record<string, unknown>): Promise<unknown> {
+  const given = ["source", "path", "url"].filter((key) => typeof args[key] === "string" && args[key] !== "");
+  if (given.length !== 1) throw new Error("Give exactly one of source, path or url.");
+  let source: string;
+  let name: string | undefined;
+  if (typeof args.source === "string" && args.source) source = args.source;
+  else if (typeof args.path === "string" && args.path) {
+    source = readFileSync(args.path, "utf8");
+    name = args.path;
+  } else {
+    const url = String(args.url);
+    if (/\/p\/[A-Za-z0-9_-]{43}/.test(url)) {
+      const { token, config } = pasteLocation(url);
+      const paste = await cloudRequest(`pastes/${token}`, "GET", undefined, config) as { source: string; title: string };
+      source = paste.source;
+      name = paste.title;
+    } else {
+      if (!/^https?:\/\//.test(url)) throw new Error("url must be http(s).");
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`${url} answered ${response.status}.`);
+      source = await response.text();
+      name = new URL(url).pathname;
+    }
+  }
+  return queryTable(source, {
+    name,
+    filter: typeof args.filter === "string" ? args.filter : undefined,
+    sort: typeof args.sort === "string" || typeof args.sort === "number" ? args.sort : undefined,
+    descending: args.descending === true,
+    limit: typeof args.limit === "number" ? args.limit : undefined,
+    offset: typeof args.offset === "number" ? args.offset : undefined,
+    stats: typeof args.stats === "string" || typeof args.stats === "number" ? args.stats : undefined,
+  });
+}
+
 export async function runMcp() {
   const server = new Server(
     { name: "readm3", version: "0.6.0" },
@@ -276,7 +315,7 @@ export async function runMcp() {
         additionalProperties: false,
       },
       annotations: {
-        readOnlyHint: /_(list|get|me|users|revisions)$/.test(name),
+        readOnlyHint: /_(list|get|me|users|revisions|query)$/.test(name),
         destructiveHint: /_(delete|remove|revoke|transfer)$/.test(name),
         openWorldHint: true,
       },
@@ -289,7 +328,8 @@ export async function runMcp() {
       if (!definitions.some(([operation]) => operation === name))
         throw new Error("Unknown tool.");
       let result: unknown;
-      if (name.startsWith("settings_")) {
+      if (name === "table_query") result = await tableQuery(args);
+      else if (name.startsWith("settings_")) {
         if (name === "settings_save" && (!Number.isSafeInteger(args.ifRevision) || Number(args.ifRevision) < 0 || !args.snapshot)) throw new Error("snapshot and a nonnegative ifRevision are required.");
         result = await cloudRequest(name === "settings_revisions" ? "settings/revisions" : "settings", name === "settings_save" ? "PUT" : "GET", name === "settings_save" ? { snapshot: args.snapshot, ifRevision: args.ifRevision } : undefined);
       } else if (name.startsWith("paste_")) {
