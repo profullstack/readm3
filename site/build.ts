@@ -17,6 +17,7 @@ import { createHash } from "node:crypto";
 import { flatten, type Entry } from "../src/tree.ts";
 import { VERSION } from "../src/cli.ts";
 import { footerHtml } from "@profullstack/footer";
+import { COLUMNS as PROFILE_COLUMNS, PROFILE_ENHANCE_SCRIPT, renderProfileFields } from "@profullstack/profile";
 import { LANGUAGES } from "../src/code.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -549,8 +550,16 @@ const accountBundle = await Bun.build({ entrypoints: [join(here, "account.ts")],
 if (!accountBundle.success) throw new AggregateError(accountBundle.logs, "Account build failed");
 const accountScript = asset("account.js", await accountBundle.outputs[0].text());
 const accountCss = asset("account.css", readFileSync(join(here, "assets/account.css"), "utf8"));
+// The shared @profullstack/profile fields: asked for when creating an account (the
+// form's own email box is the email) and editable on the account panel. The
+// company-from-work-email helper is a file because the page allows no inline script.
+const profileFields = PROFILE_COLUMNS.filter(name => name !== "email");
+const profileScript = asset("profile.js", PROFILE_ENHANCE_SCRIPT);
 write("account/index.html", readFileSync(join(here, "assets/account.html"), "utf8")
-  .replace("__ACCOUNT_SCRIPT__", accountScript).replace("__ACCOUNT_STYLES__", accountCss));
+  .replace("__ACCOUNT_SCRIPT__", accountScript).replace("__ACCOUNT_STYLES__", accountCss)
+  .replace("__PROFILE_SCRIPT__", profileScript)
+  .replace("__SIGNUP_FIELDS__", renderProfileFields({ fields: profileFields, idPrefix: "signup-" }))
+  .replace("__DETAILS_FIELDS__", renderProfileFields({ fields: profileFields, idPrefix: "details-" })));
 const sharedCss = asset("styles.css", css);
 const adminCss = asset("admin.css", readFileSync(join(here, "assets/admin.css"), "utf8"));
 const adminBundle = await Bun.build({ entrypoints: [join(here, "admin.ts")], target: "browser", minify: true });

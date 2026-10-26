@@ -1,3 +1,5 @@
+import { createProfileHandlers } from "@profullstack/profile";
+import { profiles } from "./profile.ts";
 import { Store, HttpError, checksum, now, text, type User } from "./store.ts";
 import { type CoinPay, isCoinPayToken } from "./coinpay.ts";
 import { operate } from "./operations.ts";
@@ -157,6 +159,21 @@ export function createApi(
       if (user) store.ensureWorkspace(user);
       const path = url.pathname.slice(8);
       if (path === "me" && request.method === "GET") return json({ user });
+      // The shared @profullstack/profile fields; private to the signed-in account.
+      if (path === "me/profile") {
+        const method = request.method as "GET" | "PUT" | "PATCH";
+        if (!["GET", "PUT", "PATCH"].includes(method)) throw new HttpError(405, "Method not allowed.");
+        if (method !== "GET" && request.headers.has("cookie") && !request.headers.has("authorization") && !sentOrigin)
+          throw new HttpError(403, "Browser writes require a same-origin Origin header.");
+        const handlers = createProfileHandlers({
+          store: await profiles(store.db).ready,
+          getUser: () => user && {
+            id: user.id,
+            email: store.get<{ email: string }>("SELECT email FROM account_emails WHERE userId=?", user.id)?.email ?? null,
+          },
+        });
+        return handlers[method](request);
+      }
       // CoinPay's webhook: no session, the signature over the raw body is the credential.
       if (path === "billing/coinpay/webhook" && request.method === "POST") {
         if (!money) throw new HttpError(404, "API route not found.");

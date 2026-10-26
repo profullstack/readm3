@@ -47,6 +47,7 @@
     "@profullstack/cli": "^0.1.0",
     "@profullstack/footer": "latest",
     "@profullstack/hqtui": "^0.11.0",
+    "@profullstack/profile": "0.1.3",
     "@profullstack/synconfig": "^0.1.3",
     "@profullstack/x402-gateway": "^0.11.0",
     "highlight.js": "^11.12.0",
