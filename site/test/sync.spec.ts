@@ -1,4 +1,4 @@
-import { test, expect, type Page, type BrowserContext } from "@playwright/test";
+import { test, expect, type Page, type BrowserContext, type Route } from "@playwright/test";
 import { stat } from "node:fs/promises";
 import { editorInput } from "./editor.ts";
 
@@ -77,9 +77,14 @@ test("two devices sync files and settings automatically through the encrypted co
   await setPassphrase(page);
   await page.locator("#theme").selectOption("nord");
   await page.locator("#flavor").selectOption("reddit");
+  // The file reaches the account with no history yet (as files synced before history did), so the
+  // first edit files the text before it too, and that older text must not sort above the edit.
+  const noHistory = (route: Route) => route.request().method() === "POST" ? route.fulfill({ json: { saved: 0 } }) : route.continue();
+  await page.route("**/api/v1/file-history", noHistory);
   await page.locator("#files-input").setInputFiles({ name: "Synced.md", mimeType: "text/markdown", buffer: Buffer.from("# Across devices\n\nHello 😺\n") });
   await expect.poll(() => sealedSnapshot(page), { timeout: 20_000 }).not.toBeNull();
   await expect(page.locator("#sync-note")).toContainText("Synced", { timeout: 20_000 });
+  await page.unroute("**/api/v1/file-history", noHistory);
 
   const second = await browser.newContext();
   try {
@@ -99,6 +104,13 @@ test("two devices sync files and settings automatically through the encrypted co
     await editorInput(other).fill("# Edited on second device\n");
     // "Synced" is already on screen from the first pass; wait for the edit to reach the account.
     await expect.poll(async () => (await sealedSnapshot(page))?.revision, { timeout: 20_000 }).toBeGreaterThan(before);
+    // On the device that saved it, the save is the newest version: the text before it is listed below.
+    await other.locator("#history").click();
+    const mine = other.locator("#file-history-dialog .history-item");
+    await expect(mine.locator(".history-reason", { hasText: "synced from browser" }).first()).toBeVisible({ timeout: 20_000 });
+    await expect(mine.filter({ hasText: "Across devices" }).first()).toBeVisible({ timeout: 20_000 });
+    await expect(mine.first().locator(".history-snippet .added").first()).toContainText("Edited on second device");
+    await other.locator("#file-history-dialog").getByRole("button", { name: "Close history" }).click();
 
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await page.locator('.file-row[data-path="Synced.md"]').click();
