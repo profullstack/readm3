@@ -217,7 +217,7 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
       }
 
       // readm3.com/talk: Ask AI about your files, which is the editor with the Ask AI dialog open.
-      if (url.pathname === "/talk") return Response.redirect(`${url.origin}/viewer?ask=1`, 302);
+      if (url.pathname === "/talk") return new Response(null, { status: 302, headers: { location: "/viewer?ask=1" } });
 
       // /p/<token>/raw is the paste's text, the address a curl or a "Raw" link wants.
       const rawPaste = url.pathname.match(/^\/p\/([A-Za-z0-9_-]{43})\/raw$/);
