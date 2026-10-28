@@ -24,7 +24,8 @@ export async function record(changes: Change[], key: SyncKey, device: string): P
     const sealed = async (source: Pick<WorkspaceDocument, "source" | "language">, when: string, ifEmpty?: boolean) => ({
       tag, ifEmpty, sealed: JSON.stringify(await seal({ path: doc.path, source: source.source, language: source.language, device, at: when } satisfies Sealed, key)),
     });
-    if (before && !before.blob && before.source !== doc.source) versions.push(await sealed(before, "", true));
+    // The text before is dated just ahead of the save, so the save stays the newest version.
+    if (before && !before.blob && before.source !== doc.source) versions.push(await sealed(before, new Date(Date.parse(at) - 1).toISOString(), true));
     versions.push(await sealed(doc, at));
   }
   for (let i = 0; i < versions.length; i += 50) await request("file-history", "POST", { versions: versions.slice(i, i + 50) });
@@ -50,9 +51,13 @@ export async function list(path: string, limit = 25): Promise<CloudVersion[]> {
         const version = await open<Sealed>(JSON.parse(sealed) as Envelope, key);
         // A version sealed for another path under the same tag cannot happen, but is never shown.
         if (version.path !== path) return null;
-        return { id, at: version.at || createdAt, device: version.device, source: version.source, ...(version.language ? { language: version.language } : {}) };
+        return { id, at: version.at, createdAt, device: version.device, source: version.source, ...(version.language ? { language: version.language } : {}) };
       } catch { return null; }
     }));
-    return opened.filter((version): version is CloudVersion => !!version);
+    const found = opened.filter((version) => !!version);
+    // Before 0.26.1 the text before a file's first synced save was sealed undated and took the
+    // server's later clock, so it sorted above that save; it is the oldest version, so it goes last.
+    const oldest = Math.min(...found.filter((version) => version.at).map((version) => Date.parse(version.at)));
+    return found.map(({ createdAt, ...version }) => ({ ...version, at: version.at || (Number.isFinite(oldest) ? new Date(oldest - 1).toISOString() : createdAt) }));
   } catch { return []; }
 }
