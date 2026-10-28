@@ -12,7 +12,7 @@ import { run, type ViewerOptions } from "./viewer.ts";
 import { isCloudCommand, cloudMain, CLOUD_USAGE } from "./cloud-cli.ts";
 import { isDesktopCommand, desktopMain, installedDesktop, prefersDesktop, DESKTOP_USAGE } from "./desktop-cli.ts";
 
-export const VERSION = "0.26.2";
+export const VERSION = "0.26.3";
 
 /** The help text, exported so a test can hold it to the flags it documents. */
 export const USAGE = `readm3 — a plain text editor for Markdown and code
