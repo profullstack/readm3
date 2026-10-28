@@ -199,7 +199,9 @@ async function forUpload(workspace: SyncedWorkspace, remote: SyncedWorkspace | u
       if (!complete.has(doc.blob.id)) {
         const kept = await blobs.local(doc.blob);
         // A file that is on neither side cannot be sent; its reference travels so it is not lost elsewhere.
-        if (kept) { host?.status(`Uploading ${doc.path.split("/").at(-1)} (${formatStorage(doc.blob.size)})…`); await blobs.upload(doc.blob, kept); complete.add(doc.blob.id); }
+        // Nor can one changed on disk since it was opened (another size): the server would refuse
+        // every chunk and stop the whole pass; it goes once the editor picks the change up.
+        if (kept && kept.size === doc.blob.size) { host?.status(`Uploading ${doc.path.split("/").at(-1)} (${formatStorage(doc.blob.size)})…`); await blobs.upload(doc.blob, kept); complete.add(doc.blob.id); }
       }
       documents.push(doc);
       continue;

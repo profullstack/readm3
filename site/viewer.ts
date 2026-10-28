@@ -55,6 +55,18 @@ let editorLoading: Promise<SourceEditor> | undefined;
 let editorPath = "";
 /** Files opened from disk that Ctrl+S writes back to, by workspace path. */
 let diskEntries = new Map<string, disk.DiskEntry>();
+/**
+ * A large file, PDF or image the desktop app opened is read from disk, never copied into
+ * browser storage, and its reader lasts one session. After a restart (handles restored by
+ * disk.loadEntries) or a sync, each one gets its reader back, so it opens, and sync can
+ * upload it, without opening the folder again.
+ */
+function reattachDisk() {
+  for (const doc of workspace.documents) {
+    const entry = diskEntries.get(doc.path);
+    if (doc.blob && entry) stored.fromDisk(doc.blob, () => entry.handle.getFile());
+  }
+}
 /** Whether the file has a place on disk and differs from what was last read or written there. */
 let diskSynced = new Map<string, number>();
 /** A copy that holds nothing the disk lacks: the same text, or unedited since it was last read or saved. */
@@ -232,6 +244,7 @@ async function applySynced(incoming: Workspace | undefined, settings: ReaderSett
     if (incoming) {
       await persist(incoming);
       workspace = incoming;
+      reattachDisk();
       filter.value = "";
       foldLarge(workspace.active);
     }
@@ -525,9 +538,9 @@ function renderStored() {
     })
     .catch((error) => {
       if (!still()) return;
-      // A file the desktop app reads from disk is there only while the app has it open.
+      // Read from disk and gone from there (moved, renamed or deleted), with no copy on the account yet.
       status.textContent = diskSynced.has(doc.path) || diskEntries.has(doc.path)
-        ? "This file is read from disk. Open its folder again (File: Open folder…) to read it."
+        ? "This file was read from disk and is not there any more (moved, renamed or deleted). Open the folder that holds it now to read it again."
         : `${error instanceof Error ? error.message : "This file could not be opened."}${signedIn ? "" : " Sign in to fetch it from your account."}`;
       previousRender = "";
     });
@@ -1342,6 +1355,7 @@ async function start() {
     if (!seed.ok) throw new Error("Could not load the starter documents. Reload to try again.");
     workspace = await seed.json() as Workspace;
   }
+  reattachDisk();
   if (savedActive && workspace.documents.some((doc) => doc.path === savedActive)) workspace.active = savedActive;
   workspace.documents.sort((a, b) => comparePaths(a.path, b.path));
   openDocument(workspace.active, false);
