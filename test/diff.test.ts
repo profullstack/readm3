@@ -49,3 +49,13 @@ test("snippets mark lines and stop at the limit", () => {
   assert.deepEqual(snippet(diff, 3), ["- b", "- c", "+ B"]);
   assert.equal(snippet(diffLines("", "x".repeat(300)))[0]!.length, 120);
 });
+
+test("lines added in the newer version count as added, not removed", () => {
+  // The history panel diffs each version against the one below it (older, newer).
+  const older = "one\ntwo\n";
+  const newer = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
+  const diff = diffLines(older, newer);
+  assert.equal(diff.added, 6);
+  assert.equal(diff.removed, 0);
+  assert.ok(snippet(diff, 8).every((line) => line.startsWith("+ ")));
+});
