@@ -194,6 +194,7 @@ function shell(options: { title: string; description: string; path: string; main
   <nav>
     <a href="/viewer">Editor</a>
     <a href="/paste">Paste</a>
+    <a href="/talk">Talk</a>
     <a href="/admin">Workspaces</a>
     <a href="/account">Account</a>
     <a href="/docs">Docs</a>
@@ -252,6 +253,7 @@ function home(): string {
   <div class="grid">
     <div class="card"><h3>Write, preview, repeat.</h3><p>Open a file or start from scratch. Edit the Markdown, switch to a clean preview, and download the source whenever you need it.</p></div>
     <div class="card"><h3>Paste anything, no account.</h3><p>Text, code, JSON, a CSV, a PDF or an image behind a secret link that expires. Markdown renders, code is highlighted and folds, a table is a sortable grid, and only a hash of the secret is kept. <a href="/paste">readm3.com/paste</a>, or <code>readm3 paste FILE</code>.</p></div>
+    <div class="card"><h3>Talk to your files.</h3><p>Ask AI a question about the open file, the folder it is in, or your whole workspace, and keep asking. It answers from what your files say and names the file. Ten questions a day free with an account, then pay as you go. <a href="/talk">readm3.com/talk</a>.</p></div>
     <div class="card"><h3>“Can view” or “can edit.”</h3><p>Share a link with a reviewer or invite someone to make changes. You own your files and decide who gets access.</p></div>
     <div class="card"><h3>Keep the story of the document.</h3><p>Every online save creates a version. See who changed it, share a specific version, or restore an earlier draft without losing the history.</p></div>
     <div class="card"><h3>A workspace for your team.</h3><p>Organize people into organizations and teams. Share with a whole group, a few collaborators, or anyone with your link.</p></div>
@@ -403,6 +405,7 @@ const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
   <url><loc>${SITE}/</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>1.0</priority></url>
   <url><loc>${SITE}/viewer</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
   <url><loc>${SITE}/paste</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
+  <url><loc>${SITE}/talk</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
   <url><loc>${SITE}/sharing</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>${SITE}/docs</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
 </urlset>
@@ -454,6 +457,7 @@ terminal.
 - Desktop app: ${REPO}/releases/latest (the same editor for Linux as AppImage and Flatpak, macOS dmg, Windows installer); \`readm3 edit PATH...\` opens files and folders in it
 - Summaries: Summarize in ${SITE}/viewer, or POST /api/v1/summaries/document { path, text } signed in (10 free documents a week, then pay as you go)
 - Tables: CSV and TSV (also .tab, .psv) open as a sortable, filterable grid in the terminal reader (hqtui data grid), ${SITE}/viewer, the desktop app and paste links; \`readm3 --print data.csv\` prints an aligned table. Filter language: free text, col:text, col=v, col!=v, col>n, col<=n, !negate, #3 for the third column
+- Ask AI: ${SITE}/talk, or Ask AI in ${SITE}/viewer: questions about a file, a folder or the workspace; POST /api/v1/ask { question, files: [{ path, text }], history? } signed in (10 free questions a day, then pay as you go)
 - Paste: ${SITE}/paste (anonymous pastes of any text, PDF or image behind an expiring secret link; CLI, curl, API and MCP examples)
 - Site: ${SITE}
 - Source: ${REPO}

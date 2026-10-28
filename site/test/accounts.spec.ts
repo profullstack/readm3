@@ -67,6 +67,30 @@ test("Sign in with CoinPay creates an account whose only sign-in is CoinPay", as
   await expect(page.getByRole("link", { name: "Sign in with CoinPay" })).toBeVisible();
 });
 
+test("readm3.com/talk: a signed-in reader asks AI about a file, then follows up", async ({ page }) => {
+  await page.goto("/account");
+  await page.getByRole("link", { name: "Sign in with CoinPay" }).click();
+  await expect(page.locator("#account-email")).toHaveText("Signed in with CoinPay");
+  await page.goto("/talk");
+  await expect(page).toHaveURL(/\/viewer$/);
+  const passphrase = page.getByRole("dialog", { name: "Encrypt your synced files" });
+  await expect(passphrase).toBeVisible();
+  await passphrase.getByRole("button", { name: "Close dialog" }).click();
+  const dialog = page.locator(".ask-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator("#ask-scope option")).toContainText(["This file · Welcome.md", "Whole workspace"]);
+  await dialog.locator("#ask-scope").selectOption({ label: "Whole workspace" });
+  await expect(dialog.locator(".ask-log")).toContainText("3 files will be read");
+  await dialog.getByLabel("Your question").fill("What is readm3?");
+  await dialog.getByLabel("Your question").press("Enter");
+  await expect(dialog.locator(".summary-text")).toContainText("=== examples/demo.md ===");
+  await expect(dialog.locator(".history-account")).toContainText(/Free · \d+ of 10 free questions left today/);
+  await dialog.getByLabel("Your question").fill("And the demo?");
+  await dialog.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(dialog.locator(".summary-text")).toHaveCount(2);
+  await expect(dialog.locator(".summary-text").nth(1)).toContainText("Test summary of");
+});
+
 test("Summarize: a signed-in reader gets a free AI summary of the open document, and pressing again costs nothing", async ({ page }) => {
   await page.goto("/account");
   await page.getByRole("link", { name: "Sign in with CoinPay" }).click();

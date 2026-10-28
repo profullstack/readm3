@@ -402,6 +402,32 @@ describe("top-ups", () => {
   });
 });
 
+describe("ask", () => {
+  test("ten free questions a day, then the balance; the files and the earlier turns reach the model", async () => {
+    const prompts: string[] = [];
+    const f = await fixture(async (_system, text) => { prompts.push(text); return { text: "It is 443.", usage: { input_tokens: 1000, output_tokens: 100 }, refused: false }; });
+    f.billing.freeQuestionsPerDay = 2;
+    const args = { question: "Which port?", files: [{ path: "app/config.json", text: '{"port":443}' }], history: [{ question: "What is this?", answer: "A config." }] };
+    for (let i = 0; i < 2; i++) {
+      const done = await f.call("ask", "POST", args, f.auth);
+      expect(done.status).toBe(200);
+      expect(done.data).toMatchObject({ answer: "It is 443.", free: true, chargedMicros: 0 });
+    }
+    expect(prompts[0]).toContain("=== app/config.json ===");
+    expect(prompts[0]).toContain("Earlier question: What is this?");
+    expect(prompts[0]).toContain("Question: Which port?");
+    const refused = await f.call("ask", "POST", args, f.auth);
+    expect(refused.status).toBe(402);
+    expect(refused.data.error).toContain("free questions are used");
+    f.billing.credit(f.user.id, 1_000_000, "test:1", "test");
+    const paid = await f.call("ask", "POST", args, f.auth);
+    expect(paid.data.free).toBe(false);
+    expect(paid.data.chargedMicros).toBeGreaterThan(0);
+    expect((await f.call("ask", "POST", { ...args, files: [] }, f.auth)).status).toBe(400);
+    expect((await f.call("ask", "POST", { ...args, files: [{ path: "big.txt", text: "x".repeat(401 * 1024) }] }, f.auth)).status).toBe(413);
+  });
+});
+
 describe("admins", () => {
   test("an admin is never charged and never refused for an empty balance", async () => {
     const f = await fixture();
