@@ -225,12 +225,12 @@ export class Store {
     );
     return { id: sessionId, token, expiresAt, label };
   }
+  /**
+   * The caller's role in an organization: membership only. Site admins get no
+   * standing in other people's workspaces; admin powers live on the admin_*
+   * operations, which check user.admin themselves.
+   */
   orgRole(user: User, orgId: string) {
-    if (
-      user.admin &&
-      this.get("SELECT id FROM organizations WHERE id=?", orgId)
-    )
-      return "owner";
     return this.get<{ role: string }>(
       "SELECT role FROM members WHERE orgId=? AND userId=?",
       orgId,
@@ -252,7 +252,7 @@ export class Store {
     doc: Doc,
     shareToken?: string,
   ): "owner" | "edit" | "view" | null {
-    if (user && (user.admin || user.id === doc.ownerId)) return "owner";
+    if (user && user.id === doc.ownerId) return "owner";
     let role: "edit" | "view" | null = null;
     if (user) {
       role =
@@ -332,7 +332,6 @@ export class Store {
     if (!this.get("SELECT id FROM teams WHERE id=? AND orgId=?", teamId, orgId))
       throw new HttpError(400, "Team must belong to this organization.");
     if (
-      !user.admin &&
       this.orgRole(user, orgId) !== "owner" &&
       !this.get(
         "SELECT userId FROM team_members WHERE teamId=? AND userId=?",
