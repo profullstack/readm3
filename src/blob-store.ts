@@ -36,6 +36,8 @@ export const CHUNK_BYTES = 8 * 1024 * 1024;
 export const TAG_BYTES = 16;
 /** Text larger than this opens read-only, as a preview; smaller text is edited in the workspace. */
 export const INLINE_MAX_BYTES = 4 * 1024 * 1024;
+/** A PDF or image shared as a document is its base64, up to this long: a 6 MB file. */
+export const MAX_SHARED_BINARY_SOURCE = 8 * 1024 * 1024;
 /** Inline text kept inside one synced snapshot; the rest of the small files spill to blobs. */
 export const SNAPSHOT_INLINE_BYTES = 16 * 1024 * 1024;
 

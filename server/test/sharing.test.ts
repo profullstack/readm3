@@ -682,3 +682,28 @@ test("a share link reports what it exposes: the pinned version, or the latest", 
     f.store.close();
   }
 });
+
+test("a shared image is its bytes as base64, up to 6 MB, never an empty file", async () => {
+  const f = fixture();
+  try {
+    const owner = await f.account();
+    // A 2 MB image: over the 1 MB a text document may be, under the 6 MB an image may be.
+    const png = Buffer.alloc(2 * 1024 * 1024, 7);
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const base64 = png.toString("base64");
+    const created = await owner.action("documents_create", { orgId: owner.org.id, title: "infographics/chart.png", source: base64 });
+    expect(created.status).toBe(200);
+    const link = (await owner.action("shares_create", { documentId: created.data.id })).data;
+    expect(link.sensitive.level).not.toBe("secret");
+    const shared = await f.call("shared/" + link.url.split("/").at(-1));
+    expect(shared.data.version.source).toBe(base64);
+    expect((await owner.action("documents_create", { orgId: owner.org.id, title: "blank.png", source: "" })).status).toBe(400);
+    expect((await owner.action("documents_create", { orgId: owner.org.id, title: "notes.png", source: "not base64!" })).status).toBe(400);
+    const tooBig = Buffer.alloc(7 * 1024 * 1024).toString("base64");
+    expect((await owner.action("documents_create", { orgId: owner.org.id, title: "huge.png", source: tooBig })).status).toBe(413);
+    // Text keeps its 1 MB limit.
+    expect((await owner.action("documents_create", { orgId: owner.org.id, title: "big.md", source: "x".repeat(2 * 1024 * 1024) })).status).toBe(400);
+  } finally {
+    f.store.close();
+  }
+});

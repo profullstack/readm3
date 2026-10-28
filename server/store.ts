@@ -2,6 +2,8 @@ import { Database } from "bun:sqlite";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { binaryType } from "../src/code.ts";
+import { MAX_SHARED_BINARY_SOURCE } from "../src/blob-store.ts";
 import {
   IDENTITY_SCHEMA,
   isOAuthAccessToken,
@@ -57,7 +59,13 @@ export function text(value: unknown, name: string, max = 200): string {
     throw new HttpError(400, `${name} must be 1–${max} characters.`);
   return value.trim();
 }
-export function source(value: unknown): string {
+export const MAX_BINARY_SOURCE = MAX_SHARED_BINARY_SOURCE;
+export function source(value: unknown, title?: string): string {
+  if (binaryType(title)) {
+    if (typeof value !== "string" || !value || value.length > MAX_BINARY_SOURCE || !/^[A-Za-z0-9+/]*={0,2}$/.test(value))
+      throw new HttpError(400, "A shared PDF or image must be its base64, from a file of up to 6 MB.");
+    return value;
+  }
   if (typeof value !== "string" || Buffer.byteLength(value) > 1024 * 1024)
     throw new HttpError(400, "Markdown source must be text, up to 1 MB.");
   return value;
@@ -326,7 +334,7 @@ export class Store {
         : text(args.orgId, "orgId");
     this.orgAccess(user, orgId);
     const title = text(args.title, "Title");
-    const markdown = source(args.source);
+    const markdown = source(args.source, title);
     const access = args.access ?? "private";
     if (!["private", "view", "edit"].includes(String(access)))
       throw new HttpError(400, "Access must be private, view, or edit.");
@@ -415,7 +423,7 @@ export class Store {
       const title =
         args.title === undefined ? doc.title : text(args.title, "Title");
       const markdown =
-        args.source === undefined ? current.source : source(args.source);
+        args.source === undefined ? current.source : source(args.source, title);
       const teamId =
         args.teamId === undefined
           ? doc.teamId

@@ -1,6 +1,6 @@
 import { createProfileHandlers } from "@profullstack/profile";
 import { profiles } from "./profile.ts";
-import { Store, HttpError, checksum, now, text, type User } from "./store.ts";
+import { Store, HttpError, MAX_BINARY_SOURCE, checksum, now, text, type User } from "./store.ts";
 import { type CoinPay, isCoinPayToken } from "./coinpay.ts";
 import { operate } from "./operations.ts";
 import { createPaste, deletePaste, readPaste } from "./pastes.ts";
@@ -12,6 +12,8 @@ import { PACKS_USD, type Payments } from "./payments.ts";
 export type Money = { billing: Billing; payments: Payments };
 
 const MAX_BODY = 1100 * 1024;
+/** A document write: a shared PDF or image's base64 (server/store.ts) with room for the JSON around it. */
+const MAX_DOCUMENT_BODY = MAX_BINARY_SOURCE + 64 * 1024;
 const headers = {
   "cache-control": "no-store",
   "x-content-type-options": "nosniff",
@@ -239,7 +241,7 @@ export function createApi(
           // Existing account permissions still apply when following a view link.
           // The capability itself only grants the role selected by its owner.
           store.document(user, link.documentId, "edit", shared[1]);
-          const args = await body(request);
+          const args = await body(request, MAX_DOCUMENT_BODY);
           if (
             Object.keys(args).some(
               (k) => !["source", "title", "baseVersion"].includes(k),
@@ -370,7 +372,7 @@ export function createApi(
         });
       }
       if (path === "actions" && request.method === "POST") {
-        const data = await body(request);
+        const data = await body(request, MAX_DOCUMENT_BODY);
         const args = data.args ?? {};
         if (!args || typeof args !== "object" || Array.isArray(args))
           throw new HttpError(400, "args must be an object.");
@@ -406,7 +408,7 @@ export function createApi(
               store,
               user,
               "documents_create",
-              await body(request),
+              await body(request, MAX_DOCUMENT_BODY),
               origin,
             ),
             201,
@@ -457,7 +459,7 @@ export function createApi(
             userId: doc[3],
           };
         if (["POST", "PATCH"].includes(request.method))
-          args = { ...(await body(request)), ...args };
+          args = { ...(await body(request, MAX_DOCUMENT_BODY)), ...args };
         if (op) return json(operate(store, user, op, args, origin));
       }
       throw new HttpError(404, "API route not found.");
