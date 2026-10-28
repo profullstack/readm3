@@ -99,6 +99,8 @@ interface DesktopBridge {
   saveAs?(name: string): Promise<{ path: string; name: string } | null>;
   /** Absent in desktop builds before 0.18.0: a large file's size and time without reading it. */
   stat?(path: string): Promise<{ size: number; modified: number }>;
+  /** Absent in desktop builds before 0.19.0: which files opened in an earlier run are still there. */
+  reopen?(paths: string[]): Promise<DesktopFile[]>;
 }
 /** Present only inside the readm3 desktop app (desktop/preload.cjs). */
 export const desktop = typeof window === "undefined" ? undefined : (window as unknown as { readm3Desktop?: DesktopBridge }).readm3Desktop;
@@ -153,6 +155,7 @@ function desktopHandle(entry: DesktopFile): FileSystemFileHandle {
       return new File([data.buffer as ArrayBuffer], entry.name, { lastModified: modified });
     },
     stat: desktop!.stat ? () => desktop!.stat!(entry.path) : undefined,
+    desktopFile: entry,
     createWritable: async () => {
       const parts: BlobPart[] = [];
       return { write: async (data: BlobPart) => { parts.push(data); }, close: async () => { await desktop!.writeFile(entry.path, new Uint8Array(await new Blob(parts).arrayBuffer())); } };
@@ -196,9 +199,28 @@ export async function saveAs(name: string): Promise<FileSystemFileHandle | null>
 }
 
 const KEY = "disk";
+/**
+ * A desktop file's path per workspace path, since its handle cannot be stored. After a
+ * restart the desktop app (0.19.0 on) hands back the ones it opened before, so a file saved
+ * in another editor while readm3 was closed is still read from disk, not from the old copy.
+ */
+const DESKTOP_KEY = "disk-desktop";
+type KeptDesktopFile = { path: string; name: string; relative?: string; saved: number };
 export async function loadEntries(): Promise<Map<string, DiskEntry>> {
-  try { return new Map(Object.entries(await readKey<Record<string, DiskEntry>>(KEY) ?? {})); }
-  catch { return new Map(); }
+  let entries: Map<string, DiskEntry>;
+  try { entries = new Map(Object.entries(await readKey<Record<string, DiskEntry>>(KEY) ?? {})); }
+  catch { entries = new Map(); }
+  if (!desktop?.reopen) return entries;
+  try {
+    const kept = Object.entries(await readKey<Record<string, KeptDesktopFile>>(DESKTOP_KEY) ?? {});
+    if (!kept.length) return entries;
+    const found = new Map((await desktop.reopen(kept.map(([, file]) => file.path))).map((file) => [file.path, file]));
+    for (const [path, file] of kept) {
+      const now = found.get(file.path);
+      if (now && !entries.has(path)) entries.set(path, { handle: desktopHandle({ path: file.path, name: file.name, relative: file.relative, size: now.size }), saved: file.saved });
+    }
+  } catch { /* An older desktop build, or an unreadable list: the copies stay as they are. */ }
+  return entries;
 }
 /**
  * What each path last matched on disk, kept apart from the handles because a desktop
@@ -215,6 +237,14 @@ export async function storeEntries(entries: Map<string, DiskEntry>): Promise<voi
   // Only real handles can be stored; one desktop handle in the map would fail the whole write.
   const storable = [...entries].filter(([, entry]) => typeof FileSystemHandle !== "undefined" && entry.handle instanceof FileSystemHandle);
   try { await writeKey(KEY, Object.fromEntries(storable)); } catch { /* Handles last for this session only. */ }
+  if (desktop) {
+    const kept: Record<string, KeptDesktopFile> = {};
+    for (const [path, entry] of entries) {
+      const file = (entry.handle as FileSystemFileHandle & { desktopFile?: DesktopFile }).desktopFile;
+      if (file) kept[path] = { path: file.path, name: file.name, relative: file.relative, saved: entry.saved };
+    }
+    try { await writeKey(DESKTOP_KEY, kept); } catch { /* As above. */ }
+  }
   for (const [path, entry] of entries) synced.set(path, entry.saved);
   try { await writeKey(SYNCED, Object.fromEntries(synced)); } catch { /* As above. */ }
 }
