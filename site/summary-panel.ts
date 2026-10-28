@@ -1,5 +1,6 @@
 import { ApiError, request } from "./cloud.ts";
 import { dollars, el, type Account } from "./history-panel.ts";
+import { aiDialog, listenControl, signInLine, topUpButton } from "./ai-dialog.ts";
 import { toBase64 } from "./workspace.ts";
 
 /**
@@ -9,8 +10,7 @@ import { toBase64 } from "./workspace.ts";
  * keeps every summary for the account, so a document summarized once is answered from
  * that copy (on any device, after a reload) with no new call and no charge.
  *
- * Listen reads a summary aloud when the server has a voice (ElevenLabs): the first listen
- * is paid from the balance, then the audio is kept and replays free.
+ * Listen (site/ai-dialog.ts) reads a summary aloud when the server has a voice.
  *
  * A PDF or image is sent as it is for the model to read; an office document or e-book is
  * sent as it is and the server reads the text out of it. An image the models cannot
@@ -20,22 +20,6 @@ interface Free { perWeek: number; left: number; resetsAt: string; }
 interface Summarized { summary: string; summaryId?: string; cached?: boolean; listen?: boolean; chargedMicros: number; free: boolean; freeSummaries: Free; balanceMicros: number; }
 
 const done = new Map<string, Summarized>();
-/** Audio already fetched this session, by summary id, so a replay makes no request at all. */
-const heard = new Map<string, string>();
-
-/** A kept summary read aloud: an MP3 from the server, or the reason it could not be had. */
-async function speech(summaryId: string): Promise<{ url: string; chargedMicros: number; balanceMicros: number }> {
-  const known = heard.get(summaryId);
-  if (known) return { url: known, chargedMicros: 0, balanceMicros: NaN };
-  const response = await fetch(`/api/v1/summaries/${encodeURIComponent(summaryId)}/speech`, { method: "POST", credentials: "same-origin", cache: "no-store" });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({})) as { error?: string };
-    throw new ApiError(data.error || `Listening failed (${response.status})`, response.status);
-  }
-  const url = URL.createObjectURL(await response.blob());
-  heard.set(summaryId, url);
-  return { url, chargedMicros: Number(response.headers.get("x-charged-micros") ?? 0), balanceMicros: Number(response.headers.get("x-balance-micros")) };
-}
 const MAX_TEXT = 400 * 1024;
 const MAX_FILE = 20 * 1024 * 1024;
 const MAX_IMAGE = 3_750_000;
@@ -86,56 +70,17 @@ const freeLine = (free: Free) => free.left > 0
   : `This week's ${free.perWeek} free summaries are used; more start ${new Date(free.resetsAt).toLocaleDateString(undefined, { weekday: "long" })}`;
 
 export async function showSummary(path: string, source: SummarySource, topUp: () => void): Promise<void> {
-  const box = document.createElement("dialog");
-  box.className = "history-dialog summary-dialog";
-  box.setAttribute("aria-labelledby", "summary-title");
-  box.innerHTML = `<div class="dialog-header"><h2 id="summary-title"></h2><button type="button" aria-label="Close summary">×</button></div><div class="summary-body"></div><p class="history-account"></p>`;
-  box.querySelector("h2")!.textContent = `Summary · ${path.split("/").at(-1)}`;
-  const body = box.querySelector<HTMLElement>(".summary-body")!;
-  const account = box.querySelector<HTMLElement>(".history-account")!;
-  box.querySelector<HTMLButtonElement>(".dialog-header button")!.onclick = () => box.close();
-  box.addEventListener("click", (event) => { if (event.target === box) box.close(); });
-  box.addEventListener("close", () => box.remove());
-  document.body.append(box);
-  box.showModal();
+  const box = aiDialog("", "summary-title", `Summary · ${path.split("/").at(-1)}`, "Close summary");
+  const body = el("div", "summary-body");
+  const account = el("p", "history-account");
+  box.append(body, account);
 
   const say = (message: string) => body.replaceChildren(el("p", "history-empty", message));
-  const topUpButton = () => {
-    const top = el("button", "ghost", "Top up");
-    top.type = "button";
-    top.onclick = () => { box.close(); topUp(); };
-    return top;
-  };
   const show = (result: Summarized, again = false) => {
     body.replaceChildren(el("p", "summary-text", result.summary));
     const cost = again || result.cached ? "Saved summary, no charge" : result.free ? "Free" : dollars(result.chargedMicros);
     account.replaceChildren(`${cost} · ${freeLine(result.freeSummaries)} · balance ${dollars(result.balanceMicros)}`);
-    if (!result.listen || !result.summaryId) return;
-    const summaryId = result.summaryId;
-    const player = el("div", "summary-listen");
-    const listen = el("button", "ghost", heard.has(summaryId) ? "Play" : "Listen");
-    listen.type = "button";
-    listen.setAttribute("aria-label", "Listen to this summary");
-    const status = el("small");
-    listen.onclick = async () => {
-      listen.disabled = true;
-      status.textContent = heard.has(summaryId) ? "" : "Preparing audio…";
-      try {
-        const audio = await speech(summaryId);
-        const element = document.createElement("audio");
-        element.controls = true;
-        element.autoplay = true;
-        element.src = audio.url;
-        status.textContent = audio.chargedMicros ? `Listen · ${dollars(audio.chargedMicros)} · replays are free` : "";
-        player.replaceChildren(element, status);
-      } catch (error) {
-        listen.disabled = false;
-        status.textContent = error instanceof Error ? error.message : "Listening failed.";
-        if (error instanceof ApiError && error.status === 402) player.append(" ", topUpButton());
-      }
-    };
-    player.append(listen, " ", status);
-    body.append(player);
+    if (result.listen && result.summaryId) body.append(listenControl(result.summaryId, "Listen to this summary", box, topUp));
   };
   let key = "text" in source ? `${path}\n${source.text}` : "";
   const cached = done.get(key);
@@ -147,14 +92,7 @@ export async function showSummary(path: string, source: SummarySource, topUp: ()
   say("Loading…");
   let billing: (Account & { freeSummaries?: Free }) | null = null;
   try { billing = await request("billing"); } catch { billing = null; }
-  if (!billing) {
-    const link = el("a", undefined, "Sign in (free)");
-    link.href = `/account?next=${encodeURIComponent(location.pathname + location.search)}`;
-    const line = el("p");
-    line.append(link, " to summarize documents with AI: 10 a week free, then pay as you go.");
-    body.replaceChildren(line);
-    return;
-  }
+  if (!billing) { body.replaceChildren(signInLine("to summarize documents with AI: 10 a week free, then pay as you go.")); return; }
   if (!billing.enabled) { say("AI summaries are not available on this server yet."); return; }
 
   let payload: Record<string, unknown> = { path, text: "text" in source ? source.text : "" };
@@ -181,6 +119,6 @@ export async function showSummary(path: string, source: SummarySource, topUp: ()
     show(result);
   } catch (error) {
     say(error instanceof Error ? error.message : "The summary failed.");
-    if (error instanceof ApiError && error.status === 402) account.replaceChildren(topUpButton());
+    if (error instanceof ApiError && error.status === 402) account.replaceChildren(topUpButton(box, topUp));
   }
 }

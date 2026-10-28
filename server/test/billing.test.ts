@@ -197,6 +197,19 @@ describe("kept summaries and Listen", () => {
     expect(calls).toBe(3);
   });
 
+  test("an Ask AI answer is kept like a summary, so Listen reads it aloud", async () => {
+    let spoken = "";
+    const f = await listening(async (text) => { spoken = text; return new Uint8Array([7]); });
+    const asked = await (await f.post("ask", { question: "When?", files: [{ path: "plan.md", text: "Ships Friday." }] })).json() as any;
+    expect(asked).toMatchObject({ listen: true, free: true });
+    expect(asked.summaryId).toBeString();
+    f.billing.credit(f.user.id, 1_000_000, "test:l", "test");
+    const heard = await f.post(`summaries/${asked.summaryId}/speech`);
+    expect(heard.status).toBe(200);
+    expect([...new Uint8Array(await heard.arrayBuffer())]).toEqual([7]);
+    expect(spoken).toContain("Ships Friday");
+  });
+
   test("Listen reads a kept summary aloud once, charged at the arm's price, then replays free", async () => {
     const spoken: string[] = [];
     const f = await listening(async (text) => { spoken.push(text); return new Uint8Array([0xff, 0xfb, 1, 2]); });

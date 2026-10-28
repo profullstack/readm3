@@ -295,13 +295,7 @@ export class Billing {
     if (!exempt && !free && this.balance(user.id) < estimate) {
       throw new HttpError(402, `Today's ${this.freeQuestionsPerDay} free questions are used. Not enough balance for another (about $${(estimate / 1e6).toFixed(4)}). Top up to continue, or come back tomorrow.`);
     }
-    if (this.running.has(user.id)) throw new HttpError(429, "An answer is already being written for this account.");
-    this.running.add(user.id);
-    let result: Awaited<ReturnType<Summarize>>;
-    try { result = await this.summarize(ASK_SYSTEM, text); }
-    catch { throw new HttpError(502, "The answer could not be written. You were not charged; try again."); }
-    finally { this.running.delete(user.id); }
-    if (result.refused || !result.text) throw new HttpError(422, "The model declined to answer this. You were not charged.");
+    const result = await this.call(user, ASK_SYSTEM, text, "answer");
     const model = result.model ?? this.model;
     const cost = costMicros(model, result.usage);
     const charged = free || exempt ? 0 : priceMicros(cost, arm);
@@ -310,7 +304,32 @@ export class Billing {
       id(), user.id, "charge", -charged, `${free ? "free-question" : "question"}:${id()}`, free || exempt ? null : arm,
       JSON.stringify({ kind: "question", files: files.length, model, costMicros: cost, input: result.usage.input_tokens, output: result.usage.output_tokens }), now(),
     );
-    return { answer: result.text, model, chargedMicros: charged, free, exempt, freeQuestions: this.freeQuestions(user.id), balanceMicros: this.balance(user.id) };
+    // Kept like a summary, so Listen reads it aloud through the same route (summaries/<id>/speech).
+    const summaryId = this.keep(user.id, createHash("sha256").update(`question\0${id()}`).digest("hex"), "question", files.length === 1 ? files[0]!.path : `${files.length} files`, result.text, model);
+    return { answer: result.text, summaryId, listen: !!this.speak, model, chargedMicros: charged, free, exempt, freeQuestions: this.freeQuestions(user.id), balanceMicros: this.balance(user.id) };
+  }
+
+  /** One model call at a time per account (two cannot spend one balance); a failure or a refusal is never charged. */
+  private async call(user: User, system: string, text: string, what: "summary" | "answer", attachment?: Attachment, refusal = "this") {
+    if (this.running.has(user.id)) throw new HttpError(429, `A${what === "answer" ? "n" : ""} ${what} is already being written for this account.`);
+    this.running.add(user.id);
+    let result: Awaited<ReturnType<Summarize>>;
+    try { result = await this.summarize!(system, text, attachment); }
+    catch { throw new HttpError(502, `The ${what} could not be written. You were not charged; try again.`); }
+    finally { this.running.delete(user.id); }
+    // A declined request is not the customer's to pay for.
+    if (result.refused || !result.text) throw new HttpError(422, `The model declined to ${what === "answer" ? "answer" : "summarize"} ${refusal}. You were not charged.`);
+    return result;
+  }
+
+  /** Keeps a summary or an answer for the account; its id is what Listen reads aloud. */
+  private keep(userId: string, keyHash: string, kind: string, path: string, text: string, model: string): string {
+    const summaryId = id();
+    this.store.run(
+      "INSERT OR REPLACE INTO summary_cache (id,userId,keyHash,kind,path,summary,model,createdAt) VALUES (?,?,?,?,?,?,?,?)",
+      summaryId, userId, keyHash, kind, path, text, model, now(),
+    );
+    return summaryId;
   }
 
   /** This week's free document summaries: how many are left and when the count starts again. */
@@ -454,14 +473,7 @@ export class Billing {
       const used = freeAllowed ? `This week's ${this.freePerWeek} free summaries are used. ` : "";
       throw new HttpError(402, `${used}Not enough balance for a summary (about $${(estimate / 1e6).toFixed(4)}). Top up to continue.`);
     }
-    if (this.running.has(user.id)) throw new HttpError(429, "A summary is already being written for this account.");
-    this.running.add(user.id);
-    let result: Awaited<ReturnType<Summarize>>;
-    try { result = await this.summarize!(system, text, attachment); }
-    catch { throw new HttpError(502, "The summary could not be written. You were not charged; try again."); }
-    finally { this.running.delete(user.id); }
-    // A declined request is not the customer's to pay for.
-    if (result.refused || !result.text) throw new HttpError(422, `The model declined to summarize this ${kind}. You were not charged.`);
+    const result = await this.call(user, system, text, "summary", attachment, `this ${kind}`);
     const model = result.model ?? this.model;
     const cost = costMicros(model, result.usage);
     const charged = free || exempt ? 0 : priceMicros(cost, arm);
@@ -471,11 +483,7 @@ export class Billing {
       id(), user.id, "charge", -charged, `${free ? "free-summary" : "summary"}:${id()}`, free ? null : arm,
       JSON.stringify({ kind, path, model, costMicros: cost, input: result.usage.input_tokens, output: result.usage.output_tokens }), now(),
     );
-    const summaryId = id();
-    this.store.run(
-      "INSERT OR REPLACE INTO summary_cache (id,userId,keyHash,kind,path,summary,model,createdAt) VALUES (?,?,?,?,?,?,?,?)",
-      summaryId, user.id, keyHash, kind, path, result.text, model, now(),
-    );
+    const summaryId = this.keep(user.id, keyHash, kind, path, result.text, model);
     return { summary: result.text, summaryId, cached: false, listen: !!this.speak, chargedMicros: charged, costMicros: cost, arm, model, free, freeSummaries: this.free(user.id), balanceMicros: this.balance(user.id) };
   }
 
