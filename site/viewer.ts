@@ -17,6 +17,7 @@ import * as disk from "./disk.ts";
 import * as fileHistory from "./history.ts";
 import { awaitTopUp, showHistory, showTopUp } from "./history-panel.ts";
 import { showSummary } from "./summary-panel.ts";
+import { showAsk } from "./ask-panel.ts";
 import { openPalette, rank, type PaletteItem } from "./palette.ts";
 import { binaryType, detectLanguage, languageForName, looksBinary, MARKDOWN, type BinaryType } from "../src/code.ts";
 import { accepts, bytesOf, comparePaths, kindOf, MAX_FILE_BYTES, MAX_FILES, MAX_WORKSPACE_BYTES, persist, rawUrl, restore, toBase64, type Document, type Workspace } from "./workspace.ts";
@@ -335,6 +336,7 @@ function commands(): PaletteItem[] {
     ...cloudDocument?.canEdit ? [command("File: Save version", () => void saveCloud(), "Ctrl+S")] : [],
     command("File: Download", download),
     ...isLarge() && !isBinary() ? [] : [command("File: Summarize with AI", summarize)],
+    command("AI: Ask about these files", askAi),
     command("View: Read", () => setMode(false), "Esc"),
     ...canEdit() ? [command("View: Edit", () => setMode(true), "e")] : [],
     command("View: Toggle sidebar", () => document.body.classList.toggle("sidebar-hidden")),
@@ -784,6 +786,9 @@ async function importFiles(files: disk.Picked[], name = "Your workspace") {
   finally { importBusy = false; filesInput.value = ""; folderInput.value = ""; }
 }
 
+/** Ask AI about the open file, a folder it is in, or the workspace: text as it reads now. */
+function askAi() { void showAsk(() => workspace.documents, workspace.active, () => void showTopUp()); }
+
 /** An AI summary of the open document: text as it reads now (unsaved edits included), or the file itself. */
 function summarize() {
   const doc = current();
@@ -994,6 +999,7 @@ function bindEvents() {
     catch (error) { notice(error instanceof Error ? error.message : "Could not delete this paste."); }
   };
   element("summarize").onclick = summarize;
+  element("ask-ai").onclick = askAi;
   element("copy").onclick = async () => {
     // Copy what is on screen: formatted JSON when it was shown formatted, the source otherwise.
     const text = codeView?.text ?? current().source;
@@ -1347,6 +1353,8 @@ async function start() {
   window.addEventListener("focus", () => void refreshAccount());
   const params = new URLSearchParams(location.search);
   if (params.has("new")) { element("new-file").click(); history.replaceState(null, "", "/viewer"); }
+  // readm3.com/talk lands here.
+  if (params.has("ask")) { history.replaceState(null, "", "/viewer"); askAi(); }
   const remote = params.get("url")?.trim();
   if (remote) await openUrlParam(remote);
   receiveLaunches();

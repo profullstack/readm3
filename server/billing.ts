@@ -53,6 +53,13 @@ export const DEFAULT_MODEL = "claude-opus-5-5";
 export const DEFAULT_OPENAI_MODEL = "gpt-5.2";
 /** Whole-document summaries each account gets free per week (Monday 00:00 UTC to the next). */
 export const FREE_DOCUMENTS_PER_WEEK = 10;
+/** Ask AI questions each account gets free per UTC day. */
+export const FREE_QUESTIONS_PER_DAY = 10;
+/** Text of the files one question may carry, and the earlier turns it may repeat. */
+export const MAX_ASK_CHARS = 400 * 1024;
+export const MAX_ASK_FILES = 500;
+export const MAX_QUESTION_CHARS = 4_000;
+export const MAX_ASK_TURNS = 10;
 /** Longest text sent per side, and the most of the diff the model is shown. */
 export const MAX_SOURCE = 400 * 1024;
 /** The largest PDF or office file a summary reads, and the largest image (the models' own per-image cap). */
@@ -178,6 +185,19 @@ export const DOCUMENT_SYSTEM = `You summarize a document for the person reading 
 Write a two or three sentence abstract of what the document is and says, then up to five short bullet points with its key points, decisions, numbers or steps.
 Be concrete and stay with what the document says; do not add advice of your own. Plain text, no heading, no preamble.`;
 
+export const ASK_SYSTEM = `You answer questions about the person's own files, which are given to you below with their paths.
+Answer from what the files say; quote or name the file (by path) a fact comes from. If the files do not answer the question, say so plainly instead of guessing.
+Be direct and concise. Plain text; short lists are fine.`;
+
+/** The prompt for one question: every file under its path, then the conversation so far, then the question. */
+export function askPrompt(files: { path: string; text: string }[], history: { question: string; answer: string }[], question: string, skipped = 0): string {
+  const parts = files.map((file) => `=== ${file.path} ===\n${file.text}\n`);
+  if (skipped) parts.push(`(${skipped.toLocaleString("en-US")} more file(s) were left out: too large, or not text.)\n`);
+  for (const turn of history) parts.push(`Earlier question: ${turn.question}\nYour answer: ${turn.answer}\n`);
+  parts.push(`Question: ${question}`);
+  return parts.join("\n");
+}
+
 /**
  * The prompt for a whole document: its name, and its text cut to the budget with a note
  * saying so. `note` says where the text came from when it was read out of a file.
@@ -225,6 +245,72 @@ export class Billing {
     private speak: Speak | null = null, readonly speech = { voice: DEFAULT_VOICE, microsPerChar: TTS_MICROS_PER_CHAR, dailyChars: TTS_DAILY_CHARS },
   ) {
     store.db.exec(BILLING_SCHEMA);
+  }
+
+  /** Ask AI questions free per UTC day (READM3_FREE_QUESTIONS_PER_DAY). */
+  freeQuestionsPerDay = FREE_QUESTIONS_PER_DAY;
+
+  /** Today's free Ask AI questions: how many are left and when the count starts again (00:00 UTC). */
+  freeQuestions(userId: string, at = new Date()) {
+    const start = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate()));
+    const used = this.store.get<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM billing_ledger WHERE userId=? AND ref LIKE 'free-question:%' AND createdAt>=?", userId, start.toISOString(),
+    )?.n ?? 0;
+    const resets = new Date(start);
+    resets.setUTCDate(resets.getUTCDate() + 1);
+    return { perDay: this.freeQuestionsPerDay, left: Math.max(0, this.freeQuestionsPerDay - used), resetsAt: resets.toISOString() };
+  }
+
+  /**
+   * Ask AI: a question about the person's files (text they send: one file, a folder, or
+   * the workspace), with the conversation so far. Free while today's allowance lasts,
+   * then from the balance at the arm's price; admins are never charged.
+   */
+  async ask(user: User, args: Record<string, unknown>) {
+    if (!this.summarize) throw new HttpError(503, "Ask AI is not configured on this server.");
+    const question = typeof args.question === "string" ? args.question.trim() : "";
+    if (!question) throw new HttpError(400, "Ask a question.");
+    if (question.length > MAX_QUESTION_CHARS) throw new HttpError(413, `A question may be up to ${MAX_QUESTION_CHARS.toLocaleString("en-US")} characters.`);
+    if (!Array.isArray(args.files) || !args.files.length) throw new HttpError(400, "files must list the files to ask about.");
+    if (args.files.length > MAX_ASK_FILES) throw new HttpError(413, `Ask about up to ${MAX_ASK_FILES} files at once.`);
+    let total = 0;
+    const files = args.files.map((file) => {
+      const { path, text } = (file ?? {}) as Record<string, unknown>;
+      if (typeof path !== "string" || !path.trim() || typeof text !== "string") throw new HttpError(400, "Each file needs a path and its text.");
+      total += text.length;
+      return { path: path.trim().slice(0, 1024), text };
+    });
+    if (total > MAX_ASK_CHARS) throw new HttpError(413, "The files may hold up to 400 KB of text for one question; ask about a smaller folder.");
+    const history = (Array.isArray(args.history) ? args.history : []).slice(-MAX_ASK_TURNS).map((turn) => {
+      const { question: q, answer: a } = (turn ?? {}) as Record<string, unknown>;
+      return { question: typeof q === "string" ? q.slice(0, MAX_QUESTION_CHARS) : "", answer: typeof a === "string" ? a.slice(0, 16_000) : "" };
+    }).filter((turn) => turn.question && turn.answer);
+    const skipped = Number.isSafeInteger(args.skipped) && Number(args.skipped) > 0 ? Number(args.skipped) : 0;
+    const text = askPrompt(files, history, question, skipped);
+
+    const arm = this.arm(user);
+    const exempt = this.exempt(user.id);
+    const free = !exempt && this.freeQuestions(user.id).left > 0;
+    const estimate = this.estimate(arm, text, ASK_SYSTEM);
+    if (!exempt && !free && this.balance(user.id) < estimate) {
+      throw new HttpError(402, `Today's ${this.freeQuestionsPerDay} free questions are used. Not enough balance for another (about $${(estimate / 1e6).toFixed(4)}). Top up to continue, or come back tomorrow.`);
+    }
+    if (this.running.has(user.id)) throw new HttpError(429, "An answer is already being written for this account.");
+    this.running.add(user.id);
+    let result: Awaited<ReturnType<Summarize>>;
+    try { result = await this.summarize(ASK_SYSTEM, text); }
+    catch { throw new HttpError(502, "The answer could not be written. You were not charged; try again."); }
+    finally { this.running.delete(user.id); }
+    if (result.refused || !result.text) throw new HttpError(422, "The model declined to answer this. You were not charged.");
+    const model = result.model ?? this.model;
+    const cost = costMicros(model, result.usage);
+    const charged = free || exempt ? 0 : priceMicros(cost, arm);
+    this.store.run(
+      "INSERT INTO billing_ledger (id,userId,kind,amountMicros,ref,arm,detail,createdAt) VALUES (?,?,?,?,?,?,?,?)",
+      id(), user.id, "charge", -charged, `${free ? "free-question" : "question"}:${id()}`, free || exempt ? null : arm,
+      JSON.stringify({ kind: "question", files: files.length, model, costMicros: cost, input: result.usage.input_tokens, output: result.usage.output_tokens }), now(),
+    );
+    return { answer: result.text, model, chargedMicros: charged, free, exempt, freeQuestions: this.freeQuestions(user.id), balanceMicros: this.balance(user.id) };
   }
 
   /** This week's free document summaries: how many are left and when the count starts again. */
@@ -285,6 +371,7 @@ export class Billing {
       enabled: !!this.summarize,
       listen: !!this.speak,
       freeSummaries: this.free(user.id),
+      freeQuestions: this.freeQuestions(user.id),
       ledger: this.store.all<{ kind: string; amountMicros: number; detail: string; createdAt: string }>(
         "SELECT kind,amountMicros,detail,createdAt FROM billing_ledger WHERE userId=? ORDER BY createdAt DESC LIMIT 20", user.id,
       ),

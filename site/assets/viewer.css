@@ -232,6 +232,13 @@ html, body.reader-app { height: 100%; overflow: hidden; }
 .reader-app .summary-dialog { width: min(640px, calc(100vw - 32px)); }
 .reader-app .summary-dialog .summary-body, .reader-app .summary-dialog > p { padding: 0 18px; }
 .reader-app .summary-text { white-space: pre-wrap; line-height: 1.55; margin: 4px 0 8px; overflow-wrap: anywhere; }
+.reader-app .ask-dialog .ask-log { max-height: min(55vh, 520px); overflow-y: auto; }
+.reader-app .ask-dialog .ask-scope { display: flex; gap: 8px; align-items: center; padding: 0 18px 8px; min-width: 0; }
+.reader-app .ask-dialog .ask-scope select { min-width: 0; flex: 1; }
+.reader-app .ask-question { margin: 12px 0 2px; font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; }
+.reader-app .ask-form { display: flex; gap: 8px; align-items: flex-end; padding: 8px 18px; }
+.reader-app .ask-form textarea { flex: 1; min-width: 0; resize: vertical; font: inherit; }
+.reader-app .ask-form[hidden] { display: none; }
 .reader-app .summary-listen { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 8px; }
 .reader-app .summary-listen audio { width: 100%; max-width: 420px; height: 36px; }
 .reader-app .summary-listen small { color: var(--muted); }

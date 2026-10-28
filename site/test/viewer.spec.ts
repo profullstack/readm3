@@ -243,6 +243,10 @@ test("keeps a rolling history: opened, saved, changed on disk, with snippets and
   await expect(page.locator("#file-history-dialog .history-account")).toContainText("Sign in");
   await expect(page.locator("#file-history-dialog").getByRole("button", { name: "Summarize with AI" })).toHaveCount(0);
   await page.locator("#file-history-dialog").getByRole("button", { name: "Close history" }).click();
+  // Ask AI, signed out: a sign-in line, no call.
+  await page.locator("#ask-ai").click();
+  await expect(page.locator(".ask-dialog")).toContainText("Sign in (free) to ask AI about your files: 10 questions a day free");
+  await page.locator(".ask-dialog").getByRole("button", { name: "Close Ask AI" }).click();
   // The document Summarize button, signed out: a sign-in line, no call.
   await page.locator("#summarize").click();
   await expect(page.locator(".summary-dialog")).toContainText("Sign in (free) to summarize documents with AI: 10 a week free");

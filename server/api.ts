@@ -24,6 +24,8 @@ const json = (
 ) => Response.json(body, { status, headers: { ...headers, ...extra } });
 /** A file sent for a summary: up to 20 MB as base64, with room for the JSON around it. */
 const MAX_SUMMARY_BODY = 28 * 1024 * 1024;
+/** Ask AI: 400 KB of file text plus paths, the question and the turns before it, JSON-escaped. */
+const MAX_ASK_BODY = 2 * 1024 * 1024;
 async function body(request: Request, max = MAX_BODY): Promise<Record<string, unknown>> {
   if (!request.headers.get("content-type")?.startsWith("application/json"))
     throw new HttpError(415, "Use application/json.");
@@ -349,6 +351,10 @@ export function createApi(
       if (money && path === "summaries" && request.method === "POST") {
         limit(`summary:${user.id}`, 30);
         return json(await money.billing.summary(user, await body(request)));
+      }
+      if (money && path === "ask" && request.method === "POST") {
+        limit(`ask:${user.id}`, 30);
+        return json(await money.billing.ask(user, await body(request, MAX_ASK_BODY)));
       }
       if (money && path === "summaries/document" && request.method === "POST") {
         limit(`summary:${user.id}`, 30);
