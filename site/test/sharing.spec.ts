@@ -229,7 +229,7 @@ test("revoked links stop working and cloud documents never enter the offline wor
   }
 });
 
-test("super-admin setup grants the account administration of another user's private file", async ({
+test("super-admin setup gives no access to another user's private file", async ({
   page,
   context,
   browser,
@@ -244,18 +244,15 @@ test("super-admin setup grants the account administration of another user's priv
     await register(context, "superadmin_" + suffix());
     await page.goto("/admin#claim=browser-test-admin-secret");
     await expect(page.locator("#account-label")).toContainText("Super admin");
+    // Admin is a site role, not a key to other people's workspaces.
     await expect(
-      page.getByRole("link", { name: "Project plan.md" }).first(),
-    ).toBeVisible();
+      page.getByRole("link", { name: "Project plan.md" }),
+    ).toHaveCount(0);
     await page.goto(`/viewer?doc=${doc.id}`);
-    await expect(page.locator("#edit-mode")).toBeEnabled();
-    await expect(page.locator("#share")).toBeVisible();
-    await page.locator("#edit-mode").click();
-    await editorInput(page).fill("# Super-admin correction");
-    await page.locator("#cloud-save").click();
-    await expect(page.locator("#save-status")).toHaveText(
-      "Version saved online",
+    await expect(page.locator("body")).toContainText(
+      "if this file is private",
     );
+    await expect(page.locator("#cloud-save")).toBeHidden();
   } finally {
     await other.close();
   }

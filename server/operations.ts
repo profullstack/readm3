@@ -65,11 +65,11 @@ export function operate(
         ),
       };
     case "organizations_list":
+      // Only the caller's own memberships, admins included: a site admin must not
+      // see (or share into) other people's workspaces.
       return store.all(
-        user.admin
-          ? "SELECT o.*,'owner' AS role FROM organizations o ORDER BY o.createdAt DESC"
-          : "SELECT o.*,m.role FROM organizations o JOIN members m ON m.orgId=o.id WHERE m.userId=? ORDER BY o.createdAt DESC",
-        ...(user.admin ? [] : [user.id]),
+        "SELECT o.*,m.role FROM organizations o JOIN members m ON m.orgId=o.id WHERE m.userId=? ORDER BY o.createdAt DESC",
+        user.id,
       );
     case "organizations_create": {
       const org = {
@@ -328,12 +328,9 @@ export function operate(
       return { ok: true };
     }
     case "documents_list": {
-      const accessible = user.admin
-        ? "1=1"
-        : `(d.ownerId=? OR EXISTS (SELECT 1 FROM permissions p WHERE p.documentId=d.id AND p.userId=?) OR (d.access!='private' AND EXISTS (SELECT 1 FROM members m WHERE m.orgId=d.orgId AND m.userId=?) AND (d.teamId IS NULL OR EXISTS (SELECT 1 FROM team_members tm WHERE tm.teamId=d.teamId AND tm.userId=?))))`;
-      const values: string[] = user.admin
-        ? []
-        : [user.id, user.id, user.id, user.id];
+      // Same rule for everyone: owned, granted, or visible through membership.
+      const accessible = `(d.ownerId=? OR EXISTS (SELECT 1 FROM permissions p WHERE p.documentId=d.id AND p.userId=?) OR (d.access!='private' AND EXISTS (SELECT 1 FROM members m WHERE m.orgId=d.orgId AND m.userId=?) AND (d.teamId IS NULL OR EXISTS (SELECT 1 FROM team_members tm WHERE tm.teamId=d.teamId AND tm.userId=?))))`;
+      const values: string[] = [user.id, user.id, user.id, user.id];
       if (args.orgId) values.push(orgId());
       if (args.search) values.push(text(args.search, "Search"));
       const docs = store.all<Doc>(

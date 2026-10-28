@@ -437,7 +437,7 @@ test("pinned versions stay immutable, restore adds history, and deletion invalid
   }
 });
 
-test("the one-time super-admin claim is secret gated and grants access across all owners", async () => {
+test("the one-time super-admin claim is secret gated and gives no access to other people's workspaces", async () => {
   const before = process.env.READM3_ADMIN_BOOTSTRAP_SECRET;
   process.env.READM3_ADMIN_BOOTSTRAP_SECRET = "test-admin-" + id();
   const f = fixture();
@@ -470,10 +470,14 @@ test("the one-time super-admin claim is secret gated and grants access across al
       ).status,
     ).toBe(409);
     expect((await admin.action("admin_users")).data).toHaveLength(2);
+    // Admin is a site role, not a key to everyone's workspace.
+    const orgs = (await admin.action("organizations_list")).data;
+    expect(orgs.map((o: { id: string }) => o.id)).not.toContain(first.org.id);
+    const docs = (await admin.action("documents_list", {})).data;
+    expect(docs.map((d: { id: string }) => d.id)).not.toContain(doc.id);
     expect(
-      (await admin.action("documents_get", { documentId: doc.id })).data
-        .canManage,
-    ).toBe(true);
+      (await admin.action("documents_get", { documentId: doc.id })).status,
+    ).not.toBe(200);
     expect(
       (
         await admin.action("documents_update", {
@@ -482,10 +486,23 @@ test("the one-time super-admin claim is secret gated and grants access across al
           source: "# Moderated",
         })
       ).status,
-    ).toBe(200);
+    ).not.toBe(200);
     expect(
       (await admin.action("documents_delete", { documentId: doc.id })).status,
-    ).toBe(200);
+    ).not.toBe(200);
+    expect(
+      (
+        await admin.action("documents_create", {
+          orgId: first.org.id,
+          title: "Pushed.md",
+          source: "# Into someone else's workspace",
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (await first.action("documents_get", { documentId: doc.id })).data.version
+        .source,
+    ).toBe("# Private");
   } finally {
     f.store.close();
     if (before === undefined) delete process.env.READM3_ADMIN_BOOTSTRAP_SECRET;
