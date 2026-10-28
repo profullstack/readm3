@@ -226,7 +226,7 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
         return (await api(new Request(target, { method: request.method, headers: request.headers }), ip))!;
       }
 
-      const sharedPage = /^\/(s|p)\/[A-Za-z0-9_-]{43}$/.test(url.pathname);
+      const sharedPage = /^\/(s|p)\/[A-Za-z0-9_-]{43}$/.test(url.pathname) || /^\/c\/\d{6}$/.test(url.pathname);
       const file = resolve(sharedPage ? "/viewer" : url.pathname);
       if (!file) {
         return new Response("Not found", { status: 404, headers: { "content-type": "text/plain" } });

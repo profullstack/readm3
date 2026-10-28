@@ -457,6 +457,7 @@ terminal.
 - Desktop app: ${REPO}/releases/latest (the same editor for Linux as AppImage and Flatpak, macOS dmg, Windows installer); \`readm3 edit PATH...\` opens files and folders in it
 - Summaries: Summarize in ${SITE}/viewer, or POST /api/v1/summaries/document { path, text } signed in (10 free documents a week, then pay as you go)
 - Tables: CSV and TSV (also .tab, .psv) open as a sortable, filterable grid in the terminal reader (hqtui data grid), ${SITE}/viewer, the desktop app and paste links; \`readm3 --print data.csv\` prints an aligned table. Filter language: free text, col:text, col=v, col!=v, col>n, col<=n, !negate, #3 for the third column
+- Document codes: every share link has a six-digit code that lasts as long as the link (optional expiry); ${SITE}/c/<code> or GET /api/v1/codes/<code> opens it read-only, no account (for voice: "open document 437301")
 - Ask AI: ${SITE}/talk, or Ask AI in ${SITE}/viewer: questions about a file, a folder or the workspace; POST /api/v1/ask { question, files: [{ path, text }], history? } signed in (10 free questions a day, then pay as you go)
 - Paste: ${SITE}/paste (anonymous pastes of any text, PDF or image behind an expiring secret link; CLI, curl, API and MCP examples)
 - Site: ${SITE}

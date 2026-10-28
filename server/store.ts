@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { binaryType } from "../src/code.ts";
@@ -108,6 +108,44 @@ export class Store {
     const pasteColumns = this.db.query("PRAGMA table_info(pastes)").all() as { name: string }[];
     if (!pasteColumns.some((column) => column.name === "language"))
       this.db.exec("ALTER TABLE pastes ADD COLUMN language TEXT");
+    const shareColumns = this.db.query("PRAGMA table_info(shares)").all() as { name: string }[];
+    if (!shareColumns.some((column) => column.name === "code"))
+      this.db.exec("ALTER TABLE shares ADD COLUMN code TEXT");
+    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS shares_code ON shares(code)");
+    // Links made before codes existed get one now.
+    for (const { id: shareId } of this.all<{ id: string }>("SELECT id FROM shares WHERE code IS NULL AND (expiresAt IS NULL OR expiresAt>?)", now()))
+      this.run("UPDATE shares SET code=? WHERE id=?", this.shareCode(), shareId);
+  }
+
+  /**
+   * A share link's voice code: six digits, said on a call ("open document 437301"),
+   * unique among the links that still work. An expired link gives its code back first.
+   * 900,000 codes (100000-999999, no leading zero to mishear); the unique index is the
+   * last word if two links are made at once.
+   */
+  shareCode(): string {
+    this.run("UPDATE shares SET code=NULL WHERE code IS NOT NULL AND expiresAt IS NOT NULL AND expiresAt<=?", now());
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const code = String(randomInt(100_000, 1_000_000));
+      if (!this.get("SELECT id FROM shares WHERE code=?", code)) return code;
+    }
+    throw new HttpError(503, "No free document code right now; try again.");
+  }
+
+  /** What a voice code opens: the shared document, read-only, as its link would show it. */
+  viewByCode(code: string) {
+    const link = this.get<{ documentId: string; versionId: string | null; role: string }>(
+      "SELECT documentId,versionId,role FROM shares WHERE code=? AND (expiresAt IS NULL OR expiresAt>?)", code, now(),
+    );
+    if (!link) throw new HttpError(404, "No document has that code, or its link expired.");
+    const doc = this.get<Doc>("SELECT * FROM documents WHERE id=?", link.documentId);
+    if (!doc) throw new HttpError(404, "No document has that code, or its link expired.");
+    const version = this.get<Record<string, unknown>>(
+      "SELECT v.*,COALESCE(u.displayName,'Link editor') AS author FROM versions v LEFT JOIN users u ON u.id=v.authorId WHERE v.documentId=? AND v.id=?",
+      doc.id, link.versionId || doc.currentVersion,
+    );
+    if (!version) throw new HttpError(404, "Version not found.");
+    return { ...doc, ...(link.versionId ? { title: version.title as string } : {}), version, canEdit: false, canManage: false, sharedRole: "view", pinned: !!link.versionId, code };
   }
   get<T>(sql: string, ...args: (string | number | null)[]): T | null {
     return this.db.query(sql).get(...args) as T | null;

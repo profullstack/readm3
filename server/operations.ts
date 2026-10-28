@@ -427,7 +427,7 @@ export function operate(
     case "shares_list":
       owner();
       return store.all(
-        "SELECT id,label,role,versionId,expiresAt,createdAt FROM shares WHERE documentId=? ORDER BY createdAt DESC",
+        "SELECT id,label,role,versionId,expiresAt,createdAt,code FROM shares WHERE documentId=? ORDER BY createdAt DESC",
         docId(),
       );
     case "shares_create": {
@@ -460,8 +460,10 @@ export function operate(
       const normalized = expiresAt ? new Date(expiresAt).toISOString() : null;
       const token = secret();
       const shareId = id();
+      // The voice code lives as long as the link: "open document 437301" on a call.
+      const code = store.shareCode();
       store.run(
-        "INSERT INTO shares VALUES (?,?,?,?,?,?,?,?)",
+        "INSERT INTO shares (id,documentId,tokenHash,versionId,role,label,expiresAt,createdAt,code) VALUES (?,?,?,?,?,?,?,?,?)",
         shareId,
         doc.id,
         checksum(token),
@@ -470,6 +472,7 @@ export function operate(
         text(args.label ?? "Shared link", "Label"),
         normalized,
         now(),
+        code,
       );
       // What the link exposes, so the caller can warn: the pinned version, or the latest.
       const shared = store.get<{ source: string }>(
@@ -481,6 +484,8 @@ export function operate(
         role: access,
         versionId,
         expiresAt: normalized,
+        code,
+        codeUrl: `${origin}/c/${code}`,
         url: `${origin}/s/${token}`,
         // A PDF or image is base64: nothing in it reads as a secret, and scanning it only misfires.
         sensitive: scanSensitive(binaryType(doc.title) ? "" : shared?.source ?? ""),

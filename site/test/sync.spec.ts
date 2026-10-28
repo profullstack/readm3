@@ -216,6 +216,31 @@ test("a file whose name sync cannot carry stays on this device and the rest stil
   await expect(page.locator('#file-list button[title="notes 10:44.md"]')).toBeVisible();
 });
 
+test("a share link shows its six-digit document code, and readm3.com/c/<code> opens the document", async ({ page, context, browser }) => {
+  await register(context, username());
+  await page.goto("/viewer");
+  await setPassphrase(page);
+  await page.locator("#files-input").setInputFiles({ name: "Plan.md", mimeType: "text/markdown", buffer: Buffer.from("# Ships Friday\n") });
+  await page.locator("#share").click();
+  await page.getByRole("dialog", { name: "Save to your workspace" }).getByRole("button", { name: "Save online" }).click();
+  await expect(page).toHaveURL(/\/viewer\?doc=/);
+  // Saving online goes straight on to its sharing settings.
+  const dialog = page.getByRole("dialog", { name: "Share Plan.md" });
+  await dialog.getByLabel("Link and code expire").selectOption("7", { timeout: 5000 });
+  await dialog.getByRole("button", { name: "Create share link" }).click();
+  const line = dialog.locator(".share-code");
+  await expect(line).toContainText("Document code");
+  await expect(line).toContainText("until");
+  const code = (await line.textContent())!.match(/open document (\d{6})/)![1]!;
+  // Anyone with the code, signed in or not, reads it.
+  const other = await browser.newContext();
+  try {
+    const reader = await other.newPage();
+    await reader.goto(`${new URL(page.url()).origin}/c/${code}`);
+    await expect(reader.locator("#document-content")).toContainText("Ships Friday");
+  } finally { await other.close(); }
+});
+
 test("signed in, a folder past the old 5,000-file cap opens whole with its subfolders folded", async ({ page, context }) => {
   await register(context, username());
   await page.addInitScript(() => {
