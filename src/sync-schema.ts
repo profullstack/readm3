@@ -29,6 +29,14 @@ export function validateSettings(value: unknown): ReaderSettings {
   return settings;
 }
 
+/**
+ * A path the account copy can carry: no dotfiles or dot folders, no empty segment, no
+ * ":" "\" or control characters, at most 1,024 characters. A desktop folder can hold
+ * other names; those files stay on that device (site/autosync.ts).
+ */
+export const syncablePath = (path: string): boolean =>
+  path.length <= 1024 && !/[\\\x00-\x1f:]/.test(path) && path.split("/").every((part) => part && !part.startsWith("."));
+
 export function validateWorkspace(value: unknown): SyncedWorkspace {
   if (!value || typeof value !== "object") throw new Error("Workspace must be an object.");
   const ws = value as SyncedWorkspace;
@@ -40,7 +48,7 @@ export function validateWorkspace(value: unknown): SyncedWorkspace {
   for (const doc of ws.documents) {
     // Any file name the reader can show: text of any kind, a PDF, an image. Dotfiles and
     // directory-less names stay out, as before.
-    if (!doc || typeof doc.path !== "string" || doc.path.length > 1024 || /[\\\x00-\x1f:]/.test(doc.path) || doc.path.split("/").some((p) => !p || p.startsWith(".")) || paths.has(doc.path)) throw new Error("Workspace contains an invalid or duplicate file path.");
+    if (!doc || typeof doc.path !== "string" || !syncablePath(doc.path) || paths.has(doc.path)) throw new Error("Workspace contains an invalid or duplicate file path.");
     if (typeof doc.source !== "string") throw new Error("A file's source must be text.");
     if (doc.language !== undefined && (typeof doc.language !== "string" || !/^[a-z0-9_+-]{1,40}$/.test(doc.language))) throw new Error("A file's language must be a short highlight name.");
     if (Object.keys(doc).some((key) => !["path", "source", "language", "blob"].includes(key))) throw new Error("Documents can only contain path, source, language and blob.");
