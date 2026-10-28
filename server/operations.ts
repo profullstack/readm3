@@ -368,17 +368,18 @@ export function operate(
       store.run("UPDATE documents SET ownerId=? WHERE id=?", next.id, doc.id);
       return { ok: true };
     }
+    // Anyone who can see a document sees its history; restoring a version needs write access.
     case "versions_list":
-      owner();
+      store.document(user, docId(), "view");
       return store.all(
         "SELECT v.id,v.checksum,v.title,v.parentId,v.createdAt,COALESCE(u.displayName,'Link editor') AS author FROM versions v LEFT JOIN users u ON u.id=v.authorId WHERE documentId=? ORDER BY v.rowid DESC LIMIT 1000",
         docId(),
       );
     case "versions_get":
-      owner();
+      store.document(user, docId(), "view");
       return store.view(user, docId(), key(args, "versionId"));
     case "versions_restore": {
-      owner();
+      store.document(user, docId(), "edit");
       const version = store.get<{ source: string; title: string }>(
         "SELECT source,title FROM versions WHERE id=? AND documentId=?",
         key(args, "versionId"),

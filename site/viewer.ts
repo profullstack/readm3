@@ -816,34 +816,82 @@ function openHistory() {
 
 /** When each disk file was last seen to change, so the watcher reads it only when it moves. */
 const diskSeen = new Map<string, number>();
+/** Where the round of the other disk files stopped; the open file is checked every time. */
+let sweepFrom = 0;
+let checking = false;
+const SWEEP_BATCH = 100;
+
+/**
+ * Every file from disk is watched, not only the open one: a file saved in another editor
+ * (or regenerated, or checked out) is reloaded here so sync carries it to the account.
+ * The open file is checked on each tick; the rest in rounds of SWEEP_BATCH, all of them
+ * when the window comes back into focus.
+ */
+async function checkDisk(all = false) {
+  if (!workspace || cloudDocument || pasteDocument || document.hidden || checking) return;
+  checking = true;
+  try {
+    const others = [...diskEntries.keys()].filter((path) => path !== workspace.active);
+    const batch = all ? others : others.slice(sweepFrom, sweepFrom + SWEEP_BATCH);
+    sweepFrom = all || sweepFrom + SWEEP_BATCH >= others.length ? 0 : sweepFrom + SWEEP_BATCH;
+    for (const path of [workspace.active, ...batch]) await checkDiskFile(path);
+  } finally { checking = false; }
+}
+
 /**
  * A file from disk that changes underneath the editor (regenerated output, a git
  * checkout, another editor) gets a version in History. With no local edits it is
  * reloaded; with local edits it is left alone and the disk version waits in History.
  */
-async function checkDisk() {
-  if (!workspace || cloudDocument || pasteDocument || document.hidden || isBinary() || current().blob) return;
-  const doc = current();
-  const entry = diskEntries.get(doc.path);
-  if (!entry) return;
+async function checkDiskFile(path: string) {
+  const doc = workspace.documents.find((candidate) => candidate.path === path);
+  const entry = diskEntries.get(path);
+  if (!doc || !entry) return;
+  const name = path.split("/").at(-1);
+  const active = () => workspace.active === path && !cloudDocument && !pasteDocument;
+  if (doc.blob) {
+    // A large file is never read to be checked: its size and time come from a stat.
+    const seen = await disk.stat(entry.handle);
+    if (!seen) return;
+    const before = diskSeen.get(path);
+    diskSeen.set(path, seen.modified);
+    if (before === undefined ? seen.size === doc.blob.size : before === seen.modified) return;
+    const ref = newBlobRef(seen.size);
+    stored.fromDisk(ref, () => entry.handle.getFile());
+    doc.blob = ref;
+    if (active()) { previousRender = ""; openDocument(path, false); notice(`${name} changed on disk and was reloaded.`); }
+    changed();
+    return;
+  }
   let file: File;
   try { file = await entry.handle.getFile(); } catch { return; }
-  if (diskSeen.get(doc.path) === file.lastModified) return;
-  diskSeen.set(doc.path, file.lastModified);
+  if (diskSeen.get(path) === file.lastModified) return;
+  diskSeen.set(path, file.lastModified);
+  if (binaryType(path)) {
+    const source = toBase64(new Uint8Array(await file.arrayBuffer()));
+    if (source === doc.source || Math.ceil(file.size * 4 / 3) > MAX_FILE_BYTES) return;
+    doc.source = source;
+    entry.saved = disk.fingerprint(source);
+    void disk.storeEntries(diskEntries);
+    if (active()) { previousRender = ""; openDocument(path, false); }
+    changed();
+    return;
+  }
   const text = await file.text();
-  if (disk.fingerprint(text) === entry.saved || workspace.active !== doc.path) return;
-  const name = doc.path.split("/").at(-1);
+  if (disk.fingerprint(text) === entry.saved) return;
   const edited = unsavedOnDisk(doc);
-  await fileHistory.record(doc.path, text, "changed on disk");
-  if (edited) { notice(`${name} changed on disk. Your unsaved edits are kept; the disk version is in History.`); return; }
+  await fileHistory.record(path, text, "changed on disk");
+  if (edited) { if (active()) notice(`${name} changed on disk. Your unsaved edits are kept; the disk version is in History.`); return; }
   entry.saved = disk.fingerprint(text);
   void disk.storeEntries(diskEntries);
   doc.source = text;
-  previousRender = "";
-  documentInfo();
-  setMode(editing, false);
+  if (active()) {
+    previousRender = "";
+    documentInfo();
+    setMode(editing, false);
+    notice(`${name} changed on disk and was reloaded. History has both versions.`);
+  }
   changed();
-  notice(`${name} changed on disk and was reloaded. History has both versions.`);
 }
 
 /** What an input or a drop hands over: files with their relative paths, no way back to disk. */
@@ -1303,7 +1351,7 @@ async function start() {
   if (remote) await openUrlParam(remote);
   receiveLaunches();
   setInterval(() => void checkDisk(), 5000);
-  window.addEventListener("focus", () => void checkDisk());
+  window.addEventListener("focus", () => void checkDisk(true));
   const topup = params.get("topup");
   if (topup) { history.replaceState(null, "", "/viewer"); void awaitTopUp(topup, notice); }
   void setupPwa();

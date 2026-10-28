@@ -73,3 +73,16 @@ export function envelopeProblem(value: unknown): string | null {
   if (typeof e.data !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(e.data)) return "invalid sealed data";
   return null;
 }
+
+/**
+ * A file's name as the server may see it: 64 hex characters that only someone with the
+ * sync key can produce from the path. AES-GCM over the path's SHA-256, with an IV taken
+ * from that hash, so the same path always gives the same tag and an IV repeats only
+ * for the same path (the one case where the output is meant to repeat).
+ */
+export async function pathTag(path: string, { key }: SyncKey): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`readm3 path\0${path}`)));
+  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: digest.slice(0, 12) as BufferSource }, key, digest as BufferSource));
+  const tag = new Uint8Array(await crypto.subtle.digest("SHA-256", sealed as BufferSource));
+  return [...tag].map((n) => n.toString(16).padStart(2, "0")).join("");
+}

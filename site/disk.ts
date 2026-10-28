@@ -97,6 +97,8 @@ interface DesktopBridge {
   /** Absent in desktop builds before 0.21.0, which used the page's pickers. */
   pick?(folder: boolean): Promise<DesktopFile[] | null>;
   saveAs?(name: string): Promise<{ path: string; name: string } | null>;
+  /** Absent in desktop builds before 0.18.0: a large file's size and time without reading it. */
+  stat?(path: string): Promise<{ size: number; modified: number }>;
 }
 /** Present only inside the readm3 desktop app (desktop/preload.cjs). */
 export const desktop = typeof window === "undefined" ? undefined : (window as unknown as { readm3Desktop?: DesktopBridge }).readm3Desktop;
@@ -142,17 +144,33 @@ function desktopHandle(entry: DesktopFile): FileSystemFileHandle {
     kind: "file", name: entry.name,
     // Read from disk each time, so the editor sees a file change under it and a save is not undone.
     getFile: async () => {
+      // The file may have grown or shrunk since it was opened.
+      if (desktop!.stat) { try { entry.size = (await desktop!.stat(entry.path)).size; } catch { /* Read as before. */ } }
       // A large file is read a range at a time, never whole through one message.
       if (!entry.data && entry.size !== undefined && (entry.size > LARGE || !desktop!.readFile)) return whole(entry);
       if (!desktop!.readFile) return new File([entry.data!.buffer as ArrayBuffer], entry.name);
       const { data, modified } = await desktop!.readFile(entry.path);
       return new File([data.buffer as ArrayBuffer], entry.name, { lastModified: modified });
     },
+    stat: desktop!.stat ? () => desktop!.stat!(entry.path) : undefined,
     createWritable: async () => {
       const parts: BlobPart[] = [];
       return { write: async (data: BlobPart) => { parts.push(data); }, close: async () => { await desktop!.writeFile(entry.path, new Uint8Array(await new Blob(parts).arrayBuffer())); } };
     },
   } as unknown as FileSystemFileHandle;
+}
+
+/**
+ * A file's size and time without reading it, or null where that would mean reading the
+ * whole file (a large file in a desktop build before 0.18.0). A picker's File is lazy.
+ */
+export async function stat(handle: FileSystemFileHandle): Promise<{ size: number; modified: number } | null> {
+  const desktopStat = (handle as FileSystemFileHandle & { stat?: () => Promise<{ size: number; modified: number }> }).stat;
+  try {
+    if (desktopStat) return await desktopStat();
+    if (typeof FileSystemHandle !== "undefined" && handle instanceof FileSystemHandle) { const file = await handle.getFile(); return { size: file.size, modified: file.lastModified }; }
+  } catch { /* Moved or no longer readable. */ }
+  return null;
 }
 
 /** Writes the file, asking for write access first if this session has not been granted it. */

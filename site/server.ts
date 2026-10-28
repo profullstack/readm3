@@ -19,6 +19,7 @@ import { CoinPay } from "../server/coinpay.ts";
 import { createOAuth } from "../server/oauth.ts";
 import { createSyncApi } from "../server/sync-api.ts";
 import { Blobs, createBlobApi } from "../server/blobs.ts";
+import { FileHistory, createFileHistoryApi } from "../server/file-history.ts";
 import { createCrawlGate, type CrawlGate } from "../server/crawl-gate.ts";
 
 const dist = join(dirname(fileURLToPath(import.meta.url)), "dist");
@@ -154,6 +155,7 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
     topups: () => payments.enabled,
   });
   const blobApi = createBlobApi(blobs, accounts);
+  const fileHistoryApi = createFileHistoryApi(new FileHistory(store), accounts);
   setInterval(() => { try { blobs.tick(); } catch (error) { console.error("readm3 storage charge:", error instanceof Error ? error.message : error); } }, 3600_000).unref();
   // `readm3 login`: OAuth 2.1 for the CLI (server/oauth.ts).
   const oauth = createOAuth(accounts);
@@ -202,6 +204,8 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
       if (syncResponse) return syncResponse;
       const blobResponse = await blobApi(request);
       if (blobResponse) return blobResponse;
+      const fileHistoryResponse = await fileHistoryApi(request);
+      if (fileHistoryResponse) return fileHistoryResponse;
       const documentResponse = await api(request, ip);
       if (documentResponse) return documentResponse;
 

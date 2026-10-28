@@ -253,6 +253,51 @@ test("keeps a rolling history: opened, saved, changed on disk, with snippets and
   await expect(page.locator("#notice")).toContainText("Restored");
 });
 
+test("picks up a file saved in another editor even when it is not the open one", async ({ page }) => {
+  // Two files from disk; the second is changed by another program while the first is open.
+  await page.addInitScript(() => {
+    const disk: Record<string, { text: string; modified: number }> = {
+      "a.md": { text: "# Alpha\n", modified: 1 },
+      "b.md": { text: "# Bravo first\n", modified: 1 },
+    };
+    Object.assign(window, { disk });
+    const handle = (name: string) => ({
+      kind: "file", name, queryPermission: async () => "granted",
+      getFile: async () => new File([disk[name]!.text], name, { lastModified: disk[name]!.modified }),
+      createWritable: async () => { let out = ""; return { write: async (data: string) => { out += data; }, close: async () => { disk[name]!.text = out; disk[name]!.modified++; } }; },
+    });
+    Object.assign(window, {
+      showDirectoryPicker: async () => ({ kind: "directory", name: "notes", values: async function* () { yield handle("a.md"); yield handle("b.md"); } }),
+    });
+  });
+  await page.reload();
+  await page.locator("#open-folder").click();
+  await expect(page.locator("#workspace-name")).toHaveText("notes");
+  await page.locator('#file-list button[title="notes/a.md"]').click();
+  await expect(page.locator("#document-name")).toHaveText("notes/a.md");
+  await page.evaluate(() => {
+    const disk = (window as unknown as { disk: Record<string, { text: string; modified: number }> }).disk;
+    disk["b.md"] = { text: "# Bravo saved elsewhere\n", modified: 50 };
+    window.dispatchEvent(new Event("focus"));
+  });
+  // The workspace (what sync uploads) has the new text without b.md ever being opened.
+  await expect.poll(() => page.evaluate(() => new Promise<string>((done) => {
+    const open = indexedDB.open("readm3");
+    open.onsuccess = () => {
+      const db = open.result;
+      const tx = db.transaction([...db.objectStoreNames], "readonly");
+      let found = "";
+      for (const name of db.objectStoreNames) tx.objectStore(name).getAll().onsuccess = (event) => {
+        const text = JSON.stringify((event.target as IDBRequest).result);
+        if (text.includes("Bravo saved elsewhere")) found = "saved";
+      };
+      tx.oncomplete = () => done(found);
+    };
+  }))).toBe("saved");
+  await page.locator('#file-list button[title="notes/b.md"]').click();
+  await expect(page.locator("#reader")).toContainText("Bravo saved elsewhere");
+});
+
 test("goes to files with Ctrl+P, runs commands with Ctrl+Shift+P, and keeps open files as tabs", async ({ page }) => {
   await page.locator("#reader").press("Control+p");
   await expect(page.locator("#palette")).toBeVisible();
