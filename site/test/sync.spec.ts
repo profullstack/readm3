@@ -180,6 +180,21 @@ test("files over the sync size limit stay on this device until the limit is turn
   expect(await page.evaluate(() => localStorage.getItem("readm3:sync-limit-mb"))).toBe("0");
 });
 
+test("a file whose name sync cannot carry stays on this device and the rest still sync", async ({ page, context }) => {
+  await register(context, username());
+  await page.goto("/viewer");
+  await setPassphrase(page);
+  // A desktop folder can hold names the account copy refuses (":" is common in timestamps).
+  await page.locator("#files-input").setInputFiles([
+    { name: "Synced.md", mimeType: "text/markdown", buffer: Buffer.from("# Synced\n") },
+    { name: "notes 10:44.md", mimeType: "text/markdown", buffer: Buffer.from("# Kept here\n") },
+  ]);
+  await expect(page.locator('#file-list button[title="notes 10:44.md"]')).toBeVisible();
+  await expect.poll(() => sealedSnapshot(page), { timeout: 20_000 }).not.toBeNull();
+  await expect(page.locator("#sync-note")).toContainText("1 file kept on this device", { timeout: 20_000 });
+  await expect(page.locator('#file-list button[title="notes 10:44.md"]')).toBeVisible();
+});
+
 test("signed in, a folder past the old 5,000-file cap opens whole with its subfolders folded", async ({ page, context }) => {
   await register(context, username());
   await page.addInitScript(() => {

@@ -17,7 +17,7 @@
 import { ApiError, modal, request, type CloudUser } from "./cloud.ts";
 import { deriveKey, MIN_PASSPHRASE, newKdf, open, seal, SEALED_FILE, WrongPassphrase, type Envelope, type SyncKey } from "../src/sync-crypto.ts";
 import { digestDocument, digests, mergeWorkspaces } from "../src/sync-merge.ts";
-import { isSealed, validateSyncFiles, type ReaderSettings, type SyncedWorkspace } from "../src/sync-schema.ts";
+import { isSealed, syncablePath, validateSyncFiles, type ReaderSettings, type SyncedWorkspace } from "../src/sync-schema.ts";
 import { store, stored } from "./sync.ts";
 import * as blobs from "./blobs.ts";
 import { formatStorage, MAX_SYNC_FILES, newBlobRef, SNAPSHOT_INLINE_BYTES, type BlobRef } from "../src/blob-store.ts";
@@ -166,6 +166,12 @@ async function starterDigests(): Promise<Record<string, string>> {
   return starter;
 }
 
+/**
+ * Spilled text uploaded this session, by digest: a pass that fails after uploading (offline,
+ * a 409 race) reuses them on the next one instead of uploading every spill again.
+ */
+const uploadedSpills = new Map<string, BlobRef>();
+
 /** An upload this recent may belong to another device's save in flight; it is not collected yet. */
 const GC_GRACE_MS = 3600_000;
 
@@ -178,7 +184,7 @@ const GC_GRACE_MS = 3600_000;
 async function forUpload(workspace: SyncedWorkspace, remote: SyncedWorkspace | undefined, spills: Record<string, BlobRef>) {
   const account = await blobs.account();
   const complete = new Set(account.blobs.filter((blob) => blob.complete).map((blob) => blob.id));
-  const known = new Map<string, BlobRef>(Object.entries(spills));
+  const known = new Map<string, BlobRef>([...uploadedSpills, ...Object.entries(spills)]);
   for (const doc of remote?.documents ?? []) if (doc.blob?.digest) known.set(doc.blob.digest, doc.blob);
   const encoder = new TextEncoder();
   const inline = workspace.documents.filter((doc) => !doc.blob).map((doc) => ({ doc, size: encoder.encode(doc.source).length })).sort((a, b) => a.size - b.size);
@@ -204,6 +210,7 @@ async function forUpload(workspace: SyncedWorkspace, remote: SyncedWorkspace | u
       ref = newBlobRef(encoder.encode(doc.source).length, digest);
       await blobs.upload(ref, new Blob([doc.source]));
       complete.add(ref.id);
+      uploadedSpills.set(digest, ref);
     }
     nextSpills[digest] = ref;
     documents.push({ path: doc.path, source: "", ...(doc.language ? { language: doc.language } : {}), blob: ref });
@@ -259,15 +266,19 @@ async function pass(user: CloudUser) {
     const localDigests = digests(all);
     // Files past the size limit take no part in the merge, on either side: this device never
     // uploads its own, and one another device synced (a higher limit there) is left as it is.
+    // Nor do files named in a way the account copy refuses ("a:b.md"): one such file in a
+    // desktop folder must not stop the whole folder from syncing.
     const limit = syncLimitMb();
-    const deviceOnly = all.documents.filter((doc) => keptOnDevice(doc, limit));
+    const deviceOnly = all.documents.filter((doc) => keptOnDevice(doc, limit) || !syncablePath(doc.path));
     const accountOnly = remoteWorkspace?.documents.filter((doc) => keptOnDevice(doc, limit)) ?? [];
-    const local = { ...all, documents: all.documents.filter((doc) => !keptOnDevice(doc, limit)) };
+    const local = { ...all, documents: all.documents.filter((doc) => !keptOnDevice(doc, limit) && syncablePath(doc.path)) };
     const remoteSynced = remoteWorkspace && { ...remoteWorkspace, documents: remoteWorkspace.documents.filter((doc) => !keptOnDevice(doc, limit)) };
     // Past what one sealed snapshot carries, sync waits rather than drop files from the account copy.
     if (local.documents.length + accountOnly.length > MAX_SYNC_FILES) {
       throw new Paused(`Sync paused · ${local.documents.length.toLocaleString()} files; sync carries up to ${MAX_SYNC_FILES.toLocaleString()}. Your files are safe on this device.`);
     }
+    // A workspace never syncs empty: with only device files here and nothing on the account, there is nothing to send.
+    if (!local.documents.length && !remoteSynced?.documents.length) throw new Paused(`Sync paused · none of these ${all.documents.length.toLocaleString()} files can sync yet; add a note to start`);
     const merge = mergeWorkspaces({
       local, remote: remoteSynced, base: state?.base, starter: await starterDigests(),
       conflictLabel: `${h.device} ${new Date().toISOString().slice(0, 10)}`,
@@ -314,7 +325,11 @@ async function pass(user: CloudUser) {
     }
     await store(key, { revision, base: digests(merge.workspace), settings: serialize(settings), spills } satisfies State);
     known = revision;
-    const kept = deviceOnly.length ? ` · ${deviceOnly.length} file${deviceOnly.length === 1 ? "" : "s"} over ${limit.toLocaleString()} MB kept on this device` : "";
+    const count = (n: number) => `${n} file${n === 1 ? "" : "s"}`;
+    const large = deviceOnly.filter((doc) => keptOnDevice(doc, limit)).length;
+    const named = deviceOnly.length - large;
+    const kept = (large ? ` · ${count(large)} over ${limit.toLocaleString()} MB kept on this device` : "")
+      + (named ? ` · ${count(named)} kept on this device: sync can't carry names with ":", "\\" or a leading "."` : "");
     h.status(merge.conflicts.length
       ? `Synced · ${merge.conflicts.length} conflict cop${merge.conflicts.length === 1 ? "y" : "ies"} kept${kept}`
       : `Synced to your account · ${time()}${kept}`);
