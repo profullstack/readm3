@@ -40,6 +40,8 @@ export const account = () => request<StorageAccount>("blobs");
 export const remove = (id: string) => request(`blobs/${id}`, "DELETE");
 
 async function failure(response: Response): Promise<ApiError> {
+  // Named on the account by another device that has not uploaded it (yet): say so, not "chunk".
+  if (response.status === 404) return new ApiError("This file is not on your account yet. The device that has it uploads it on its next sync; open readm3 there.", 404);
   let message = `Storage request failed (${response.status})`;
   try { message = (await response.json()).error || message; } catch { /* Not JSON. */ }
   return new ApiError(message, response.status);

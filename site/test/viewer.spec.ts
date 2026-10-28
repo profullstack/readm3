@@ -236,6 +236,36 @@ test("in the desktop app, a file saved in another editor while readm3 was closed
   await expect(page.locator("#save-status")).toHaveText("Saved to disk");
 });
 
+test("in the desktop app, a PDF read from disk still opens after a restart, without opening its folder again", async ({ page }) => {
+  await page.addInitScript(() => {
+    const pdf = new TextEncoder().encode("%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 100]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n");
+    const path = "/home/me/Desktop/report.pdf";
+    const opened = new Set<string>(JSON.parse(localStorage.getItem("test:opened") ?? "[]"));
+    Object.assign(window, {
+      readm3Desktop: {
+        takeLaunchFiles: async () => [],
+        onOpenFiles: () => {},
+        pick: async () => { opened.add(path); localStorage.setItem("test:opened", JSON.stringify([...opened])); return [{ path, name: "report.pdf", size: pdf.length }]; },
+        reopen: async (paths: string[]) => paths.filter((p) => opened.has(p)).map((p) => ({ path: p, name: "report.pdf", size: pdf.length })),
+        readFile: async (p: string) => { if (!opened.has(p)) throw new Error("readm3 can only read files it opened."); return { data: pdf, modified: 1 }; },
+        stat: async () => ({ size: pdf.length, modified: 1 }),
+        readRange: async () => new Uint8Array(),
+        writeFile: async () => {},
+      },
+    });
+  });
+  await page.reload();
+  await page.locator("#open-files").click();
+  await expect(page.locator("#document-name")).toHaveText("report.pdf");
+  await expect(page.locator("#media-content embed")).toBeVisible();
+  await page.locator('#file-list button[title="Welcome.md"]').click();
+  // Quit and launch again: the PDF is still read from disk.
+  await page.reload();
+  await page.locator('#file-list button[title="report.pdf"]').click();
+  await expect(page.locator("#media-content embed")).toBeVisible();
+  await expect(page.locator("#code-content")).not.toContainText("Open the folder");
+});
+
 test("keeps a rolling history: opened, saved, changed on disk, with snippets and restore", async ({ page }) => {
   // A fake disk whose file can change under the editor, as a regenerated output.json does.
   await page.addInitScript(() => {
