@@ -15,6 +15,7 @@ if (origin === "https://readm3.com" || origin === "app://readm3" || (custom && o
     readFile: (path) => ipcRenderer.invoke("read-file", path),
     readRange: (path, start, end) => ipcRenderer.invoke("read-range", path, start, end),
     stat: (path) => ipcRenderer.invoke("stat-file", path),
+    reopen: (paths) => ipcRenderer.invoke("reopen-files", paths),
     writeFile: (path, data) => ipcRenderer.invoke("write-file", path, data),
     pick: (folder) => ipcRenderer.invoke("pick", folder),
     saveAs: (name) => ipcRenderer.invoke("save-as", name),
