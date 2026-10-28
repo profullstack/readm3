@@ -667,6 +667,8 @@ test("storage failure still permits reading, editing, and downloading", async ({
   await expect(page.locator("#document-content")).toContainText("Your docs. Your space.");
   await expect(page.locator("#save-status")).toContainText("storage unavailable");
   await page.locator("#edit-mode").click();
+  // Type once the editor holds the document, as a person would; earlier keys race its load.
+  await expect(editorInput(page)).toContainText("Your docs. Your space.");
   await editorInput(page).fill("# Keep this draft");
   const downloading = page.waitForEvent("download");
   await page.locator("#download").click();

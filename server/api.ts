@@ -204,6 +204,14 @@ export function createApi(
         if (handled) return handled;
         throw new HttpError(404, "API route not found.");
       }
+      // A share link's six-digit voice code opens the document read-only. A code is short
+      // enough to guess, so lookups are few per address.
+      const code = path.match(/^codes\/(\d{6})$/);
+      if (code) {
+        if (request.method !== "GET") throw new HttpError(405, "Document codes are read-only.");
+        limit(`code:${ip}`, 20);
+        return json(store.viewByCode(code[1]!));
+      }
       const shared = path.match(/^shared\/([A-Za-z0-9_-]{43})$/);
       if (shared) {
         const link = store.get<{

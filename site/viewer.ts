@@ -43,6 +43,8 @@ let cloudDocument: CloudDocument | null = null;
 const shareToken = location.pathname.match(/^\/s\/([A-Za-z0-9_-]{43})$/)?.[1];
 const cloudId = new URLSearchParams(location.search).get("doc");
 const pasteToken = location.pathname.match(/^\/p\/([A-Za-z0-9_-]{43})$/)?.[1];
+/** readm3.com/c/437301: a share link's voice code, read-only. */
+const shareCode = location.pathname.match(/^\/c\/(\d{6})$/)?.[1];
 interface PasteView { id: string; title: string; source: string; bytes: number; language: string; mime: string; createdAt: string; expiresAt: string; }
 let pasteDocument: PasteView | null = null;
 let cloudSaving = false;
@@ -1344,9 +1346,11 @@ async function start() {
     }
     return;
   }
-  if (shareToken || cloudId) {
+  if (shareToken || shareCode || cloudId) {
     try {
-      const doc = shareToken ? await request<CloudDocument>(`shared/${shareToken}`) : await request<CloudDocument>(`documents/${encodeURIComponent(cloudId!)}`);
+      const doc = shareToken ? await request<CloudDocument>(`shared/${shareToken}`)
+        : shareCode ? await request<CloudDocument>(`codes/${shareCode}`)
+        : await request<CloudDocument>(`documents/${encodeURIComponent(cloudId!)}`);
       adoptCloud(doc);
       bindEvents();
       if (doc.canEdit && new URLSearchParams(location.search).get("edit") === "1") setMode(true);

@@ -707,3 +707,36 @@ test("a shared image is its bytes as base64, up to 6 MB, never an empty file", a
     f.store.close();
   }
 });
+
+test("every share link gets a six-digit voice code that opens it read-only and dies with the link", async () => {
+  const f = fixture();
+  try {
+    const owner = await f.account();
+    const doc = (await owner.action("documents_create", { orgId: owner.org.id, title: "Plan.md", source: "# Ships Friday" })).data;
+    const link = (await owner.action("shares_create", { documentId: doc.id, role: "edit" })).data;
+    expect(link.code).toMatch(/^[1-9]\d{5}$/);
+    expect(link.codeUrl).toBe(`http://localhost/c/${link.code}`);
+    const opened = await f.call(`codes/${link.code}`);
+    expect(opened.status).toBe(200);
+    // An edit link's code still only reads.
+    expect(opened.data).toMatchObject({ id: doc.id, canEdit: false, canManage: false, code: link.code });
+    expect(opened.data.version.source).toBe("# Ships Friday");
+    expect((await owner.action("shares_list", { documentId: doc.id })).data[0].code).toBe(link.code);
+    // Unique among links.
+    const codes = new Set([link.code]);
+    for (let i = 0; i < 15; i++) codes.add((await owner.action("shares_create", { documentId: doc.id })).data.code);
+    expect(codes.size).toBe(16);
+    // Revoked: the code stops working.
+    await owner.action("shares_revoke", { documentId: doc.id, shareId: link.id });
+    expect((await f.call(`codes/${link.code}`)).status).toBe(404);
+    // Expired: the code stops working and is freed for another link.
+    const soon = (await owner.action("shares_create", { documentId: doc.id, expiresAt: new Date(Date.now() + 60_000).toISOString() })).data;
+    f.store.run("UPDATE shares SET expiresAt=? WHERE id=?", new Date(Date.now() - 1000).toISOString(), soon.id);
+    expect((await f.call(`codes/${soon.code}`)).status).toBe(404);
+    f.store.shareCode();
+    expect(f.store.get<{ code: string | null }>("SELECT code FROM shares WHERE id=?", soon.id)!.code).toBeNull();
+    expect((await f.call("codes/12345")).status).not.toBe(200);
+  } finally {
+    f.store.close();
+  }
+});

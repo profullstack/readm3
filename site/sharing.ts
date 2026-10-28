@@ -47,6 +47,9 @@ export function pasteDialog(title: string, source: string) {
   };
 }
 
+/** "437301" as it is read out: "437 301". */
+const spokenCode = (code: string) => `${code.slice(0, 3)} ${code.slice(3)}`;
+
 export async function publish(
   title: string,
   source: string,
@@ -89,7 +92,7 @@ export async function sharing(
 ) {
   const [links, people, teams] = await Promise.all([
     action<
-      { id: string; label: string; role: string; versionId: string | null }[]
+      { id: string; label: string; role: string; versionId: string | null; code: string | null; expiresAt: string | null }[]
     >("shares_list", { documentId: doc.id }),
     action<{ userId: string; username: string; role: string }[]>(
       "permissions_list",
@@ -100,7 +103,7 @@ export async function sharing(
     }).catch(() => []),
   ]);
   const box = modal(`Share ${doc.title}`);
-  box.body.innerHTML = `<p class="permission-note">Viewers can read. Editors can save new versions. Only you and the super admin can change permissions or delete the file.</p><form id="link-form" class="cloud-form"><label>Anyone with the link<select name="role"><option value="view">Can view</option><option value="edit">Can edit</option></select></label><label>Version<select name="version"><option value="">Latest version (follows future saves)</option><option value="${doc.version.id}">This version only (view only)</option></select></label><div class="sensitive" role="status" hidden></div><button class="primary-action">Create share link</button></form><div id="new-link"></div><div id="existing-links"></div><h3>People</h3><form id="person-form" class="cloud-form"><label>Email or username<input name="username" required placeholder="name@example.com"></label><label>Permission<select name="role"><option value="view">Can view</option><option value="edit">Can edit</option></select></label><button>Add collaborator</button></form><div id="existing-people"></div><h3>Organization and team access</h3><form id="group-form" class="cloud-form"><label>Group<select name="teamId"><option value="">Whole organization</option>${teams.map((t) => `<option value="${t.id}"${doc.teamId === t.id ? " selected" : ""}>${escape(t.name)}</option>`).join("")}</select></label><label>Permission<select name="access">${["private", "view", "edit"].map((v) => `<option value="${v}"${doc.access === v ? " selected" : ""}>${v === "private" ? "No group access" : v === "view" ? "Can view" : "Can edit"}</option>`).join("")}</select></label><button>Update group access</button></form><h3>Ownership</h3><form id="transfer-form" class="cloud-form"><label>New owner’s email or username<input name="username" required></label><button class="danger-action">Transfer ownership</button></form><p class="error" role="alert"></p>`;
+  box.body.innerHTML = `<p class="permission-note">Viewers can read. Editors can save new versions. Only you and the super admin can change permissions or delete the file.</p><form id="link-form" class="cloud-form"><label>Anyone with the link<select name="role"><option value="view">Can view</option><option value="edit">Can edit</option></select></label><label>Version<select name="version"><option value="">Latest version (follows future saves)</option><option value="${doc.version.id}">This version only (view only)</option></select></label><label>Link and code expire<select name="expires"><option value="">Never</option><option value="1">In 1 day</option><option value="7">In 7 days</option><option value="30">In 30 days</option><option value="90">In 90 days</option></select></label><div class="sensitive" role="status" hidden></div><button class="primary-action">Create share link</button></form><div id="new-link"></div><div id="existing-links"></div><h3>People</h3><form id="person-form" class="cloud-form"><label>Email or username<input name="username" required placeholder="name@example.com"></label><label>Permission<select name="role"><option value="view">Can view</option><option value="edit">Can edit</option></select></label><button>Add collaborator</button></form><div id="existing-people"></div><h3>Organization and team access</h3><form id="group-form" class="cloud-form"><label>Group<select name="teamId"><option value="">Whole organization</option>${teams.map((t) => `<option value="${t.id}"${doc.teamId === t.id ? " selected" : ""}>${escape(t.name)}</option>`).join("")}</select></label><label>Permission<select name="access">${["private", "view", "edit"].map((v) => `<option value="${v}"${doc.access === v ? " selected" : ""}>${v === "private" ? "No group access" : v === "view" ? "Can view" : "Can edit"}</option>`).join("")}</select></label><button>Update group access</button></form><h3>Ownership</h3><form id="transfer-form" class="cloud-form"><label>New owner’s email or username<input name="username" required></label><button class="danger-action">Transfer ownership</button></form><p class="error" role="alert"></p>`;
   const error = box.body.querySelector<HTMLElement>(".error")!;
   function bind(selector: string, fn: (data: FormData) => Promise<void>, gate?: SensitiveGate) {
     const form = box.body.querySelector<HTMLFormElement>(selector)!;
@@ -145,10 +148,12 @@ export async function sharing(
   const linkGate = sensitiveGate(linkForm.querySelector<HTMLElement>(".sensitive")!, linkForm.querySelector("button")!);
   linkGate.check(doc.version.source);
   bind("#link-form", async (data) => {
-    const link = await action<{ url: string; id: string }>("shares_create", {
+    const days = Number(data.get("expires") || 0);
+    const link = await action<{ url: string; id: string; code: string; codeUrl: string; expiresAt: string | null }>("shares_create", {
       documentId: doc.id,
       role: data.get("role"),
       versionId: data.get("version") || undefined,
+      expiresAt: days ? new Date(Date.now() + days * 86_400_000).toISOString() : undefined,
     });
     const target = box.body.querySelector<HTMLElement>("#new-link")!;
     target.replaceChildren();
@@ -157,6 +162,10 @@ export async function sharing(
       "Copy this link now. For privacy, its secret is not stored on the server.";
     target.append(note);
     outputLink(target, link.url);
+    const voice = document.createElement("p");
+    voice.className = "share-code";
+    voice.textContent = `Document code ${spokenCode(link.code)}: on a call, say “open document ${link.code}”, or open ${link.codeUrl}. Read-only${link.expiresAt ? `, until ${new Date(link.expiresAt).toLocaleDateString()}` : ""}.`;
+    target.append(voice);
     smallAction(
       "Revoke this link",
       () => action("shares_revoke", { documentId: doc.id, shareId: link.id }),
@@ -165,7 +174,7 @@ export async function sharing(
   }, linkGate);
   for (const link of links) {
     const row = document.createElement("p");
-    row.textContent = `${link.label} · ${link.role}${link.versionId ? " · pinned version" : ""} `;
+    row.textContent = `${link.label} · ${link.role}${link.versionId ? " · pinned version" : ""}${link.code ? ` · code ${spokenCode(link.code)}` : ""}${link.expiresAt ? ` · until ${new Date(link.expiresAt).toLocaleDateString()}` : ""} `;
     smallAction(
       "Revoke",
       () => action("shares_revoke", { documentId: doc.id, shareId: link.id }),
