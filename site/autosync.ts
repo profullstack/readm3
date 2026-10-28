@@ -58,7 +58,7 @@ export interface AutoSyncHost {
   seedUrl: string;
   app: string;
 }
-type State = { revision: number; base: Record<string, string>; settings: string; spills?: Record<string, BlobRef> };
+type State = { revision: number; base: Record<string, string>; baseName?: string; settings: string; spills?: Record<string, BlobRef> };
 type Latest = { revision: number; snapshot: { version: number; files: Record<string, { content: string }> } };
 
 let host: AutoSyncHost | undefined;
@@ -280,7 +280,7 @@ async function pass(user: CloudUser) {
     // A workspace never syncs empty: with only device files here and nothing on the account, there is nothing to send.
     if (!local.documents.length && !remoteSynced?.documents.length) throw new Paused(`Sync paused · none of these ${all.documents.length.toLocaleString()} files can sync yet; add a note to start`);
     const merge = mergeWorkspaces({
-      local, remote: remoteSynced, base: state?.base, starter: await starterDigests(),
+      local, remote: remoteSynced, base: state?.base, baseName: state?.baseName, starter: await starterDigests(),
       conflictLabel: `${h.device} ${new Date().toISOString().slice(0, 10)}`,
     });
     // Settings: this device's choice wins only if it changed since the last sync.
@@ -323,7 +323,7 @@ async function pass(user: CloudUser) {
         ...accountOnly.filter((doc) => !merged.has(doc.path) && !mine.has(doc.path))];
       await h.apply({ ...merge.workspace, documents: documents.sort((a, b) => a.path.localeCompare(b.path)) }, settings);
     }
-    await store(key, { revision, base: digests(merge.workspace), settings: serialize(settings), spills } satisfies State);
+    await store(key, { revision, base: digests(merge.workspace), baseName: merge.workspace.name, settings: serialize(settings), spills } satisfies State);
     known = revision;
     const count = (n: number) => `${n} file${n === 1 ? "" : "s"}`;
     const large = deviceOnly.filter((doc) => keptOnDevice(doc, limit)).length;

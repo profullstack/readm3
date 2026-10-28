@@ -59,8 +59,10 @@ export function mergeWorkspaces(options: {
   starter?: Record<string, string>;
   /** Names this device in conflict copies, e.g. "conflict desktop 2026-10-19". */
   conflictLabel?: string;
+  /** The workspace name this device last agreed with the account. */
+  baseName?: string;
 }): MergeResult {
-  const { local, remote, base, starter = {}, conflictLabel = "conflict" } = options;
+  const { local, remote, base, starter = {}, conflictLabel = "conflict", baseName } = options;
   const L = new Map(local.documents.map((doc) => [doc.path, doc]));
   const R = new Map((remote?.documents ?? []).map((doc) => [doc.path, doc]));
   const merged = new Map<string, WorkspaceDocument>();
@@ -101,7 +103,9 @@ export function mergeWorkspaces(options: {
   const documents = [...merged.values()].sort((a, b) => a.path.localeCompare(b.path));
   // A workspace never syncs empty; the schema needs one document and an active path.
   if (!documents.length) documents.push(...local.documents);
-  const name = remote && (!base ? true : local.name === remote.name) ? remote.name : local.name;
+  // Like settings: this device's name wins only when it was renamed here since the last sync,
+  // so two devices that call the workspace different things do not overwrite each other forever.
+  const name = !remote ? local.name : base && baseName !== undefined && local.name !== baseName ? local.name : remote.name;
   const active = merged.has(local.active) ? local.active : remote && merged.has(remote.active) ? remote.active : documents[0]!.path;
   const workspace: SyncedWorkspace = { name, active, documents };
   const same = (a: SyncedWorkspace | undefined) => !!a && a.name === workspace.name

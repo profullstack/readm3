@@ -62,3 +62,18 @@ test("a conflict name never collides with an existing file", () => {
   const result = mergeWorkspaces({ local: ws({ "a.md": "L", "a (x).md": "old" }), remote: ws({ "a.md": "R", "a (x).md": "old" }), base: { ...base, "a (x).md": digests(ws({ "a (x).md": "old" }))["a (x).md"]! }, conflictLabel: "x" });
   assert.ok(result.conflicts[0] === "a (x 2).md", result.conflicts.join());
 });
+
+test("two devices with different workspace names settle on one instead of trading it", () => {
+  const docs = { "a.md": "A" };
+  const base = digests(ws(docs));
+  // This device last synced under its own name and was not renamed: the account's name wins, nothing uploads.
+  const settled = mergeWorkspaces({ local: ws(docs, "Your workspace"), remote: ws(docs, "Desktop"), base, baseName: "Your workspace" });
+  assert.equal(settled.workspace.name, "Desktop");
+  assert.equal(settled.upload, false);
+  // No name stored yet (an older device): the account's name wins too.
+  assert.equal(mergeWorkspaces({ local: ws(docs, "Your workspace"), remote: ws(docs, "Desktop"), base }).workspace.name, "Desktop");
+  // Renamed here since: this device's name goes up.
+  const renamed = mergeWorkspaces({ local: ws(docs, "Notes"), remote: ws(docs, "Desktop"), base, baseName: "Desktop" });
+  assert.equal(renamed.workspace.name, "Notes");
+  assert.equal(renamed.upload, true);
+});
