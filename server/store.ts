@@ -58,8 +58,9 @@ export function text(value: unknown, name: string, max = 200): string {
   return value.trim();
 }
 export function source(value: unknown): string {
-  if (typeof value !== "string" || Buffer.byteLength(value) > 1024 * 1024)
-    throw new HttpError(400, "Markdown source must be text, up to 1 MB.");
+  // 8 MB: a shared PDF or image is its base64 (a 6 MB file), not only Markdown.
+  if (typeof value !== "string" || Buffer.byteLength(value) > 8 * 1024 * 1024)
+    throw new HttpError(400, "A document's source must be text, up to 8 MB (a PDF or image up to 6 MB).");
   return value;
 }
 

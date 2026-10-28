@@ -216,6 +216,35 @@ test("a file whose name sync cannot carry stays on this device and the rest stil
   await expect(page.locator('#file-list button[title="notes 10:44.md"]')).toBeVisible();
 });
 
+test("sharing an image the desktop app reads from disk shares the image, not an empty file", async ({ page, context }) => {
+  await register(context, username());
+  await page.addInitScript(() => {
+    // A 1x1 PNG.
+    const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="), (c) => c.charCodeAt(0));
+    const path = "/home/me/Desktop/dot.png";
+    Object.assign(window, {
+      readm3Desktop: {
+        takeLaunchFiles: async () => [], onOpenFiles: () => {},
+        pick: async () => [{ path, name: "dot.png", size: png.length }],
+        readFile: async () => ({ data: png, modified: 1 }),
+        stat: async () => ({ size: png.length, modified: 1 }),
+        readRange: async () => new Uint8Array(), writeFile: async () => {},
+      },
+    });
+  });
+  await page.goto("/viewer");
+  await setPassphrase(page);
+  await page.locator("#open-files").click();
+  await expect(page.locator("#media-content img")).toBeVisible();
+  await page.locator("#share").click();
+  const save = page.getByRole("dialog", { name: "Save to your workspace" });
+  await save.getByRole("button", { name: "Save online" }).click();
+  await expect(page).toHaveURL(/\/viewer\?doc=/);
+  const id = new URL(page.url()).searchParams.get("doc")!;
+  const doc = await (await page.request.get(`/api/v1/documents/${id}`)).json();
+  expect(doc.version.source).toBe("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==");
+});
+
 test("signed in, a folder past the old 5,000-file cap opens whole with its subfolders folded", async ({ page, context }) => {
   await register(context, username());
   await page.addInitScript(() => {

@@ -24,6 +24,8 @@ const json = (
 ) => Response.json(body, { status, headers: { ...headers, ...extra } });
 /** A file sent for a summary: up to 20 MB as base64, with room for the JSON around it. */
 const MAX_SUMMARY_BODY = 28 * 1024 * 1024;
+/** Creating or saving a document: its source (up to 8 MB, server/store.ts) as JSON. */
+const MAX_DOCUMENT_BODY = 9 * 1024 * 1024;
 /** Ask AI: 400 KB of file text plus paths, the question and the turns before it, JSON-escaped. */
 const MAX_ASK_BODY = 2 * 1024 * 1024;
 async function body(request: Request, max = MAX_BODY): Promise<Record<string, unknown>> {
@@ -370,7 +372,7 @@ export function createApi(
         });
       }
       if (path === "actions" && request.method === "POST") {
-        const data = await body(request);
+        const data = await body(request, MAX_DOCUMENT_BODY);
         const args = data.args ?? {};
         if (!args || typeof args !== "object" || Array.isArray(args))
           throw new HttpError(400, "args must be an object.");
@@ -406,7 +408,7 @@ export function createApi(
               store,
               user,
               "documents_create",
-              await body(request),
+              await body(request, MAX_DOCUMENT_BODY),
               origin,
             ),
             201,
@@ -457,7 +459,7 @@ export function createApi(
             userId: doc[3],
           };
         if (["POST", "PATCH"].includes(request.method))
-          args = { ...(await body(request)), ...args };
+          args = { ...(await body(request, MAX_DOCUMENT_BODY)), ...args };
         if (op) return json(operate(store, user, op, args, origin));
       }
       throw new HttpError(404, "API route not found.");

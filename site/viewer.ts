@@ -799,6 +799,22 @@ async function importFiles(files: disk.Picked[], name = "Your workspace") {
   finally { importBusy = false; filesInput.value = ""; folderInput.value = ""; }
 }
 
+/** A shared document holds up to 8 MB of source (server/store.ts): base64 for a PDF or an image. */
+const MAX_SHARED_SOURCE = 8 * 1024 * 1024;
+/**
+ * What a share or paste link carries: the text, or for a stored file (large, or a PDF or
+ * image the desktop app reads from disk, whose source here is empty) its bytes, fetched
+ * from this device or the account, as base64 for a binary. Never an empty file.
+ */
+async function sharedSource(doc: Document): Promise<string> {
+  if (!doc.blob) return doc.source;
+  const binary = binaryType(doc.path);
+  const limit = binary ? MAX_SHARED_SOURCE * 3 / 4 : MAX_SHARED_SOURCE;
+  if (doc.blob.size > limit) throw new Error(`This file is ${formatStorage(doc.blob.size)}; a share link carries up to ${formatStorage(limit)}. Download it and send it another way, or share a smaller copy.`);
+  const blob = await stored.bytes(doc.blob, binary?.mime ?? "");
+  return binary ? toBase64(new Uint8Array(await blob.arrayBuffer())) : await blob.text();
+}
+
 /** Ask AI about the open file, a folder it is in, or the workspace: text as it reads now. */
 function askAi() { void showAsk(() => workspace.documents, workspace.active, () => void showTopUp()); }
 
@@ -998,12 +1014,14 @@ function bindEvents() {
     apply: (incoming, settings) => applySynced(incoming as Workspace | undefined, settings),
   });
   element("cloud-save").onclick = () => void saveCloud();
-  element("paste-share").onclick = () => pasteDialog(current().path, current().source);
+  element("paste-share").onclick = () => void sharedSource(current()).then((source) => pasteDialog(current().path, source))
+    .catch((error) => notice(error instanceof Error ? error.message : "Could not read this file."));
   element("share").onclick = () => {
     if (pendingSave && cloudDocument) { notice("Save your changes before changing sharing settings."); return; }
-    const task = cloudDocument ? sharing(cloudDocument, adoptCloud) : publish(current().path, current().source, doc => {
-      history.pushState(null, "", `/viewer?doc=${doc.id}`); adoptCloud(doc);
-    });
+    const doc = current();
+    const task = cloudDocument ? sharing(cloudDocument, adoptCloud) : sharedSource(doc).then((source) => publish(doc.path, source, (created) => {
+      history.pushState(null, "", `/viewer?doc=${created.id}`); adoptCloud(created);
+    }));
     void task.catch(error => notice(error instanceof Error ? error.message : "Could not open sharing."));
   };
   element("paste-delete").onclick = async () => {
