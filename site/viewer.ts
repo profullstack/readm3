@@ -1358,6 +1358,8 @@ async function start() {
   const remote = params.get("url")?.trim();
   if (remote) await openUrlParam(remote);
   receiveLaunches();
+  // Files from disk changed while readm3 was closed are picked up now, not one round at a time.
+  void checkDisk(true);
   setInterval(() => void checkDisk(), 5000);
   window.addEventListener("focus", () => void checkDisk(true));
   const topup = params.get("topup");

@@ -197,6 +197,45 @@ test("in the desktop app, a folder comes as a list and large files and images ar
   expect(await keptBlobs()).toBe(0);
 });
 
+test("in the desktop app, a file saved in another editor while readm3 was closed reloads on the next launch", async ({ page }) => {
+  // The fake disk outlives a reload, as ~/Desktop/list.txt outlives quitting the app.
+  await page.addInitScript(() => {
+    const bytes = (text: string) => new TextEncoder().encode(text);
+    const file = () => JSON.parse(localStorage.getItem("test:disk") ?? '{"text":"milk\\n","modified":1}') as { text: string; modified: number };
+    const opened = new Set<string>(JSON.parse(localStorage.getItem("test:opened") ?? "[]"));
+    Object.assign(window, {
+      readm3Desktop: {
+        takeLaunchFiles: async () => [],
+        onOpenFiles: () => {},
+        pick: async () => {
+          opened.add("/home/me/Desktop/list.txt");
+          localStorage.setItem("test:opened", JSON.stringify([...opened]));
+          return [{ path: "/home/me/Desktop/list.txt", name: "list.txt", size: file().text.length }];
+        },
+        reopen: async (paths: string[]) => paths.filter((path) => opened.has(path)).map((path) => ({ path, name: "list.txt", size: file().text.length })),
+        readFile: async (path: string) => {
+          if (!opened.has(path)) throw new Error("readm3 can only read files it opened.");
+          return { data: bytes(file().text), modified: file().modified };
+        },
+        stat: async () => ({ size: file().text.length, modified: file().modified }),
+        readRange: async () => new Uint8Array(),
+        writeFile: async () => {},
+      },
+    });
+  });
+  await page.reload();
+  await page.locator("#open-files").click();
+  await expect(page.locator("#document-name")).toHaveText("list.txt");
+  await expect.poll(() => editorText(page)).toContain("milk");
+  await page.locator('#file-list button[title="Welcome.md"]').click();
+  // Quit, save the file in Sublime, launch again: the stored copy must not win.
+  await page.evaluate(() => localStorage.setItem("test:disk", JSON.stringify({ text: "milk\neggs\n", modified: 2 })));
+  await page.reload();
+  await page.locator('#file-list button[title="list.txt"]').click();
+  await expect.poll(() => editorText(page)).toContain("eggs");
+  await expect(page.locator("#save-status")).toHaveText("Saved to disk");
+});
+
 test("keeps a rolling history: opened, saved, changed on disk, with snippets and restore", async ({ page }) => {
   // A fake disk whose file can change under the editor, as a regenerated output.json does.
   await page.addInitScript(() => {

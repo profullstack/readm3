@@ -39,6 +39,27 @@ app.setName("readm3");
 
 /** Paths this process opened for the page; the only paths it may write. */
 const opened = new Set();
+/**
+ * The paths opened before, kept in userData so a restart can watch them again: without it
+ * the page's copy of a file saved in another editor while readm3 was closed (or after a
+ * restart) never reloads. Only paths the person opened here are ever written to it.
+ */
+const KEEP_OPENED = 200_000;
+let openedFile;
+let keeping;
+function remember(path) {
+  opened.delete(path);
+  opened.add(path);
+  keep();
+}
+function keep() {
+  if (!openedFile || keeping) return;
+  keeping = setTimeout(() => {
+    keeping = undefined;
+    const kept = [...opened].slice(-KEEP_OPENED);
+    void writeFile(openedFile, JSON.stringify(kept)).catch(() => { /* Watched this session only. */ });
+  }, 1000);
+}
 /** Files waiting for the page to ask for them (it asks once it has loaded). */
 let pending = [];
 let window;
@@ -54,7 +75,7 @@ async function load(paths, cwd = process.cwd()) {
   const add = async (path, info, relative) => {
     if (info.size > MAX_FILE_BYTES || files.length >= MAX_FILES) return;
     files.push({ path, name: basename(path), relative, size: info.size });
-    opened.add(path);
+    remember(path);
   };
   const walk = async (directory, prefix) => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -225,6 +246,10 @@ else {
   // macOS hands files over as events (Finder, `open -a readm3`), before and after launch.
   app.on("open-file", (event, path) => { event.preventDefault(); void openPaths([path]); });
   app.whenReady().then(async () => {
+    openedFile = join(app.getPath("userData"), "opened.json");
+    try { for (const path of JSON.parse(await readFile(openedFile, "utf8"))) if (typeof path === "string") opened.add(path); }
+    catch { /* First launch, or an unreadable list: files are watched once opened again. */ }
+    keep(); // A file macOS handed over before this point.
     protocol.handle("app", (request) => {
       const { pathname } = new URL(request.url);
       const path = pathname === "/viewer" || pathname === "/viewer/" ? "/viewer/index.html" : decodeURIComponent(pathname);
@@ -251,6 +276,18 @@ else {
       if (typeof path !== "string" || !opened.has(path)) throw new Error("readm3 can only read files it opened.");
       const info = await stat(path);
       return { size: info.size, modified: info.mtimeMs };
+    });
+    // After a restart: which of the files the page had from disk are still there, with their size.
+    ipcMain.handle("reopen-files", async (event, paths) => {
+      if (!trusted(event.senderFrame?.url ?? "")) throw new Error("Not allowed.");
+      if (!Array.isArray(paths)) throw new Error("Invalid paths.");
+      const files = [];
+      for (const path of paths) {
+        if (typeof path !== "string" || !opened.has(path)) continue;
+        try { const info = await stat(path); if (info.isFile()) files.push({ path, name: basename(path), size: info.size }); }
+        catch { /* Moved or deleted: the page keeps its copy. */ }
+      }
+      return files;
     });
     // A large file reaches the page a range at a time, never whole through one message.
     ipcMain.handle("read-range", async (event, path, start, end) => {
@@ -280,7 +317,7 @@ else {
       if (!trusted(event.senderFrame?.url ?? "")) throw new Error("Not allowed.");
       const { canceled, filePath } = await dialog.showSaveDialog(window, { defaultPath: typeof name === "string" ? basename(name) : undefined });
       if (canceled || !filePath) return null;
-      opened.add(filePath);
+      remember(filePath);
       return { path: filePath, name: basename(filePath) };
     });
     // A page picker that lands on a sensitive folder waits for this answer, forever if no one gives it.
