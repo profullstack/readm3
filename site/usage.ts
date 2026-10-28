@@ -64,7 +64,7 @@ export function showUsage() {
   const n = numbers();
   const box = modal("Usage and limits");
   const rows: [string, string][] = last.signedIn ? [
-    ["Plan", n.over || (account?.balanceMicros ?? 0) > 0 ? "Free account, pay as you go" : "Free account"],
+    ["Plan", account?.exempt ? "Admin, no charges" : n.over || (account?.balanceMicros ?? 0) > 0 ? "Free account, pay as you go" : "Free account"],
     ["Files", `${count(n.files)} of ${count(n.fileLimit)}`],
     ["Stored files", `${formatStorage(n.used)} of ${formatStorage(n.limit)} free`],
     ["Largest file", formatStorage(account?.maxFileBytes ?? MAX_BLOB_BYTES)],
