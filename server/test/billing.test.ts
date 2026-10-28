@@ -402,6 +402,18 @@ describe("top-ups", () => {
   });
 });
 
+describe("admins", () => {
+  test("an admin is never charged and never refused for an empty balance", async () => {
+    const f = await fixture();
+    f.store.run("UPDATE users SET admin=1 WHERE id=?", f.user.id);
+    const done = await f.call("summaries", "POST", { before: "a", after: "b" }, f.auth);
+    expect(done.status).toBe(200);
+    expect(done.data.chargedMicros).toBe(0);
+    expect(f.billing.balance(f.user.id)).toBe(0);
+    expect((await f.call("billing", "GET", undefined, f.auth)).data.exempt).toBe(true);
+  });
+});
+
 describe("experiment", () => {
   test("admins see per-arm accounts, payers, money in, summaries and model cost", async () => {
     const f = await fixture();

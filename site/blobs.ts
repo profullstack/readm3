@@ -15,6 +15,8 @@ export interface StorageAccount {
   maxFileBytes: number;
   microsPerGibMonth: number;
   balanceMicros: number;
+  /** An admin's account: never charged. */
+  exempt?: boolean;
   topups: boolean;
   blobs: { id: string; size: number; complete: boolean; createdAt: string }[];
 }

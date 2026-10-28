@@ -247,6 +247,11 @@ export class Billing {
     return arm;
   }
 
+  /** Admins run the service: nothing they do is charged, and nothing waits on a balance. */
+  exempt(userId: string): boolean {
+    return !!this.store.get<{ admin: number }>("SELECT admin FROM users WHERE id=?", userId)?.admin;
+  }
+
   balance(userId: string): number {
     return this.store.get<{ total: number | null }>("SELECT SUM(amountMicros) AS total FROM billing_ledger WHERE userId=?", userId)?.total ?? 0;
   }
@@ -273,6 +278,7 @@ export class Billing {
     const arm = this.arm(user);
     return {
       balanceMicros: this.balance(user.id),
+      exempt: this.exempt(user.id),
       arm,
       multiplier: ARMS[arm],
       model: this.model,
@@ -354,9 +360,10 @@ export class Billing {
     if (kept) {
       return { summary: kept.summary, summaryId: kept.id, cached: true, listen: !!this.speak, chargedMicros: 0, costMicros: 0, arm, model: kept.model, free: false, freeSummaries: this.free(user.id), balanceMicros: this.balance(user.id) };
     }
-    const free = freeAllowed && this.free(user.id).left > 0;
+    const exempt = this.exempt(user.id);
+    const free = !exempt && freeAllowed && this.free(user.id).left > 0;
     const estimate = this.estimate(arm, text, system, attachment);
-    if (!free && this.balance(user.id) < estimate) {
+    if (!exempt && !free && this.balance(user.id) < estimate) {
       const used = freeAllowed ? `This week's ${this.freePerWeek} free summaries are used. ` : "";
       throw new HttpError(402, `${used}Not enough balance for a summary (about $${(estimate / 1e6).toFixed(4)}). Top up to continue.`);
     }
@@ -370,7 +377,7 @@ export class Billing {
     if (result.refused || !result.text) throw new HttpError(422, `The model declined to summarize this ${kind}. You were not charged.`);
     const model = result.model ?? this.model;
     const cost = costMicros(model, result.usage);
-    const charged = free ? 0 : priceMicros(cost, arm);
+    const charged = free || exempt ? 0 : priceMicros(cost, arm);
     // A free summary has no arm, so the price experiment counts only what was paid for.
     this.store.run(
       "INSERT INTO billing_ledger (id,userId,kind,amountMicros,ref,arm,detail,createdAt) VALUES (?,?,?,?,?,?,?,?)",
@@ -402,8 +409,8 @@ export class Billing {
     if (spoken + text.length > this.speech.dailyChars) throw new HttpError(503, "Listening is paused for today; it starts again at midnight UTC. Your summary is still here to read.");
     const arm = this.arm(user);
     const cost = text.length * this.speech.microsPerChar;
-    const price = priceMicros(cost, arm);
-    if (this.balance(user.id) < price) throw new HttpError(402, `Listening to this summary costs about ${(price / 1e6).toFixed(4)} dollars. Top up to continue.`);
+    const price = this.exempt(user.id) ? 0 : priceMicros(cost, arm);
+    if (price && this.balance(user.id) < price) throw new HttpError(402, `Listening to this summary costs about ${(price / 1e6).toFixed(4)} dollars. Top up to continue.`);
     if (this.running.has(user.id)) throw new HttpError(429, "Something is already being prepared for this account.");
     this.running.add(user.id);
     let audio: Uint8Array;

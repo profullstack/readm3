@@ -76,6 +76,7 @@ export class Blobs {
       maxFileBytes: MAX_BLOB_BYTES,
       microsPerGibMonth: this.microsPerGibMonth,
       balanceMicros: this.billing.balance(userId),
+      exempt: this.billing.exempt(userId),
       topups: this.topups(),
       blobs: this.store.all<BlobRow>("SELECT id,size,chunks,stored,complete,createdAt FROM blobs WHERE userId=? ORDER BY createdAt", userId)
         .map((row) => ({ ...row, complete: !!row.complete })),
@@ -100,7 +101,7 @@ export class Blobs {
     const had = this.store.get<{ bytes: number }>("SELECT bytes FROM blob_chunks WHERE userId=? AND blobId=? AND n=?", userId, blobId, n);
     const used = this.used(userId);
     const after = used + body.byteLength - (had?.bytes ?? 0);
-    if (after > this.freeBytes && after > used && this.billing.balance(userId) <= 0) {
+    if (after > this.freeBytes && after > used && !this.billing.exempt(userId) && this.billing.balance(userId) <= 0) {
       throw new HttpError(402, `Your free ${formatStorage(this.freeBytes)} of storage is used. ${this.topups()
         ? `Add funds to store more: pay as you go, $${(this.microsPerGibMonth / 1e6).toFixed(2)} per GB a month over ${formatStorage(this.freeBytes)}.`
         : "Paid storage is not open yet; delete files you no longer need."}`, { usedBytes: used, freeBytes: this.freeBytes });
@@ -153,7 +154,7 @@ export class Blobs {
     let charged = 0;
     for (const { userId, total } of this.store.all<{ userId: string; total: number }>("SELECT userId, SUM(stored) AS total FROM blobs GROUP BY userId HAVING total > ?", this.freeBytes)) {
       const micros = Math.ceil((total - this.freeBytes) / GiB * this.microsPerGibMonth / HOURS_PER_MONTH);
-      if (micros > 0 && this.billing.debit(userId, micros, `storage:${userId}:${hour}`, JSON.stringify({ storedBytes: total, freeBytes: this.freeBytes, hour }))) charged++;
+      if (micros > 0 && !this.billing.exempt(userId) && this.billing.debit(userId, micros, `storage:${userId}:${hour}`, JSON.stringify({ storedBytes: total, freeBytes: this.freeBytes, hour }))) charged++;
     }
     return { charged };
   }
