@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { deriveKey, envelopeProblem, newKdf, open, seal, WrongPassphrase, type Kdf } from "../src/sync-crypto.ts";
+import { deriveKey, envelopeProblem, newKdf, open, pathTag, seal, WrongPassphrase, type Kdf } from "../src/sync-crypto.ts";
 
 // Fewer iterations keep the suite fast; the format and checks are the same.
 const quick = (): Kdf => ({ ...newKdf(), iterations: 100_000 });
@@ -40,4 +40,14 @@ test("the server's shape check rejects anything but an envelope", async () => {
   assert.match(envelopeProblem({ v: 1, alg: "none" }) ?? "", /unsupported/);
   assert.match(envelopeProblem({ ...(await seal({}, await deriveKey("x".repeat(10), quick()))), extra: 1 }) ?? "", /unknown fields/);
   assert.match(envelopeProblem("x") ?? "", /object/);
+});
+
+test("a path tag is stable per key and path, and says nothing about the path", async () => {
+  const kdf = quick();
+  const key = await deriveKey("correct horse battery", kdf);
+  const tag = await pathTag("notes/plan.md", key);
+  assert.match(tag, /^[0-9a-f]{64}$/);
+  assert.equal(await pathTag("notes/plan.md", await deriveKey("correct horse battery", kdf)), tag, "another device gets the same tag");
+  assert.notEqual(await pathTag("notes/plan2.md", key), tag);
+  assert.notEqual(await pathTag("notes/plan.md", await deriveKey("another passphrase", kdf)), tag, "another key, another tag");
 });

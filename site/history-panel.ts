@@ -1,9 +1,11 @@
 import { ApiError, request } from "./cloud.ts";
 import { diffLines, snippet } from "../src/diff.ts";
 import * as history from "./history.ts";
+import * as cloudHistory from "./cloud-history.ts";
 
 /**
- * The History dialog for a file on this device: its versions newest first, each with
+ * The History dialog for a file: its versions newest first, from this device and from
+ * the account (every device that synced it, site/cloud-history.ts), each with
  * when and why it was recorded, how much changed against the one before, the changed
  * lines themselves, and an AI abstract on request (prepaid, through CoinPay).
  */
@@ -20,7 +22,17 @@ export const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: st
 
 let dialog: HTMLDialogElement | undefined;
 
-export async function showHistory(path: string, restore: (source: string) => void, topUp: () => void): Promise<void> {
+type Entry = Omit<history.Snapshot, "reason"> & { reason: string; cloud?: boolean };
+
+/** Both histories in one list, newest first, without a version repeated next to itself. */
+export function combine(local: history.Snapshot[], cloud: cloudHistory.CloudVersion[]): Entry[] {
+  const all: Entry[] = [...local, ...cloud.map((version) => ({ id: version.id, at: version.at, reason: `synced from ${version.device}`, source: version.source, cloud: true }))];
+  all.sort((a, b) => Date.parse(b.at) - Date.parse(a.at) || Number(!!a.cloud) - Number(!!b.cloud));
+  return all.filter((entry, index) => index === 0 || entry.source !== all[index - 1]!.source);
+}
+
+/** `writable`: false where the file cannot be changed (read-only), so no version can be restored. */
+export async function showHistory(path: string, restore: (source: string) => void, topUp: () => void, writable = true): Promise<void> {
   dialog ??= build();
   const title = dialog.querySelector("h2")!;
   const account = dialog.querySelector<HTMLElement>(".history-account")!;
@@ -45,10 +57,11 @@ export async function showHistory(path: string, restore: (source: string) => voi
       top.onclick = topUp;
       account.append(`AI summaries · balance ${dollars(billing.balanceMicros)} · `, top);
     }
-    const snapshots = await history.list(path);
+    const [local, cloud] = await Promise.all([history.list(path), cloudHistory.list(path)]);
+    const snapshots = combine(local, cloud);
     list.replaceChildren();
     if (!snapshots.length) {
-      list.append(el("p", "history-empty", "No versions yet. A version is kept each time this file is opened from disk, saved, or changes on disk."));
+      list.append(el("p", "history-empty", "No versions yet. A version is kept each time this file is opened from disk, saved, changes on disk, or syncs to your account."));
       return;
     }
     snapshots.forEach((snapshot, index) => {
@@ -69,7 +82,7 @@ export async function showHistory(path: string, restore: (source: string) => voi
         }
       }
       const actions = el("div", "history-actions");
-      if (older && !snapshot.summary && billing?.enabled) {
+      if (older && !snapshot.cloud && !snapshot.summary && billing?.enabled) {
         const summarize = el("button", "ghost", "Summarize with AI");
         summarize.type = "button";
         summarize.onclick = async () => {
@@ -90,7 +103,7 @@ export async function showHistory(path: string, restore: (source: string) => voi
         };
         actions.append(summarize);
       }
-      if (index > 0) {
+      if (index > 0 && writable) {
         const back = el("button", "ghost", "Restore");
         back.type = "button";
         back.onclick = () => { restore(snapshot.source); dialog!.close(); };

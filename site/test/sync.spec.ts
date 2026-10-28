@@ -103,6 +103,15 @@ test("two devices sync files and settings automatically through the encrypted co
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await page.locator('.file-row[data-path="Synced.md"]').click();
     await expect(page.locator("#document-content")).toContainText("Edited on second device", { timeout: 20_000 });
+    // The other device's edit is in this device's History, from the account, and the text before it can be restored.
+    await page.locator("#history").click();
+    const history = page.locator("#file-history-dialog");
+    await expect(history.locator(".history-reason", { hasText: "synced from browser" }).first()).toBeVisible({ timeout: 20_000 });
+    await expect(history.locator(".history-item").first()).toContainText("Edited on second device");
+    const raw = await (await page.request.get("/api/v1/file-history?tag=" + "0".repeat(64))).json();
+    expect(raw.versions).toEqual([]);
+    await history.locator(".history-item").last().getByRole("button", { name: "Restore" }).click();
+    await expect(page.locator("#document-content")).toContainText("Across devices");
     await openSync(page);
     await page.getByRole("button", { name: "Local backups", exact: true }).click();
     await expect(page.getByRole("dialog", { name: "Local sync backups" })).toBeVisible();

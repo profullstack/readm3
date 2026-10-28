@@ -196,6 +196,12 @@ test("named editors can save but only owners manage sharing, history, deletion, 
         })
       ).status,
     ).toBe(403);
+    // A viewer sees the history but cannot restore from it.
+    const seen = await collaborator.action("versions_list", { documentId: doc.id });
+    expect(seen.status).toBe(200);
+    expect(
+      (await collaborator.action("versions_restore", { documentId: doc.id, versionId: seen.data[0].id, baseVersion: doc.currentVersion })).status,
+    ).toBe(403);
     await owner.action("permissions_set", {
       documentId: doc.id,
       username: collaborator.user.username,
@@ -207,9 +213,18 @@ test("named editors can save but only owners manage sharing, history, deletion, 
       source: "Editor can edit",
     });
     expect(changed.status).toBe(200);
+    // Write access includes the history: an editor lists versions and restores one.
+    const versions = await collaborator.action("versions_list", { documentId: doc.id });
+    expect(versions.status).toBe(200);
+    expect(versions.data.length).toBe(2);
+    const restored = await collaborator.action("versions_restore", {
+      documentId: doc.id,
+      versionId: versions.data.at(-1).id,
+      baseVersion: changed.data.currentVersion,
+    });
+    expect(restored.status).toBe(200);
     for (const operation of [
       "documents_delete",
-      "versions_list",
       "shares_list",
       "shares_create",
       "permissions_list",

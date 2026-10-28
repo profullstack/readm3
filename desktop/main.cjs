@@ -245,6 +245,13 @@ else {
       const info = await stat(path);
       return { data: new Uint8Array(await readFile(path)), modified: info.mtimeMs };
     });
+    // A large file's size and time, so the page notices it change without reading it.
+    ipcMain.handle("stat-file", async (event, path) => {
+      if (!trusted(event.senderFrame?.url ?? "")) throw new Error("Not allowed.");
+      if (typeof path !== "string" || !opened.has(path)) throw new Error("readm3 can only read files it opened.");
+      const info = await stat(path);
+      return { size: info.size, modified: info.mtimeMs };
+    });
     // A large file reaches the page a range at a time, never whole through one message.
     ipcMain.handle("read-range", async (event, path, start, end) => {
       if (!trusted(event.senderFrame?.url ?? "")) throw new Error("Not allowed.");

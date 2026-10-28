@@ -235,7 +235,7 @@ export async function history(
   >("versions_list", { documentId: doc.id });
   const box = modal("Version history");
   box.body.innerHTML =
-    '<p class="permission-note">Each save creates an immutable version. Restoring keeps the history and creates a new current version.</p><p class="error" role="alert"></p>';
+    `<p class="permission-note">Each save creates an immutable version. ${doc.canEdit ? "Restoring keeps the history and creates a new current version." : "You can view this document, so its versions are read-only for you."}</p><p class="error" role="alert"></p>`;
   for (const version of versions) {
     const row = document.createElement("div");
     row.className = "history-item";
@@ -258,7 +258,8 @@ export async function history(
       }
     };
     actions.append(preview);
-    if (version.id !== doc.currentVersion) {
+    // Only someone who can edit the document can restore a version of it.
+    if (doc.canEdit && version.id !== doc.currentVersion) {
       const restore = document.createElement("button");
       restore.textContent = "Restore";
       restore.onclick = async () => {

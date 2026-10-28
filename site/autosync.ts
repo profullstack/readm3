@@ -20,6 +20,7 @@ import { digestDocument, digests, mergeWorkspaces } from "../src/sync-merge.ts";
 import { isSealed, syncablePath, validateSyncFiles, type ReaderSettings, type SyncedWorkspace } from "../src/sync-schema.ts";
 import { store, stored } from "./sync.ts";
 import * as blobs from "./blobs.ts";
+import * as cloudHistory from "./cloud-history.ts";
 import { formatStorage, MAX_SYNC_FILES, newBlobRef, SNAPSHOT_INLINE_BYTES, type BlobRef } from "../src/blob-store.ts";
 
 const OFF = "readm3:autosync";
@@ -308,6 +309,14 @@ async function pass(user: CloudUser) {
         if (saved.userId !== user.id) throw new Error("your account changed");
         revision = saved.revision;
         void collect(uploaded, outgoing.account);
+        // Each file this device changed gets a version in its account history (site/cloud-history.ts).
+        if (state) {
+          const before = new Map(remoteSynced?.documents.map((doc) => [doc.path, doc]));
+          const changes = merge.workspace.documents
+            .filter((doc) => localDigests[doc.path] === digestDocument(doc) && state.base[doc.path] !== localDigests[doc.path])
+            .map((doc) => ({ doc, before: before.get(doc.path) }));
+          if (changes.length) void cloudHistory.record(changes, syncKey, h.device).catch(() => { /* History is best effort; the file itself synced. */ });
+        }
       } catch (error) {
         if (error instanceof ApiError && error.status === 409) continue; // Another device saved first.
         throw error;
