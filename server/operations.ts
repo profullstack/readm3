@@ -11,6 +11,7 @@ import {
   type User,
 } from "./store.ts";
 import { scanSensitive } from "../src/sensitive.ts";
+import { binaryType } from "../src/code.ts";
 
 type Args = Record<string, unknown>;
 const role = (value: unknown, allowed: string[]) => {
@@ -481,7 +482,8 @@ export function operate(
         versionId,
         expiresAt: normalized,
         url: `${origin}/s/${token}`,
-        sensitive: scanSensitive(shared?.source ?? ""),
+        // A PDF or image is base64: nothing in it reads as a secret, and scanning it only misfires.
+        sensitive: scanSensitive(binaryType(doc.title) ? "" : shared?.source ?? ""),
       };
     }
     case "shares_revoke":

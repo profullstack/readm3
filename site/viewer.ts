@@ -1,7 +1,7 @@
 import { action, request, type CloudDocument, type CloudUser } from "./cloud.ts";
 import * as stored from "./blobs.ts";
 import { refreshUsage, showUsage } from "./usage.ts";
-import { formatStorage, INLINE_MAX_BYTES, MAX_ACCOUNT_FILES, MAX_BLOB_BYTES, newBlobRef } from "../src/blob-store.ts";
+import { formatStorage, INLINE_MAX_BYTES, MAX_ACCOUNT_FILES, MAX_BLOB_BYTES, MAX_SHARED_BINARY_SOURCE, newBlobRef } from "../src/blob-store.ts";
 import { pasteDialog, publish, sharing, history as versionHistory } from "./sharing.ts";
 import { showSync } from "./sync.ts";
 import { askPassphrase, autoSyncEnabled, DEFAULT_SYNC_LIMIT_MB, forgetPassphrase, schedule as scheduleSync, setAutoSync, setSyncLimitMb, startAutoSync, syncLimitMb, syncNow } from "./autosync.ts";
@@ -987,6 +987,24 @@ function loadPreferences() {
   document.documentElement.dataset.theme = theme.value;
 }
 
+/**
+ * What Share and Paste link upload: the text, or a PDF or image as its base64. A stored
+ * file (an image the desktop app reads from disk, or a large file) keeps no source in the
+ * workspace, so its bytes are read here; sending its empty source shared a blank file.
+ */
+async function shareSource(): Promise<string> {
+  const doc = current();
+  if (!doc.blob) return doc.source;
+  const blob = await stored.bytes(doc.blob);
+  if (!blob.size) throw new Error(`${doc.path} is empty, so there is nothing to share.`);
+  if (binaryType(doc.path)) {
+    if (Math.ceil(blob.size / 3) * 4 > MAX_SHARED_BINARY_SOURCE) throw new Error(`${doc.path} is ${formatStorage(blob.size)}; a shared PDF or image can be up to 6 MB.`);
+    return toBase64(new Uint8Array(await blob.arrayBuffer()));
+  }
+  if (blob.size > 1024 * 1024) throw new Error(`${doc.path} is ${formatStorage(blob.size)}; a shared file can be up to 1 MB of text.`);
+  return blob.text();
+}
+
 function bindEvents() {
   element("sync-workspace").onclick = () => void showSync({
     auto: {
@@ -998,12 +1016,14 @@ function bindEvents() {
     apply: (incoming, settings) => applySynced(incoming as Workspace | undefined, settings),
   });
   element("cloud-save").onclick = () => void saveCloud();
-  element("paste-share").onclick = () => pasteDialog(current().path, current().source);
+  element("paste-share").onclick = () => void shareSource().then(source => pasteDialog(current().path, source))
+    .catch(error => notice(error instanceof Error ? error.message : "Could not read this file."));
   element("share").onclick = () => {
     if (pendingSave && cloudDocument) { notice("Save your changes before changing sharing settings."); return; }
-    const task = cloudDocument ? sharing(cloudDocument, adoptCloud) : publish(current().path, current().source, doc => {
+    const path = current().path;
+    const task = cloudDocument ? sharing(cloudDocument, adoptCloud) : shareSource().then(source => publish(path, source, doc => {
       history.pushState(null, "", `/viewer?doc=${doc.id}`); adoptCloud(doc);
-    });
+    }));
     void task.catch(error => notice(error instanceof Error ? error.message : "Could not open sharing."));
   };
   element("paste-delete").onclick = async () => {

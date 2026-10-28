@@ -3,6 +3,8 @@ import { oauthStore } from "./account.ts";
 import { pasteLocation } from "./cloud-client.ts";
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
+import { binaryType } from "./code.ts";
+import { MAX_SHARED_BINARY_SOURCE } from "./blob-store.ts";
 import { describeSensitive, scanSensitive, type SensitiveReport } from "./sensitive.ts";
 import {
   cloudAction,
@@ -106,6 +108,14 @@ export async function cloudMain(argv: string[]) {
   };
   const fileSource = (file: string | undefined) => {
     if (!file) throw new Error("A Markdown file is required.");
+    // A PDF or image is shared as its base64; read as text it would arrive garbled.
+    if (binaryType(file)) {
+      const bytes = readFileSync(file);
+      if (!bytes.length) throw new Error(`${file} is empty.`);
+      const value = bytes.toString("base64");
+      if (value.length > MAX_SHARED_BINARY_SOURCE) throw new Error("A shared PDF or image can be up to 6 MB.");
+      return value;
+    }
     const value = readFileSync(file === "-" ? 0 : file, "utf8");
     if (Buffer.byteLength(value) > 1024 * 1024)
       throw new Error("Shared documents are limited to 1 MB.");
@@ -220,7 +230,7 @@ export async function cloudMain(argv: string[]) {
   if (command === "share") {
     const file = positional[0];
     const source = fileSource(file);
-    checkSensitive(source);
+    if (!binaryType(file)) checkSensitive(source);
     const doc = await cloudAction<{ id: string }>("documents_create", {
       ...args,
       title: flags.title || basename(file || "Document.md"),
