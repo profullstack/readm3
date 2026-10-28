@@ -89,6 +89,9 @@ test("readm3.com/talk: a signed-in reader asks AI about a file, then follows up"
   await dialog.getByRole("button", { name: "Ask", exact: true }).click();
   await expect(dialog.locator(".summary-text")).toHaveCount(2);
   await expect(dialog.locator(".summary-text").nth(1)).toContainText("Test summary of");
+  // Every answer can be read aloud, like a summary.
+  await dialog.getByRole("button", { name: "Listen to this answer" }).first().click();
+  await expect(dialog.locator(".summary-listen audio").first()).toHaveAttribute("src", /^blob:/);
 });
 
 test("Summarize: a signed-in reader gets a free AI summary of the open document, and pressing again costs nothing", async ({ page }) => {
