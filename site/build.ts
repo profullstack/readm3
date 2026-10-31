@@ -31,16 +31,20 @@ const HQTUI = "https://hqtui.com";
 const CP_PROJECT = "528372c9-c79a-425f-9f80-f9fe44c5865e";
 const CP_SLOT = "b918cc2d-4bd9-45e4-9b9e-52955b4e2e54";
 
-/*
- * The site's own footer: one line, then the shared Profullstack footer
- * (@profullstack/footer: copyright and the webring), baked in here and
- * re-rendered from the package's @latest template on each request by
- * site/server.ts (from dist/pfs-footer.json). The pit.world global footer is
- * appended after both at request time.
- */
-const FOOTER_OPTIONS = { site: "https://readm3.com/", links: [] };
+/* The universal footer carries the site's navigation, MIT notice and webring. */
+const FOOTER_OPTIONS = {
+  site: "https://readm3.com/",
+  owner: { name: "readm3", url: SITE },
+  tagline: "MIT licensed Markdown reader",
+  links: [
+    { label: "Docs", href: "/docs" },
+    { label: "Sharing & API", href: "/sharing" },
+    { label: "Source", href: REPO },
+    { label: "npm", href: NPM },
+  ],
+};
 const PFS_FOOTER = await footerHtml(FOOTER_OPTIONS);
-const FOOTER = `<footer class="site-foot"><span>readm3 &middot; MIT</span><nav aria-label="Footer"><a href="/docs">Docs</a><a href="/sharing">Sharing &amp; API</a><a href="${REPO}">Source</a><a href="${NPM}">npm</a></nav></footer>\n${PFS_FOOTER}`;
+const FOOTER = PFS_FOOTER;
 
 /* -------------------------------------------------------------- colors --- */
 
