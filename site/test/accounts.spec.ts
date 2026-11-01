@@ -18,7 +18,7 @@ test("verified signup, profile, persistence, sign-out, and return sign-in", asyn
   await expect(page.getByText("Email verified", { exact: true })).toBeVisible();
   await page.getByLabel("Display name").fill("Alex Reader");
   await page.getByRole("button", { name: "Save name" }).click();
-  await expect(page.getByRole("status")).toContainText("Your name has been saved.");
+  await expect(page.locator("#status")).toContainText("Your name has been saved.");
   await page.reload();
   await expect(page.getByLabel("Display name")).toHaveValue("Alex Reader");
   expect(await page.evaluate(() => document.cookie)).not.toContain("readm3_session");
