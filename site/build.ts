@@ -568,7 +568,7 @@ write("account/index.html", readFileSync(join(here, "assets/account.html"), "utf
   .replace("__ACCOUNT_SCRIPT__", accountScript).replace("__ACCOUNT_STYLES__", accountCss)
   .replace("__PROFILE_SCRIPT__", profileScript)
   .replace("__SIGNUP_FIELDS__", renderProfileFields({ fields: profileFields, idPrefix: "signup-" }))
-  .replace("__DETAILS_FIELDS__", renderProfileFields({ fields: profileFields, idPrefix: "details-" })));
+  .replace("__DETAILS_FIELDS__", renderProfileFields({ fields: profileFields, idPrefix: "details-", importOpenProfile: true })));
 const sharedCss = asset("styles.css", css);
 const adminCss = asset("admin.css", readFileSync(join(here, "assets/admin.css"), "utf8"));
 const adminBundle = await Bun.build({ entrypoints: [join(here, "admin.ts")], target: "browser", minify: true });

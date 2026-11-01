@@ -27,6 +27,8 @@ import {
   type User,
 } from "./store.ts";
 import { createHash } from "node:crypto";
+import { saveOpenProfileContact } from "@profullstack/profile";
+import { profiles } from "./profile.ts";
 
 export const COINPAY_SCOPES = "openid profile email";
 const PROVIDER = "coinpay";
@@ -52,7 +54,7 @@ export type Identity = {
   createdAt: string;
   lastUsedAt: string;
 };
-type UserInfo = { sub: string; name: string | null; email: string | null };
+type UserInfo = { sub: string; name: string | null; email: string | null; openprofileUrl: string | null };
 
 export function coinpayOptions(env = process.env): CoinPayOptions {
   return {
@@ -165,7 +167,20 @@ export class CoinPay {
         "CoinPay did not accept this access token. It may have expired; get a new one.",
       );
     // email_verified is always false on CoinPay. The address is kept for display only.
-    return { sub, name: str(result.body.name), email: str(result.body.email) };
+    return {
+      sub,
+      name: str(result.body.name),
+      email: str(result.body.email),
+      openprofileUrl: str(result.body.openprofile_url),
+    };
+  }
+  private async importProfile(userId: string, url: string | null) {
+    if (!url) return;
+    try {
+      await saveOpenProfileContact(await profiles(this.store.db).ready, userId, url);
+    } catch (error) {
+      console.warn("[coinpay] OpenProfile import skipped:", error instanceof Error ? error.message : error);
+    }
   }
   identities(userId: string): Identity[] {
     return this.store.all<Identity>(
@@ -433,9 +448,11 @@ export class CoinPay {
         const current = this.accounts.authenticate(this.accounts.token(request));
         if (current) {
           this.link(current, info);
+          await this.importProfile(current.id, info.openprofileUrl);
           return go(pending.next ?? "/account?coinpay=linked");
         }
         const signedIn = this.provision(info, "signin");
+        await this.importProfile(signedIn.id, info.openprofileUrl);
         const session = this.accounts.startSession(
           signedIn.id,
           this.accounts.token(request),
