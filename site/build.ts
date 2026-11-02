@@ -182,6 +182,8 @@ function shell(options: { title: string; description: string; path: string; main
 <meta name="description" content="${escape(options.description)}">
 <link rel="canonical" href="${canonical}">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#05070a">
 <link rel="stylesheet" href="/styles.css">
 <meta property="og:type" content="website">
 <meta property="og:title" content="${escape(options.title)}">
@@ -724,6 +726,14 @@ write("viewer.webmanifest", JSON.stringify({
     accept: { "text/plain": [...new Set(LANGUAGES.flatMap((language) => language.extensions.map((extension) => `.${extension}`)))] },
     launch_type: "single-client",
   }],
+}));
+// The site-wide manifest: every page but the editor links it, so readm3.com installs from its homepage.
+write("manifest.webmanifest", JSON.stringify({
+  id: "/", name: "readm3", short_name: "readm3",
+  description: "Markdown editing and sharing for people and teams.",
+  start_url: "/", scope: "/", display: "standalone",
+  background_color: "#05070a", theme_color: "#05070a", lang: "en",
+  icons: [192, 512].flatMap((size) => ["any", "maskable"].map((purpose) => ({ src: `/viewer-assets/icon-${size}.png`, sizes: `${size}x${size}`, type: "image/png", purpose }))),
 }));
 const precache = ["/viewer", script, ...chunks, viewerCss, sharedCss, adminCss, seed, "/viewer.webmanifest", "/favicon.svg", "/viewer-assets/icon-192.png", "/viewer-assets/icon-512.png"];
 const cacheVersion = createHash("sha256").update(viewerHtml + precache.join("|")).digest("hex").slice(0, 16);
