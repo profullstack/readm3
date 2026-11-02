@@ -21,6 +21,8 @@ import { createSyncApi } from "../server/sync-api.ts";
 import { Blobs, createBlobApi } from "../server/blobs.ts";
 import { FileHistory, createFileHistoryApi } from "../server/file-history.ts";
 import { createCrawlGate, type CrawlGate } from "../server/crawl-gate.ts";
+import { createReadGate, type ReadGate } from "../server/read-gate.ts";
+import { handleMcp } from "../server/read-mcp.ts";
 
 const dist = join(dirname(fileURLToPath(import.meta.url)), "dist");
 const port = Number(process.env.PORT ?? 3000);
@@ -113,7 +115,7 @@ function cacheFor(path: string): string {
   return "public, max-age=300";
 }
 
-export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorParameters<typeof CoinPay>[2]; port?: number; hostname?: string; summarize?: Summarize | null; speak?: Speak | null; payments?: PaymentOptions; blobDir?: string; crawlGate?: CrawlGate | null } = {}) {
+export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorParameters<typeof CoinPay>[2]; port?: number; hostname?: string; summarize?: Summarize | null; speak?: Speak | null; payments?: PaymentOptions; blobDir?: string; crawlGate?: CrawlGate | null; readGate?: ReadGate | null } = {}) {
   const listenPort = options.port ?? port;
   const database = process.env.READM3_DB || join(dirname(dist), "..", "data", "readm3.sqlite");
   const accounts = options.accounts ?? new Accounts(
@@ -162,6 +164,10 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
   // `readm3 login`: OAuth 2.1 for the CLI (server/oauth.ts).
   const oauth = createOAuth(accounts);
   const crawlGate = options.crawlGate !== undefined ? options.crawlGate : createCrawlGate();
+  // The document reader's meter: a free allowance, then an x402 pass (server/read-gate.ts).
+  const readGate = options.readGate !== undefined ? options.readGate : createReadGate(process.env, (token) => {
+    try { return store.authenticate(token) ? true : false; } catch { return false; }
+  });
   return Bun.serve({
     port: listenPort,
     hostname: options.hostname ?? "0.0.0.0",
@@ -192,6 +198,22 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
       if (crawlGate) {
         const sold = await crawlGate.handle(request);
         if (sold) return sold;
+      }
+
+      // The reader (REST and MCP). On /mcp only a tool call is metered: initialize and
+      // tools/list cost nothing, so a client's handshake never eats the allowance.
+      if (readGate && (url.pathname === "/api/v1/read" || url.pathname === "/mcp" || url.pathname.startsWith("/read/pass"))) {
+        let metered = true;
+        if (url.pathname === "/mcp") {
+          const peek = request.method === "POST" ? await request.clone().text().catch(() => "") : "";
+          metered = /"tools\/call"/.test(peek);
+        }
+        if (metered) {
+          const sold = await readGate.handle(request);
+          if (sold) return sold;
+        }
+        const mcp = await handleMcp(request);
+        if (mcp) return mcp;
       }
 
       // Railway overwrites X-Real-IP at the edge; never trust client-supplied X-Forwarded-For.

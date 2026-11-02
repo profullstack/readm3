@@ -41,6 +41,7 @@ export const CLOUD_USAGE = `Shared Markdown
   readm3 orgs list | create --name NAME | update ID --name NAME | delete ID
   readm3 teams list --org ID | create --org ID --name NAME
   readm3 members list --org ID
+  readm3 read URL [--json] [--max-chars N]  Print the text of a PDF, web page or document
   readm3 cloud OPERATION --args '{"key":"value"}'
   readm3 mcp                              Start the stdio MCP server
 
@@ -59,6 +60,7 @@ const commands = new Set([
   "docs",
   "shared",
   "paste",
+  "read",
   "orgs",
   "teams",
   "members",
@@ -177,6 +179,14 @@ export async function cloudMain(argv: string[]) {
     );
     if (flags.json) output(paste);
     else process.stdout.write(paste.url + "\n");
+    return;
+  }
+  if (command === "read") {
+    if (!positional[0]) throw new Error("A URL is required: readm3 read https://arxiv.org/pdf/2106.01820");
+    const maxChars = flags["max-chars"] ? Number(flags["max-chars"]) : undefined;
+    const read = await cloudRequest<{ title: string; finalUrl: string; text: string; truncated: boolean }>("read", "POST", { url: positional[0], maxChars }, cloudConfig());
+    if (flags.json) output(read);
+    else process.stdout.write(`# ${read.title}\n\n${read.text}\n${read.truncated ? "\n[truncated; pass --max-chars for more]\n" : ""}`);
     return;
   }
   if (command === "logout") {

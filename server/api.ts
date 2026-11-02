@@ -7,6 +7,7 @@ import { createPaste, deletePaste, readPaste } from "./pastes.ts";
 import { binaryType } from "../src/code.ts";
 import type { Billing } from "./billing.ts";
 import { PACKS_USD, type Payments } from "./payments.ts";
+import { readUrl } from "./read.ts";
 
 /** Paid AI summaries and the CoinPay top-ups that fund them. */
 export type Money = { billing: Billing; payments: Payments };
@@ -163,6 +164,19 @@ export function createApi(
       if (user) store.ensureWorkspace(user);
       const path = url.pathname.slice(8);
       if (path === "me" && request.method === "GET") return json({ user });
+      // The document reader: GET ?url= or POST {url, maxChars}. No account needed;
+      // server/read-gate.ts meters callers before they get here.
+      if (path === "read") {
+        if (request.method !== "GET" && request.method !== "POST") throw new HttpError(405, "Method not allowed.");
+        limit(`read:${user?.id ?? ip}`, user ? 60 : 20);
+        const args: Record<string, unknown> = request.method === "GET"
+          ? Object.fromEntries(url.searchParams)
+          : await body(request, 16 * 1024);
+        if (typeof args.url !== "string" || !args.url) throw new HttpError(400, "url is required.");
+        const maxChars = args.maxChars === undefined ? undefined : Number(args.maxChars);
+        if (maxChars !== undefined && !Number.isFinite(maxChars)) throw new HttpError(400, "maxChars must be a number.");
+        return json(await readUrl(args.url, { maxChars }));
+      }
       // The shared @profullstack/profile fields; private to the signed-in account.
       if (path === "me/profile") {
         const method = request.method as "GET" | "PUT" | "PATCH";

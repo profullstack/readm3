@@ -432,6 +432,14 @@ inline code, links, fenced and indented code blocks, nested and task lists, bloc
 tables with per-column alignment, rules, images as labelled placeholders, and YAML front
 matter.
 
+## Read a document at a URL
+
+\`GET ${SITE}/api/v1/read?url=<url>\` (or POST {url, maxChars}) returns the text of a PDF,
+web page, office document, EPUB or text file as JSON: title, kind, pages, chars, truncated,
+text. The hosted MCP server at ${SITE}/mcp (Streamable HTTP, no login) has one tool,
+read_url. No account: 20 reads an hour per address, then 402 with an x402 offer for a $1
+day pass (${SITE}/read/pass). The CLI is \`readm3 read URL\`.
+
 ## Install
 
     curl -fsSL ${SITE}/install.sh | sh
