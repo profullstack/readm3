@@ -610,6 +610,20 @@ test("still renders a Markdown paste as a document", async ({ page, request }) =
   await expect(page.locator("#raw-link")).toBeVisible();
 });
 
+test("the homepage links an installable site manifest", async ({ request }) => {
+  expect(await (await request.get("/")).text()).toContain('<link rel="manifest" href="/manifest.webmanifest">');
+  const response = await request.get("/manifest.webmanifest");
+  expect(response.headers()["content-type"]).toContain("manifest+json");
+  const manifest = await response.json();
+  expect(manifest).toMatchObject({ name: "readm3", start_url: "/", scope: "/", display: "standalone" });
+  for (const size of ["192x192", "512x512"]) expect(manifest.icons.some((icon: { sizes: string }) => icon.sizes === size)).toBe(true);
+  for (const icon of manifest.icons) {
+    const image = await request.get(icon.src);
+    expect(image.ok()).toBe(true);
+    expect(image.headers()["content-type"]).toBe("image/png");
+  }
+});
+
 test("installs a complete offline shell and restores edited documents after an offline reload", async ({ page, context, request }) => {
   const manifestResponse = await request.get("/viewer.webmanifest");
   expect(manifestResponse.headers()["content-type"]).toContain("manifest+json");
