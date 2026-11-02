@@ -236,6 +236,73 @@ test("in the desktop app, a file saved in another editor while readm3 was closed
   await expect(page.locator("#save-status")).toHaveText("Saved to disk");
 });
 
+test("in the desktop app, a save in another editor shows at once, even over a copy sync brought", async ({ page }) => {
+  await page.addInitScript(() => {
+    const bytes = (text: string) => new TextEncoder().encode(text);
+    const file = () => JSON.parse(localStorage.getItem("test:disk") ?? '{"text":"milk\\n","modified":1}') as { text: string; modified: number };
+    const opened = new Set<string>(JSON.parse(localStorage.getItem("test:opened") ?? "[]"));
+    const listeners: Array<(paths: string[]) => void> = [];
+    Object.assign(window, {
+      // What main.cjs does when Sublime writes the file: the watcher names it.
+      sublimeSave: (text: string) => {
+        localStorage.setItem("test:disk", JSON.stringify({ text, modified: file().modified + 1 }));
+        for (const listener of listeners) listener(["/home/me/Desktop/list.txt"]);
+      },
+      readm3Desktop: {
+        takeLaunchFiles: async () => [],
+        onOpenFiles: () => {},
+        onFilesChanged: (callback: (paths: string[]) => void) => { listeners.push(callback); },
+        pick: async () => {
+          opened.add("/home/me/Desktop/list.txt");
+          localStorage.setItem("test:opened", JSON.stringify([...opened]));
+          return [{ path: "/home/me/Desktop/list.txt", name: "list.txt", size: file().text.length }];
+        },
+        reopen: async (paths: string[]) => paths.filter((path) => opened.has(path)).map((path) => ({ path, name: "list.txt", size: file().text.length })),
+        readFile: async (path: string) => {
+          if (!opened.has(path)) throw new Error("readm3 can only read files it opened.");
+          return { data: bytes(file().text), modified: file().modified };
+        },
+        stat: async () => ({ size: file().text.length, modified: file().modified }),
+        readRange: async () => new Uint8Array(),
+        writeFile: async () => {},
+      },
+    });
+  });
+  await page.reload();
+  await page.locator("#open-files").click();
+  await expect(page.locator("#document-name")).toHaveText("list.txt");
+  await expect.poll(() => editorText(page)).toContain("milk");
+  // A save in Sublime appears without the window being focused or polled.
+  await page.evaluate(() => (window as unknown as { sublimeSave(text: string): void }).sublimeSave("milk\nbread\n"));
+  await expect.poll(() => editorText(page), { timeout: 2000 }).toContain("bread");
+  // Sync applies another device's copy of the file here: it differs from disk, but nobody typed it.
+  await page.evaluate(() => new Promise<void>((done, fail) => {
+    const request = indexedDB.open("readm3", 1);
+    request.onsuccess = () => {
+      const store = request.result.transaction("workspace", "readwrite").objectStore("workspace");
+      const get = store.get("current");
+      get.onsuccess = () => {
+        const workspace = get.result as { documents: Array<{ path: string; source: string }> };
+        workspace.documents.find((doc) => doc.path === "list.txt")!.source = "milk\nfrom the phone\n";
+        store.put(workspace, "current").onsuccess = () => done();
+      };
+      get.onerror = () => fail(get.error);
+    };
+  }));
+  await page.reload();
+  await page.locator('#file-list button[title="list.txt"]').click();
+  await expect.poll(() => editorText(page)).toContain("from the phone");
+  // The next Sublime save wins over that copy, which stays in History.
+  await page.evaluate(() => (window as unknown as { sublimeSave(text: string): void }).sublimeSave("milk\nbread\neggs\n"));
+  await expect.poll(() => editorText(page), { timeout: 2000 }).toContain("eggs");
+  await expect(page.locator("#save-status")).toHaveText("Saved to disk");
+  // Typing here is different: a save elsewhere does not replace unsaved typing.
+  await editorInput(page).fill("milk\nbread\neggs\nbutter\n");
+  await page.evaluate(() => (window as unknown as { sublimeSave(text: string): void }).sublimeSave("milk\n"));
+  await expect(page.locator("#notice")).toContainText("Your unsaved edits are kept");
+  await expect.poll(() => editorText(page)).toContain("butter");
+});
+
 test("in the desktop app, a PDF read from disk still opens after a restart, without opening its folder again", async ({ page }) => {
   await page.addInitScript(() => {
     const pdf = new TextEncoder().encode("%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 100]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n");

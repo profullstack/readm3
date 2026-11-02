@@ -74,6 +74,18 @@ let diskSynced = new Map<string, number>();
 /** A copy that holds nothing the disk lacks: the same text, or unedited since it was last read or saved. */
 const matchesDisk = (doc: Document) => diskEntries.has(doc.path) ? !unsavedOnDisk(doc) : diskSynced.get(doc.path) === disk.fingerprint(doc.source);
 const unsavedOnDisk = (doc: Document) => { const entry = diskEntries.get(doc.path); return !!entry && disk.fingerprint(doc.source) !== entry.saved; };
+/**
+ * Disk files typed in here since they were last read from or written to disk. Only these
+ * hold edits a change on disk must not replace: a copy that differs from disk because sync
+ * brought another device's version is not an edit, and a save in another editor wins over it
+ * (both versions stay in History). Kept across restarts so unsaved typing survives one.
+ */
+const typedHere = new Set<string>(((): string[] => { try { return JSON.parse(localStorage.getItem("readm3:typed") ?? "[]"); } catch { return []; } })());
+function typed(path: string, on = true) {
+  if (on === typedHere.has(path)) return;
+  if (on) typedHere.add(path); else typedHere.delete(path);
+  try { localStorage.setItem("readm3:typed", JSON.stringify([...typedHere])); } catch { /* This session only. */ }
+}
 let mediaUrl: string | null = null;
 /** What the active document is on screen: Markdown, code in some language, or a PDF or image. */
 const kind = () => kindOf(current());
@@ -602,7 +614,7 @@ function renderDocument() {
 
 function loadEditor(): Promise<SourceEditor> {
   return editorLoading ??= import("./code-editor.ts").then(({ createEditor }) => {
-    sourceEditor = createEditor(editor, (text) => { current().source = text; documentInfo(); changed(); });
+    sourceEditor = createEditor(editor, (text) => { current().source = text; if (diskEntries.has(workspace.active)) typed(workspace.active); documentInfo(); changed(); });
     sourceEditor.view.scrollDOM.addEventListener("scroll", progress);
     return sourceEditor;
   });
@@ -825,6 +837,7 @@ function openHistory() {
   void showHistory(path, (source) => {
     if (workspace.active !== path) return;
     current().source = source;
+    if (diskEntries.has(path)) typed(path);
     previousRender = "";
     documentInfo();
     setMode(editing, false);
@@ -840,6 +853,29 @@ const diskSeen = new Map<string, number>();
 let sweepFrom = 0;
 let checking = false;
 const SWEEP_BATCH = 100;
+/** One disk check at a time, in order: a poll round and a change the desktop reported never overlap. */
+let diskWork: Promise<void> = Promise.resolve();
+const queueDisk = (work: () => Promise<void>) => (diskWork = diskWork.then(work).catch(() => { /* The next change or poll tries again. */ }));
+
+/**
+ * The desktop app (0.20.0 on) watches the files it opened and names the ones that change,
+ * so a save in Sublime or vim shows here at once, even with this window in the background.
+ */
+function watchDesktopFiles() {
+  if (!disk.desktop?.onFilesChanged) return;
+  disk.desktop.onFilesChanged((paths) => {
+    const wanted = new Set(paths);
+    const changedHere: string[] = [];
+    for (const [path, entry] of diskEntries) {
+      const onDisk = disk.desktopPath(entry.handle);
+      if (onDisk && wanted.has(onDisk)) changedHere.push(path);
+    }
+    if (!changedHere.length || !workspace || cloudDocument || pasteDocument) return;
+    // The active file first, so what is on screen updates before the rest.
+    changedHere.sort((a, b) => Number(b === workspace.active) - Number(a === workspace.active));
+    void queueDisk(async () => { for (const path of changedHere) await checkDiskFile(path, true); });
+  });
+}
 
 /**
  * Every file from disk is watched, not only the open one: a file saved in another editor
@@ -850,12 +886,14 @@ const SWEEP_BATCH = 100;
 async function checkDisk(all = false) {
   if (!workspace || cloudDocument || pasteDocument || document.hidden || checking) return;
   checking = true;
-  try {
-    const others = [...diskEntries.keys()].filter((path) => path !== workspace.active);
-    const batch = all ? others : others.slice(sweepFrom, sweepFrom + SWEEP_BATCH);
-    sweepFrom = all || sweepFrom + SWEEP_BATCH >= others.length ? 0 : sweepFrom + SWEEP_BATCH;
-    for (const path of [workspace.active, ...batch]) await checkDiskFile(path);
-  } finally { checking = false; }
+  await queueDisk(async () => {
+    try {
+      const others = [...diskEntries.keys()].filter((path) => path !== workspace.active);
+      const batch = all ? others : others.slice(sweepFrom, sweepFrom + SWEEP_BATCH);
+      sweepFrom = all || sweepFrom + SWEEP_BATCH >= others.length ? 0 : sweepFrom + SWEEP_BATCH;
+      for (const path of [workspace.active, ...batch]) await checkDiskFile(path);
+    } finally { checking = false; }
+  });
 }
 
 /**
@@ -863,7 +901,7 @@ async function checkDisk(all = false) {
  * checkout, another editor) gets a version in History. With no local edits it is
  * reloaded; with local edits it is left alone and the disk version waits in History.
  */
-async function checkDiskFile(path: string) {
+async function checkDiskFile(path: string, reported = false) {
   const doc = workspace.documents.find((candidate) => candidate.path === path);
   const entry = diskEntries.get(path);
   if (!doc || !entry) return;
@@ -885,7 +923,7 @@ async function checkDiskFile(path: string) {
   }
   let file: File;
   try { file = await entry.handle.getFile(); } catch { return; }
-  if (diskSeen.get(path) === file.lastModified) return;
+  if (!reported && diskSeen.get(path) === file.lastModified) return;
   diskSeen.set(path, file.lastModified);
   if (binaryType(path)) {
     const source = toBase64(new Uint8Array(await file.arrayBuffer()));
@@ -899,10 +937,13 @@ async function checkDiskFile(path: string) {
   }
   const text = await file.text();
   if (disk.fingerprint(text) === entry.saved) return;
-  const edited = unsavedOnDisk(doc);
+  // Only typing here holds the disk back; a copy sync brought is replaced, and kept in History.
+  const edited = unsavedOnDisk(doc) && typedHere.has(path);
   await fileHistory.record(path, text, "changed on disk");
   if (edited) { if (active()) notice(`${name} changed on disk. Your unsaved edits are kept; the disk version is in History.`); return; }
+  if (doc.source !== text && unsavedOnDisk(doc)) await fileHistory.record(path, doc.source, "replaced by disk");
   entry.saved = disk.fingerprint(text);
+  typed(path, false);
   void disk.storeEntries(diskEntries);
   doc.source = text;
   if (active()) {
@@ -945,6 +986,7 @@ async function saveFile(saveAs = false) {
     if (!handle) return;
     await disk.write(handle, isBinary() ? bytesOf(doc) : doc.source);
     diskEntries.set(doc.path, { handle, saved: disk.fingerprint(doc.source) });
+    typed(doc.path, false);
     await disk.storeEntries(diskEntries);
     markUnsaved();
     saveStatus.textContent = `Saved to disk · ${handle.name}`;
@@ -1396,6 +1438,7 @@ async function start() {
   const remote = params.get("url")?.trim();
   if (remote) await openUrlParam(remote);
   receiveLaunches();
+  watchDesktopFiles();
   // Files from disk changed while readm3 was closed are picked up now, not one round at a time.
   void checkDisk(true);
   setInterval(() => void checkDisk(), 5000);
