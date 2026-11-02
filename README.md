@@ -358,6 +358,31 @@ same scan (`level` is `"secret"`, `"personal"` or `null`, plus `findings`); the 
 reports and never refuses, so a script decides for itself. A clean scan is not a
 guarantee: the check knows common shapes, not every secret.
 
+## Read a document at a URL
+
+`readm3 read URL` prints the text of a PDF, a web page, a Word, Excel, PowerPoint,
+OpenDocument or EPUB file, or any text file, so an agent or a script can summarize a link
+without a PDF library of its own:
+
+    readm3 read https://arxiv.org/pdf/2106.01820
+    curl -s "https://readm3.com/api/v1/read?url=https://arxiv.org/pdf/2106.01820"
+
+The API is `GET /api/v1/read?url=` or `POST /api/v1/read {url, maxChars?}` and answers
+`title`, `kind` (pdf, html, office, text), `pages`, `bytes`, `chars`, `truncated` and
+`text` (100,000 characters by default, up to 400,000). Agents get it as the `read_url`
+tool, both in `readm3 mcp` and on the hosted MCP server at **https://readm3.com/mcp**
+(Streamable HTTP, no login, no session).
+
+No account is needed. Each address gets 20 reads an hour free; after that the answer is
+`402 Payment Required` with an x402 offer for a $1 reader pass for the day (USDC through
+CoinPay, sales page at `/read/pass`), which a pass or a Profullstack Power Key in
+`Authorization: Bearer` or `x-crawl-pass` then skips. A signed-in account (session or API
+token) is not metered. Only public addresses are fetched: private, loopback and
+link-local hosts are refused on the first URL and on every redirect, and a document may
+be up to 25 MB. A scanned PDF with no text layer is refused rather than guessed at.
+Operators set `READM3_FREE_READS`, `READM3_FREE_READS_WINDOW` (seconds) and
+`READM3_READ_PRICE_CENTS`; payments need `COINPAY_X402_KEY` and `CRAWL_PAY_TO`.
+
 ## Editor
 
 Open https://readm3.com/viewer for a plain, fast text editor in your browser, with the

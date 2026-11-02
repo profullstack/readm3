@@ -12,6 +12,7 @@ const role = { type: "string", enum: ["view", "edit"] };
 const definitions: [string, string, Record<string, unknown>, string[]][] = [
   ["paste_create", "Create an anonymous paste: any text file behind a secret link, no account needed. Markdown renders as a document; code (JSON, JavaScript, Python, YAML, SQL and 30 more) is highlighted with folding. The language is detected from the title's extension, else from the content; pass language to force one. Expires after 7 days by default (1h, 1d, 7d or 30d), 256 KB at most. Returns the URL and a raw URL; keep them, the server cannot show them again. The result's sensitive field lists any key, token, password, email address, public IP or named home directory in what the link exposes (secrets masked); when its level is \"secret\", tell the user before passing the link on.", { source: string, title: { type: "string", description: "A file name; its extension decides the language." }, language: { type: "string", description: "A highlight.js name such as json, javascript, python, bash, yaml or markdown. Detected when omitted." }, expiresIn: { type: "string", enum: ["1h", "1d", "7d", "30d"] } }, ["source"]],
   ["table_query", "Read a CSV or TSV the way the readm3 table view does, without loading it all into context. Give exactly one of source (the text), path (a local file) or url (a readm3 paste link or a raw http(s) file URL). The delimiter, header row and column types (number, date, boolean, text) are detected. filter keeps rows matching every space-separated term: free text, col:text, col=v, col!=v, col>n, col>=n, col<n, col<=n, #3 for the third column, ! to negate, quotes for spaces (city:\"new york\"). sort orders by a column name or number, empties last. Returns columns, total and matched counts, up to limit rows (default 50, max 1000) from offset as objects keyed by column name with their 1-based row number, and with stats a column's count, empty, distinct, min, max, sum, mean, median and top values over the matched rows.", { source: string, path: string, url: string, filter: string, sort: string, descending: { type: "boolean" }, limit: { type: "integer", minimum: 0, maximum: 1000 }, offset: { type: "integer", minimum: 0 }, stats: string }, []],
+  ["read_url", "Read a document at a URL and return its text: PDFs (arXiv papers, reports), web pages, Word, Excel, PowerPoint, OpenDocument, EPUB, Markdown and other text. Use it to summarize, quote or answer questions about a link. Returns title, kind, pages, chars, truncated and text. maxChars caps the text (default 100,000, up to 400,000). No account needed: a free hourly allowance, then an x402 reader pass; a signed-in account is not metered.", { url: string, maxChars: { type: "integer", minimum: 1000, maximum: 400000 } }, ["url"]],
   ["paste_get", "Read an anonymous paste by its URL. Returns the source with its title, language and mime type.", { url: string }, ["url"]],
   ["paste_delete", "Delete an anonymous paste by its URL. The link stops working for everyone.", { url: string }, ["url"]],
   ["settings_get", "Read the verified account's latest settings and Markdown workspace snapshot, including its revision.", {}, []],
@@ -315,7 +316,7 @@ export async function runMcp() {
         additionalProperties: false,
       },
       annotations: {
-        readOnlyHint: /_(list|get|me|users|revisions|query)$/.test(name),
+        readOnlyHint: /_(list|get|me|users|revisions|query|url)$/.test(name),
         destructiveHint: /_(delete|remove|revoke|transfer)$/.test(name),
         openWorldHint: true,
       },
@@ -329,6 +330,7 @@ export async function runMcp() {
         throw new Error("Unknown tool.");
       let result: unknown;
       if (name === "table_query") result = await tableQuery(args);
+      else if (name === "read_url") result = await cloudRequest("read", "POST", { url: args.url, maxChars: args.maxChars });
       else if (name.startsWith("settings_")) {
         if (name === "settings_save" && (!Number.isSafeInteger(args.ifRevision) || Number(args.ifRevision) < 0 || !args.snapshot)) throw new Error("snapshot and a nonnegative ifRevision are required.");
         result = await cloudRequest(name === "settings_revisions" ? "settings/revisions" : "settings", name === "settings_save" ? "PUT" : "GET", name === "settings_save" ? { snapshot: args.snapshot, ifRevision: args.ifRevision } : undefined);

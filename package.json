@@ -1,6 +1,6 @@
 {
   "name": "@profullstack/readm3",
-  "version": "0.31.0",
+  "version": "0.32.0",
   "description": "Markdown editing and sharing for people and teams. Web/PWA, CLI, API and MCP with version history, view/edit links, and a terminal reader.",
   "type": "module",
   "license": "MIT",
@@ -51,7 +51,8 @@
     "@profullstack/synconfig": "^0.1.3",
     "@profullstack/x402-gateway": "^0.16.1",
     "highlight.js": "^11.12.0",
-    "marked": "^18.1.1"
+    "marked": "^18.1.1",
+    "unpdf": "2.1.0"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^1.3.0",
