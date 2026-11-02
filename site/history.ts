@@ -7,7 +7,7 @@ import { readKey, writeKey } from "./workspace.ts";
  * 8 MB of them per file; the oldest go first. Nothing here leaves the device except
  * the two versions sent when someone asks for an AI summary.
  */
-export type Reason = "opened" | "saved" | "changed on disk" | "restored";
+export type Reason = "opened" | "saved" | "changed on disk" | "replaced by disk" | "restored";
 export interface Summary { text: string; costMicros: number; arm: string; at: string; }
 export interface Snapshot { id: string; at: string; reason: Reason; source: string; summary?: Summary; }
 

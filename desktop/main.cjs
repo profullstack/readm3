@@ -18,8 +18,9 @@
 const { app, BrowserWindow, Menu, dialog, ipcMain, net, protocol, session, shell } = require("electron");
 const { createHash, randomBytes } = require("node:crypto");
 const { createServer } = require("node:http");
+const { watch } = require("node:fs");
 const { open, readFile, readdir, writeFile, stat } = require("node:fs/promises");
-const { basename, join, resolve } = require("node:path");
+const { basename, dirname, join, resolve } = require("node:path");
 const { fileURLToPath, pathToFileURL } = require("node:url");
 
 const ORIGIN = (process.env.READM3_URL || "https://readm3.com").replace(/\/$/, "");
@@ -51,6 +52,49 @@ function remember(path) {
   opened.delete(path);
   opened.add(path);
   keep();
+  watchFolder(dirname(path));
+}
+
+/**
+ * Opened files are watched, so a save in another editor (Sublime, vim, a build) reaches the
+ * page at once instead of on its next poll. The folder is watched, not the file: an editor
+ * that saves by writing a new file and renaming it over the old one would end a watch on
+ * the file itself. inotify watches are a per-user budget shared with every other program,
+ * so at most MAX_WATCHED folders are watched, the most recently opened first; the page's
+ * poll still covers the rest.
+ */
+const MAX_WATCHED = 2000;
+const watchers = new Map();
+/** Paths with a change waiting to be sent, so one save (often several events) sends once. */
+const changes = new Set();
+let flushing;
+function watchFolder(folder) {
+  const existing = watchers.get(folder);
+  if (existing) { watchers.delete(folder); watchers.set(folder, existing); return; }
+  let watcher;
+  try {
+    watcher = watch(folder, { persistent: false }, (_event, name) => {
+      if (!name) return;
+      const path = join(folder, name.toString());
+      if (!opened.has(path)) return;
+      changes.add(path);
+      // Sent once the events stop: a save is often a truncate and several writes.
+      clearTimeout(flushing);
+      flushing = setTimeout(() => {
+        flushing = undefined;
+        const paths = [...changes];
+        changes.clear();
+        if (window && !window.isDestroyed()) window.webContents.send("files-changed", paths);
+      }, 60);
+    });
+  } catch { return; /* Gone, unreadable, or out of watches: the page's poll covers it. */ }
+  watcher.on("error", () => { watcher.close(); if (watchers.get(folder) === watcher) watchers.delete(folder); });
+  watchers.set(folder, watcher);
+  if (watchers.size > MAX_WATCHED) {
+    const [oldest, old] = watchers.entries().next().value;
+    old.close();
+    watchers.delete(oldest);
+  }
 }
 function keep() {
   if (!openedFile || keeping) return;
@@ -249,6 +293,8 @@ else {
     openedFile = join(app.getPath("userData"), "opened.json");
     try { for (const path of JSON.parse(await readFile(openedFile, "utf8"))) if (typeof path === "string") opened.add(path); }
     catch { /* First launch, or an unreadable list: files are watched once opened again. */ }
+    // The folders of the most recently opened files are watched again, newest last so they stay.
+    for (const path of [...opened].slice(-MAX_WATCHED * 4)) watchFolder(dirname(path));
     keep(); // A file macOS handed over before this point.
     protocol.handle("app", (request) => {
       const { pathname } = new URL(request.url);
