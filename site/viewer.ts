@@ -118,6 +118,7 @@ function applyKind() {
     : current.binary.kind === "document" ? workspace.active.split(".").at(-1)!.toUpperCase() : current.binary.label.split(" ")[0]!.toUpperCase();
   element<HTMLButtonElement>("edit-mode").disabled = current.kind === "binary" || isLarge() || !!pasteDocument || (!!cloudDocument && !cloudDocument.canEdit);
   if (!cloudDocument && !pasteDocument) element("history").hidden = current.kind === "binary" || isLarge();
+  element("reload-disk").hidden = !!cloudDocument || !!pasteDocument;
 }
 
 /** Whether the active file may be edited here: not a paste, not a view-only link, not a PDF, image or file over 4 MB. */
@@ -309,6 +310,7 @@ function renderTabs() {
     open.textContent = path.split("/").at(-1)!;
     open.onclick = () => { if (path !== workspace.active) openDocument(path); };
     open.onauxclick = (event) => { if (event.button === 1) closeTab(path); };
+    tab.oncontextmenu = (event) => { event.preventDefault(); showTabMenu(path, event.clientX, event.clientY); };
     const close = document.createElement("button");
     close.className = "tab-close";
     close.textContent = "×";
@@ -332,6 +334,48 @@ function closeTab(path: string) {
   else renderTabs();
 }
 
+function closeOtherTabs(path: string) {
+  tabs = [path];
+  if (path === workspace.active) renderTabs(); else openDocument(path);
+}
+
+/** Every tab closes; one file is always on screen, so the first in the file tree takes its place. */
+function closeAllTabs() {
+  const first = workspace.documents[0]!.path;
+  tabs = [first];
+  if (first === workspace.active) renderTabs(); else openDocument(first);
+}
+
+/** Right-click on a tab: reload it from disk, or close it, the others, or all of them. */
+const tabMenu = element("tab-menu");
+function hideTabMenu() { tabMenu.hidden = true; tabMenu.replaceChildren(); }
+function showTabMenu(path: string, x: number, y: number) {
+  const item = (label: string, run: () => void, disabled = false) => {
+    const button = document.createElement("button");
+    button.setAttribute("role", "menuitem");
+    button.textContent = label;
+    button.disabled = disabled;
+    button.onclick = () => { hideTabMenu(); run(); };
+    return button;
+  };
+  tabMenu.replaceChildren(
+    item("Reload from disk", () => void reloadFromDisk(path)),
+    document.createElement("hr"),
+    item("Close tab", () => closeTab(path), tabs.length < 2),
+    item("Close all but this tab", () => closeOtherTabs(path), tabs.length < 2),
+    item("Close all tabs", closeAllTabs, tabs.length < 2 && tabs[0] === workspace.documents[0]?.path),
+  );
+  tabMenu.hidden = false;
+  const { width, height } = tabMenu.getBoundingClientRect();
+  tabMenu.style.left = `${Math.max(4, Math.min(x, innerWidth - width - 4))}px`;
+  tabMenu.style.top = `${Math.max(4, Math.min(y, innerHeight - height - 4))}px`;
+  tabMenu.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+}
+document.addEventListener("pointerdown", (event) => { if (!tabMenu.hidden && !tabMenu.contains(event.target as Node)) hideTabMenu(); });
+document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !tabMenu.hidden) { event.stopPropagation(); hideTabMenu(); } }, true);
+window.addEventListener("blur", hideTabMenu);
+window.addEventListener("resize", hideTabMenu);
+
 function showPalette(initial: string) {
   const files = (): PaletteItem[] => workspace.documents.map((doc) => ({ label: doc.path, detail: kindOf(doc).kind === "binary" ? "view" : undefined, run: () => openDocument(doc.path) }));
   openPalette({
@@ -354,7 +398,10 @@ function commands(): PaletteItem[] {
       command("File: New note", () => element("new-file").click()),
       command("File: Save", () => void saveFile(), "Ctrl+S"),
       command("File: Save As…", () => void saveFile(true), "Ctrl+Shift+S"),
+      command("File: Reload from disk", () => void reloadFromDisk(), disk.desktop ? "Ctrl+Shift+R" : undefined),
       command("File: Close tab", () => closeTab(workspace.active)),
+      command("File: Close all but this tab", () => closeOtherTabs(workspace.active)),
+      command("File: Close all tabs", closeAllTabs),
       command("File: History", openHistory),
       command("Billing: Add funds", () => void showTopUp()),
       command("Billing: Usage and limits", showUsage),
@@ -897,11 +944,60 @@ async function checkDisk(all = false) {
 }
 
 /**
+ * A workspace file with no link to disk (opened before desktop 0.19.0, or brought by sync)
+ * is linked again to the file the desktop app opened at that path, so it is read from disk.
+ * With `ask`, and nothing or more than one found, the person points at it in a dialog.
+ */
+async function relink(paths: string[], ask = false): Promise<string[]> {
+  const bridge = disk.desktop;
+  if (!bridge?.findOpened) return [];
+  const linked: string[] = [];
+  let found: Record<string, disk.DesktopFile[]> = {};
+  try { found = await bridge.findOpened(paths); } catch { /* An older desktop build. */ }
+  for (const path of paths) {
+    let file = found[path]?.length === 1 ? found[path]![0] : undefined;
+    if (!file && ask && bridge.locate) file = await bridge.locate(path.split("/").at(-1)!) ?? undefined;
+    if (!file) continue;
+    // No fingerprint is -1, so the next check reads the file.
+    diskEntries.set(path, { handle: disk.linkDesktop(file), saved: -1 });
+    linked.push(path);
+  }
+  if (linked.length) { void disk.storeEntries(diskEntries); renderFiles(); }
+  return linked;
+}
+
+/** Reads a file again from disk now, whatever this copy holds; unsaved typing is asked about first. */
+async function reloadFromDisk(path = workspace.active) {
+  if (cloudDocument || pasteDocument) return;
+  const doc = workspace.documents.find((candidate) => candidate.path === path);
+  if (!doc) return;
+  const name = path.split("/").at(-1)!;
+  if (!diskEntries.has(path)) {
+    if (!disk.desktop?.findOpened) {
+      notice(disk.desktop
+        ? `${name} is not linked to a file on disk. Install the latest readm3 desktop app, or open the file again (File → Open Files).`
+        : `${name} is a copy kept in this browser, not linked to a file on disk. Open the file again (Open files) to read it from disk.`);
+      return;
+    }
+    if (!(await relink([path], true)).length) { notice(`${name} is not linked to a file on disk.`); return; }
+  }
+  if (typedHere.has(path) && unsavedOnDisk(doc)) {
+    if (!confirm(`Replace your unsaved edits to ${name} with the version on disk? Your edits stay in History.`)) return;
+    await fileHistory.record(path, doc.source, "replaced by disk");
+    typed(path, false);
+  }
+  const before = doc.source;
+  diskSeen.delete(path);
+  await queueDisk(() => checkDiskFile(path, true, true));
+  if (doc.source === before && workspace.active === path) notice(`${name} already matches the file on disk.`);
+}
+
+/**
  * A file from disk that changes underneath the editor (regenerated output, a git
  * checkout, another editor) gets a version in History. With no local edits it is
  * reloaded; with local edits it is left alone and the disk version waits in History.
  */
-async function checkDiskFile(path: string, reported = false) {
+async function checkDiskFile(path: string, reported = false, force = false) {
   const doc = workspace.documents.find((candidate) => candidate.path === path);
   const entry = diskEntries.get(path);
   if (!doc || !entry) return;
@@ -923,7 +1019,7 @@ async function checkDiskFile(path: string, reported = false) {
   }
   let file: File;
   try { file = await entry.handle.getFile(); } catch { return; }
-  if (!reported && diskSeen.get(path) === file.lastModified) return;
+  if (!reported && !force && diskSeen.get(path) === file.lastModified) return;
   diskSeen.set(path, file.lastModified);
   if (binaryType(path)) {
     const source = toBase64(new Uint8Array(await file.arrayBuffer()));
@@ -936,12 +1032,26 @@ async function checkDiskFile(path: string, reported = false) {
     return;
   }
   const text = await file.text();
-  if (disk.fingerprint(text) === entry.saved) return;
-  // Only typing here holds the disk back; a copy sync brought is replaced, and kept in History.
-  const edited = unsavedOnDisk(doc) && typedHere.has(path);
-  await fileHistory.record(path, text, "changed on disk");
-  if (edited) { if (active()) notice(`${name} changed on disk. Your unsaved edits are kept; the disk version is in History.`); return; }
-  if (doc.source !== text && unsavedOnDisk(doc)) await fileHistory.record(path, doc.source, "replaced by disk");
+  // The disk is the file. A copy here that differs from it without anyone typing (another
+  // device's version from sync, a copy from before its link to disk was lost) is replaced;
+  // only typing here holds a change on disk back, and both versions stay in History.
+  const fingerprint = disk.fingerprint(text);
+  const diskMoved = fingerprint !== entry.saved;
+  if (doc.source === text) {
+    if (diskMoved) { entry.saved = fingerprint; typed(path, false); void disk.storeEntries(diskEntries); if (active()) markUnsaved(); }
+    return;
+  }
+  const edited = !force && unsavedOnDisk(doc) && typedHere.has(path);
+  if (edited) {
+    if (!diskMoved) return;
+    entry.saved = fingerprint;
+    void disk.storeEntries(diskEntries);
+    await fileHistory.record(path, text, "changed on disk");
+    if (active()) { markUnsaved(); notice(`${name} changed on disk. Your unsaved edits are kept; the disk version is in History. Reload from disk to take it.`); }
+    return;
+  }
+  if (unsavedOnDisk(doc)) await fileHistory.record(path, doc.source, "replaced by disk");
+  if (diskMoved) await fileHistory.record(path, text, "changed on disk");
   entry.saved = disk.fingerprint(text);
   typed(path, false);
   void disk.storeEntries(diskEntries);
@@ -1096,6 +1206,7 @@ function bindEvents() {
     if (pendingSave) { notice("Save or download your draft before restoring a version."); return; }
     void versionHistory(cloudDocument, adoptCloud).catch(error => notice(error instanceof Error ? error.message : "Could not load history."));
   };
+  element("reload-disk").onclick = () => void reloadFromDisk();
   element("open-files").onclick = () => void openFromDisk(false);
   element("open-folder").onclick = () => void openFromDisk(true);
   filesInput.onchange = () => void importFiles(copies(filesInput.files ?? []));
@@ -1142,6 +1253,8 @@ function onKey(event: KeyboardEvent) {
     event.preventDefault(); showPalette(event.shiftKey || event.key === "F1" ? ">" : ""); return;
   }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); void saveFile(event.shiftKey); return; }
+  // Desktop only: in a browser Ctrl+Shift+R is the hard reload people expect.
+  if (disk.desktop && (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "r") { event.preventDefault(); void reloadFromDisk(); return; }
   if (event.altKey || event.ctrlKey || event.metaKey) return;
   if (event.key === "Escape") {
     if (editing) setMode(false);
@@ -1439,6 +1552,8 @@ async function start() {
   if (remote) await openUrlParam(remote);
   receiveLaunches();
   watchDesktopFiles();
+  // Files whose link to disk was lost are linked again where the desktop app knows the path.
+  await relink(workspace.documents.filter((doc) => !diskEntries.has(doc.path)).map((doc) => doc.path));
   // Files from disk changed while readm3 was closed are picked up now, not one round at a time.
   void checkDisk(true);
   setInterval(() => void checkDisk(), 5000);

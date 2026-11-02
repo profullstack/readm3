@@ -251,7 +251,10 @@ function menu() {
       { type: "separator" },
       item("Save", command("File: Save"), "CmdOrCtrl+S"),
       item("Save As…", command("File: Save As…"), "CmdOrCtrl+Shift+S"),
+      item("Reload from Disk", command("File: Reload from disk"), "CmdOrCtrl+Shift+R"),
       item("Close Tab", command("File: Close tab")),
+      item("Close All but This Tab", command("File: Close all but this tab")),
+      item("Close All Tabs", command("File: Close all tabs")),
       { type: "separator" },
       { role: "quit" },
     ] },
@@ -334,6 +337,38 @@ else {
         catch { /* Moved or deleted: the page keeps its copy. */ }
       }
       return files;
+    });
+    // A workspace file that lost its link to disk (opened before 0.19.0, or it came from sync):
+    // the opened paths that end in its workspace path, so the page can read it from disk again.
+    ipcMain.handle("find-opened", async (event, relatives) => {
+      if (!trusted(event.senderFrame?.url ?? "")) throw new Error("Not allowed.");
+      if (!Array.isArray(relatives)) throw new Error("Invalid paths.");
+      const byName = new Map();
+      for (const path of opened) { const name = basename(path); const list = byName.get(name); if (list) list.push(path); else byName.set(name, [path]); }
+      const found = {};
+      for (const relative of relatives) {
+        if (typeof relative !== "string" || !relative) continue;
+        const candidates = (byName.get(basename(relative)) ?? []).filter((path) => path === relative || path.endsWith(`/${relative}`) || path.endsWith(`\\${relative.replaceAll("/", "\\")}`));
+        const files = [];
+        for (const path of candidates) {
+          try { const info = await stat(path); if (info.isFile()) files.push({ path, name: basename(path), size: info.size }); }
+          catch { /* Moved or deleted. */ }
+        }
+        if (files.length) found[relative] = files;
+      }
+      return found;
+    });
+    // "Where is this file?": the person points at it in the system dialog, and it is linked again.
+    ipcMain.handle("locate", async (event, name) => {
+      if (!trusted(event.senderFrame?.url ?? "")) throw new Error("Not allowed.");
+      const { canceled, filePaths } = await dialog.showOpenDialog(window, {
+        title: `Find ${typeof name === "string" ? basename(name) : "the file"} on disk`,
+        defaultPath: typeof name === "string" ? join(app.getPath("home"), basename(name)) : undefined,
+        properties: ["openFile"],
+      });
+      if (canceled || !filePaths[0]) return null;
+      const [file] = await load([filePaths[0]]);
+      return file ?? null;
     });
     // A large file reaches the page a range at a time, never whole through one message.
     ipcMain.handle("read-range", async (event, path, start, end) => {

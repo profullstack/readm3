@@ -192,6 +192,11 @@ html, body.reader-app { height: 100%; overflow: hidden; }
 .reader-app .tab-close { padding: 8px 10px 8px 6px; opacity: .5; }
 .reader-app .tab-close:hover:not(:disabled) { opacity: 1; color: var(--danger); }
 .reader-app .tab-close:disabled { visibility: hidden; }
+.tab-menu { position: fixed; z-index: 50; min-width: 200px; padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); box-shadow: 0 12px 32px #0006; }
+.reader-app .tab-menu button { display: block; width: 100%; padding: 7px 12px; border: 0; border-radius: 4px; background: transparent; color: var(--fg); font: 13px var(--mono); text-align: left; cursor: pointer; }
+.reader-app .tab-menu button:hover:not(:disabled), .reader-app .tab-menu button:focus-visible { background: var(--selection); color: var(--selection-text); outline: none; }
+.reader-app .tab-menu button:disabled { color: var(--muted); cursor: default; }
+.tab-menu hr { margin: 4px 0; border: 0; border-top: 1px solid var(--border); }
 .tab.unsaved .tab-name::after { content: " ●"; color: var(--warning); }
 .sidebar-hidden .file-pane { display: none; }
 /* The palette: Ctrl+P for files, Ctrl+Shift+P for commands. */

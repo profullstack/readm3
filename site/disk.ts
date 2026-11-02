@@ -103,6 +103,10 @@ interface DesktopBridge {
   reopen?(paths: string[]): Promise<DesktopFile[]>;
   /** Absent in desktop builds before 0.20.0: disk paths of opened files that just changed on disk. */
   onFilesChanged?(callback: (paths: string[]) => void): void;
+  /** Absent before 0.21.0: opened disk files whose path ends in each workspace path. */
+  findOpened?(relatives: string[]): Promise<Record<string, DesktopFile[]>>;
+  /** Absent before 0.21.0: the person picks where a workspace file is on disk. */
+  locate?(name: string): Promise<DesktopFile | null>;
 }
 /** Present only inside the readm3 desktop app (desktop/preload.cjs). */
 export const desktop = typeof window === "undefined" ? undefined : (window as unknown as { readm3Desktop?: DesktopBridge }).readm3Desktop;
@@ -145,6 +149,9 @@ async function whole(entry: DesktopFile): Promise<File> {
 /** The disk path behind a desktop handle; undefined for a browser handle. */
 export const desktopPath = (handle: FileSystemFileHandle): string | undefined =>
   (handle as FileSystemFileHandle & { desktopFile?: DesktopFile }).desktopFile?.path;
+
+/** A desktop file found again (find-opened, locate) as a handle the editor reads and saves through. */
+export const linkDesktop = (file: DesktopFile): FileSystemFileHandle => desktopHandle(file);
 
 /** A handle over a path the desktop app may read and write; a Save As path has no size or bytes yet. */
 function desktopHandle(entry: DesktopFile): FileSystemFileHandle {
