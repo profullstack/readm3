@@ -291,7 +291,9 @@ test("in the desktop app, a save in another editor shows at once, even over a co
   }));
   await page.reload();
   await page.locator('#file-list button[title="list.txt"]').click();
-  await expect.poll(() => editorText(page)).toContain("from the phone");
+  // The disk is the file: on launch the copy sync brought gives way to it (and stays in History).
+  await expect.poll(() => editorText(page)).toContain("bread");
+  await expect.poll(() => editorText(page)).not.toContain("from the phone");
   // The next Sublime save wins over that copy, which stays in History.
   await page.evaluate(() => (window as unknown as { sublimeSave(text: string): void }).sublimeSave("milk\nbread\neggs\n"));
   await expect.poll(() => editorText(page), { timeout: 2000 }).toContain("eggs");
@@ -301,6 +303,63 @@ test("in the desktop app, a save in another editor shows at once, even over a co
   await page.evaluate(() => (window as unknown as { sublimeSave(text: string): void }).sublimeSave("milk\n"));
   await expect(page.locator("#notice")).toContainText("Your unsaved edits are kept");
   await expect.poll(() => editorText(page)).toContain("butter");
+});
+
+test("in the desktop app, a file that lost its link to disk is found again, and Reload reads it from disk", async ({ page }) => {
+  await page.addInitScript(() => {
+    const bytes = (text: string) => new TextEncoder().encode(text);
+    const file = () => JSON.parse(localStorage.getItem("test:disk") ?? '{"text":"milk\\n","modified":1}') as { text: string; modified: number };
+    const path = "/home/me/Desktop/list.txt";
+    const entry = () => ({ path, name: "list.txt", size: file().text.length });
+    Object.assign(window, {
+      readm3Desktop: {
+        takeLaunchFiles: async () => [],
+        onOpenFiles: () => {},
+        onFilesChanged: () => {},
+        pick: async () => [entry()],
+        // An old build lost the link: nothing comes back from reopen.
+        reopen: async () => [],
+        findOpened: async (relatives: string[]) => localStorage.getItem("test:known") ? Object.fromEntries(relatives.filter((r) => r === "list.txt").map((r) => [r, [entry()]])) : {},
+        locate: async () => { localStorage.setItem("test:located", "1"); return entry(); },
+        readFile: async () => ({ data: bytes(file().text), modified: file().modified }),
+        stat: async () => ({ size: file().text.length, modified: file().modified }),
+        readRange: async () => new Uint8Array(),
+        writeFile: async () => {},
+      },
+    });
+  });
+  await page.reload();
+  await page.locator("#open-files").click();
+  await expect.poll(() => editorText(page)).toContain("milk");
+  // Saved in Sublime while the link was lost: the copy here is stale.
+  await page.evaluate(() => localStorage.setItem("test:disk", JSON.stringify({ text: "milk\nbread\n", modified: 2 })));
+  await page.reload();
+  await page.locator('#file-list button[title="list.txt"]').click();
+  await expect.poll(() => editorText(page)).not.toContain("bread");
+  // Reload asks where the file is, and reads it from there.
+  await page.locator("#reload-disk").click();
+  await expect.poll(() => editorText(page)).toContain("bread");
+  expect(await page.evaluate(() => localStorage.getItem("test:located"))).toBe("1");
+  // Next launch the desktop app knows the path, and the link comes back on its own.
+  await page.evaluate(() => { localStorage.setItem("test:known", "1"); localStorage.setItem("test:disk", JSON.stringify({ text: "milk\nbread\neggs\n", modified: 3 })); });
+  await page.reload();
+  await page.locator('#file-list button[title="list.txt"]').click();
+  await expect.poll(() => editorText(page)).toContain("eggs");
+
+  // Right-click a tab: reload, close it, all but it, or all.
+  await page.locator('#file-list button[title="Welcome.md"]').click();
+  await page.locator('#file-list button[title="list.txt"]').click();
+  await expect(page.locator("#tabs .tab")).toHaveCount(2);
+  await page.locator("#tabs .tab", { hasText: "list.txt" }).click({ button: "right" });
+  const menu = page.locator("#tab-menu");
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole("menuitem")).toHaveText(["Reload from disk", "Close tab", "Close all but this tab", "Close all tabs"]);
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await page.locator("#tabs .tab", { hasText: "list.txt" }).click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "Close all but this tab" }).click();
+  await expect(page.locator("#tabs .tab")).toHaveCount(1);
+  await expect(page.locator("#document-name")).toHaveText("list.txt");
 });
 
 test("in the desktop app, a PDF read from disk still opens after a restart, without opening its folder again", async ({ page }) => {
