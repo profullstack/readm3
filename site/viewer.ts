@@ -276,6 +276,40 @@ function notice(message: string) {
 
 function current(): Document { return workspace.documents.find((doc) => doc.path === workspace.active)!; }
 
+/**
+ * With nothing else open, an empty Untitled document is on screen, as in any editor. It is
+ * kept nowhere (not this device's storage, not sync, not disk) until something is typed in
+ * it; then it is a note like any other, and Ctrl+S picks where it goes on disk.
+ */
+let blankPath = "";
+const isBlank = (doc: Document) => !!blankPath && doc.path === blankPath && doc.source === "";
+/** The workspace as stored and synced: the untouched blank document left out. */
+function keptWorkspace(): Workspace {
+  if (!blankPath) return workspace;
+  const documents = workspace.documents.filter((doc) => !isBlank(doc));
+  if (!documents.length || documents.length === workspace.documents.length) return workspace;
+  const active = documents.some((doc) => doc.path === workspace.active) ? workspace.active : documents[0]!.path;
+  return { ...workspace, active, documents };
+}
+function openBlank() {
+  if (!(blankPath && workspace.documents.some(isBlank))) {
+    const taken = new Set(workspace.documents.map((doc) => doc.path));
+    let path = "Untitled.md";
+    for (let n = 2; taken.has(path); n++) path = `Untitled ${n}.md`;
+    workspace.documents = [...workspace.documents, { path, source: "" }].sort((a, b) => comparePaths(a.path, b.path));
+    blankPath = path;
+  }
+  tabs = [blankPath];
+  openDocument(blankPath);
+  setMode(true, true);
+}
+/** Leaving the blank document untouched drops it. */
+function dropBlank(next: string) {
+  if (!blankPath || next === blankPath) return;
+  if (workspace.documents.some(isBlank)) workspace.documents = workspace.documents.filter((doc) => !isBlank(doc));
+  blankPath = "";
+}
+
 async function save() {
   if (pasteDocument) return;
   if (cloudDocument) { await saveCloud(); return; }
@@ -283,7 +317,7 @@ async function save() {
   const savingRevision = revision;
   pendingSave = true;
   try {
-    await persist(workspace);
+    await persist(keptWorkspace());
     if (revision === savingRevision) {
       // Every saved edit reaches the account a few seconds later, unless it came from sync.
       if (!applyingSync) scheduleSync();
@@ -373,7 +407,7 @@ function renderTabs() {
     close.className = "tab-close";
     close.textContent = "×";
     close.setAttribute("aria-label", `Close ${path}`);
-    close.disabled = workspace.documents.length < 2;
+    close.disabled = path === blankPath && tabs.length === 1 && workspace.documents.some(isBlank);
     close.onclick = () => closeTab(path);
     tab.append(open, close);
     return tab;
@@ -386,11 +420,10 @@ function renderTabs() {
 
 function closeTab(path: string) {
   // The last tab gives way to another file: one file is always on screen.
+  // The last tab closes to an empty Untitled document, unless that is what is closing.
   if (tabs.length < 2) {
-    const next = workspace.documents.find((doc) => doc.path !== path)?.path;
-    if (!next) return;
-    tabs = [next];
-    openDocument(next);
+    if (path === blankPath && workspace.documents.some(isBlank)) return;
+    openBlank();
     return;
   }
   const index = tabs.indexOf(path);
@@ -404,12 +437,8 @@ function closeOtherTabs(path: string) {
   if (path === workspace.active) renderTabs(); else openDocument(path);
 }
 
-/** Every tab closes; one file is always on screen, so the first in the file tree takes its place. */
-function closeAllTabs() {
-  const first = workspace.documents[0]!.path;
-  tabs = [first];
-  if (first === workspace.active) renderTabs(); else openDocument(first);
-}
+/** Every tab closes, and an empty Untitled document takes their place. */
+function closeAllTabs() { openBlank(); }
 
 /** Right-click on a tab: reload it from disk, or close it, the others, or all of them. */
 const tabMenu = element("tab-menu");
@@ -426,9 +455,9 @@ function showTabMenu(path: string, x: number, y: number) {
   tabMenu.replaceChildren(
     item("Reload from disk", () => void reloadFromDisk(path)),
     document.createElement("hr"),
-    item("Close tab", () => closeTab(path), workspace.documents.length < 2),
+    item("Close tab", () => closeTab(path), path === blankPath && tabs.length === 1),
     item("Close all but this tab", () => closeOtherTabs(path), tabs.length < 2),
-    item("Close all tabs", closeAllTabs, tabs.length < 2 && tabs[0] === workspace.documents[0]?.path),
+    item("Close all tabs", closeAllTabs, path === blankPath && tabs.length === 1),
   );
   tabMenu.hidden = false;
   const { width, height } = tabMenu.getBoundingClientRect();
@@ -791,6 +820,7 @@ function documentInfo() {
 }
 
 function openDocument(path: string, focus = true) {
+  dropBlank(path);
   workspace.active = path;
   element("document-name").textContent = path;
   document.title = `${path.split("/").at(-1)} — readm3`;
@@ -1643,7 +1673,7 @@ async function start() {
   void setupPwa();
   setupOpenInDesktop();
   startAutoSync({
-    read: () => ({ name: workspace.name, active: workspace.active, documents: workspace.documents }),
+    read: () => { const kept = keptWorkspace(); return { name: kept.name, active: kept.active, documents: kept.documents }; },
     settings: () => ({ theme: theme.value, flavor: flavor.value as Flavor }),
     apply: (incoming, settings) => applySynced(incoming as Workspace, settings),
     status: (text) => { element("sync-note").textContent = text; if (text.startsWith("Synced")) updateUsage(true); },
