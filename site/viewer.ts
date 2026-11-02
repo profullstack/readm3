@@ -81,6 +81,55 @@ const unsavedOnDisk = (doc: Document) => { const entry = diskEntries.get(doc.pat
  * (both versions stay in History). Kept across restarts so unsaved typing survives one.
  */
 const typedHere = new Set<string>(((): string[] => { try { return JSON.parse(localStorage.getItem("readm3:typed") ?? "[]"); } catch { return []; } })());
+/**
+ * Straight to disk (the default): an edit to a file from disk is written to it as you type,
+ * and a file is read from disk again whenever it is opened. Off, readm3 keeps your edits on
+ * this device until Ctrl+S, as before.
+ */
+const diskDirect = (): boolean => { try { return localStorage.getItem("readm3:disk-direct") !== "0"; } catch { return true; } };
+let diskWriteTimer: ReturnType<typeof setTimeout> | undefined;
+let diskWritePath = "";
+function writeThrough(path: string) {
+  if (!diskDirect() || !diskEntries.has(path)) return;
+  if (diskWritePath && diskWritePath !== path) void flushToDisk();
+  diskWritePath = path;
+  clearTimeout(diskWriteTimer);
+  diskWriteTimer = setTimeout(() => void flushToDisk(), 400);
+}
+async function flushToDisk() {
+  clearTimeout(diskWriteTimer);
+  const path = diskWritePath;
+  diskWritePath = "";
+  const doc = workspace.documents.find((candidate) => candidate.path === path);
+  const entry = diskEntries.get(path);
+  if (!doc || !entry || doc.blob || binaryType(path) || !unsavedOnDisk(doc)) return;
+  const source = doc.source;
+  try {
+    await disk.write(entry.handle, source);
+    entry.saved = disk.fingerprint(source);
+    if (doc.source === source) typed(path, false);
+    void disk.storeEntries(diskEntries);
+    if (workspace.active === path) { markUnsaved(); saveStatus.textContent = `Saved to disk · ${path.split("/").at(-1)}`; }
+  } catch (error) {
+    notice(`${error instanceof Error ? error.message : "Could not write the file."} Your edits are kept here; Ctrl+S tries again.`);
+  }
+}
+window.addEventListener("beforeunload", () => { if (diskWritePath) void flushToDisk(); });
+async function syncedToDisk(path: string) {
+  const doc = workspace.documents.find((candidate) => candidate.path === path);
+  const entry = diskEntries.get(path);
+  if (!doc || !entry) return;
+  let text: string;
+  try { text = await (await entry.handle.getFile()).text(); } catch { return; }
+  if (disk.fingerprint(text) !== entry.saved || text === doc.source) return;
+  try {
+    await disk.write(entry.handle, doc.source);
+    entry.saved = disk.fingerprint(doc.source);
+    void disk.storeEntries(diskEntries);
+    void fileHistory.record(path, text, "replaced by disk");
+    if (workspace.active === path) markUnsaved();
+  } catch { /* The copy stays here, marked unsaved; Ctrl+S writes it. */ }
+}
 function typed(path: string, on = true) {
   if (on === typedHere.has(path)) return;
   if (on) typedHere.add(path); else typedHere.delete(path);
@@ -119,6 +168,7 @@ function applyKind() {
   element<HTMLButtonElement>("edit-mode").disabled = current.kind === "binary" || isLarge() || !!pasteDocument || (!!cloudDocument && !cloudDocument.canEdit);
   if (!cloudDocument && !pasteDocument) element("history").hidden = current.kind === "binary" || isLarge();
   element("reload-disk").hidden = !!cloudDocument || !!pasteDocument;
+  element("disk-direct").hidden = !!cloudDocument || !!pasteDocument || !disk.supported();
 }
 
 /** Whether the active file may be edited here: not a paste, not a view-only link, not a PDF, image or file over 4 MB. */
@@ -257,9 +307,17 @@ async function applySynced(incoming: Workspace | undefined, settings: ReaderSett
   try {
     clearTimeout(saveTimer);
     if (incoming) {
+      // Straight to disk: a file another device changed is written to its file here too,
+      // unless the file changed on disk meanwhile (then the disk wins, as everywhere else).
+      const before = new Map(workspace.documents.map((doc) => [doc.path, doc]));
+      const toDisk = diskDirect() ? incoming.documents.filter((doc) => {
+        const old = before.get(doc.path);
+        return !!old && diskEntries.has(doc.path) && !doc.blob && !binaryType(doc.path) && doc.source !== old.source && !unsavedOnDisk(old);
+      }).map((doc) => doc.path) : [];
       await persist(incoming);
       workspace = incoming;
       reattachDisk();
+      for (const path of toDisk) void queueDisk(() => syncedToDisk(path));
       filter.value = "";
       foldLarge(workspace.active);
     }
@@ -315,7 +373,7 @@ function renderTabs() {
     close.className = "tab-close";
     close.textContent = "×";
     close.setAttribute("aria-label", `Close ${path}`);
-    close.disabled = tabs.length === 1;
+    close.disabled = workspace.documents.length < 2;
     close.onclick = () => closeTab(path);
     tab.append(open, close);
     return tab;
@@ -327,7 +385,14 @@ function renderTabs() {
 }
 
 function closeTab(path: string) {
-  if (tabs.length < 2) return;
+  // The last tab gives way to another file: one file is always on screen.
+  if (tabs.length < 2) {
+    const next = workspace.documents.find((doc) => doc.path !== path)?.path;
+    if (!next) return;
+    tabs = [next];
+    openDocument(next);
+    return;
+  }
   const index = tabs.indexOf(path);
   tabs = tabs.filter((tab) => tab !== path);
   if (path === workspace.active) openDocument(tabs[Math.min(index, tabs.length - 1)]!);
@@ -361,7 +426,7 @@ function showTabMenu(path: string, x: number, y: number) {
   tabMenu.replaceChildren(
     item("Reload from disk", () => void reloadFromDisk(path)),
     document.createElement("hr"),
-    item("Close tab", () => closeTab(path), tabs.length < 2),
+    item("Close tab", () => closeTab(path), workspace.documents.length < 2),
     item("Close all but this tab", () => closeOtherTabs(path), tabs.length < 2),
     item("Close all tabs", closeAllTabs, tabs.length < 2 && tabs[0] === workspace.documents[0]?.path),
   );
@@ -399,6 +464,7 @@ function commands(): PaletteItem[] {
       command("File: Save", () => void saveFile(), "Ctrl+S"),
       command("File: Save As…", () => void saveFile(true), "Ctrl+Shift+S"),
       command("File: Reload from disk", () => void reloadFromDisk(), disk.desktop ? "Ctrl+Shift+R" : undefined),
+      command(`File: ${diskDirect() ? "Turn off" : "Turn on"} auto-save to disk`, () => element("disk-direct").click()),
       command("File: Close tab", () => closeTab(workspace.active)),
       command("File: Close all but this tab", () => closeOtherTabs(workspace.active)),
       command("File: Close all tabs", closeAllTabs),
@@ -661,7 +727,7 @@ function renderDocument() {
 
 function loadEditor(): Promise<SourceEditor> {
   return editorLoading ??= import("./code-editor.ts").then(({ createEditor }) => {
-    sourceEditor = createEditor(editor, (text) => { current().source = text; if (diskEntries.has(workspace.active)) typed(workspace.active); documentInfo(); changed(); });
+    sourceEditor = createEditor(editor, (text) => { current().source = text; if (diskEntries.has(workspace.active)) { typed(workspace.active); writeThrough(workspace.active); } documentInfo(); changed(); });
     sourceEditor.view.scrollDOM.addEventListener("scroll", progress);
     return sourceEditor;
   });
@@ -738,6 +804,8 @@ function openDocument(path: string, focus = true) {
   progress();
   setFilesOpen(false);
   if (!cloudDocument) changed();
+  // Straight to disk: what is on screen is what is on disk, read again on every open.
+  if (diskDirect() && !cloudDocument && !pasteDocument && diskEntries.has(path)) void queueDisk(() => checkDiskFile(path, true));
 }
 
 /** Adds files, renaming any that would replace an open draft; returns them in the order given. */
@@ -953,7 +1021,8 @@ async function relink(paths: string[], ask = false): Promise<string[]> {
   if (!bridge?.findOpened) return [];
   const linked: string[] = [];
   let found: Record<string, disk.DesktopFile[]> = {};
-  try { found = await bridge.findOpened(paths); } catch { /* An older desktop build. */ }
+  // Asked for (Reload), the desktop app also searches the home folder for the file.
+  try { found = await bridge.findOpened(paths, ask); } catch { /* An older desktop build. */ }
   for (const path of paths) {
     let file = found[path]?.length === 1 ? found[path]![0] : undefined;
     if (!file && ask && bridge.locate) file = await bridge.locate(path.split("/").at(-1)!) ?? undefined;
@@ -975,11 +1044,12 @@ async function reloadFromDisk(path = workspace.active) {
   if (!diskEntries.has(path)) {
     if (!disk.desktop?.findOpened) {
       notice(disk.desktop
-        ? `${name} is not linked to a file on disk. Install the latest readm3 desktop app, or open the file again (File → Open Files).`
-        : `${name} is a copy kept in this browser, not linked to a file on disk. Open the file again (Open files) to read it from disk.`);
+        ? `${name} is not linked to a file on disk, and this desktop build cannot find it. Install the latest readm3 desktop app.`
+        : `${name} is kept in this browser, not linked to a file on disk. Open the file once with Open files and readm3 reads and saves it on disk from then on.`);
       return;
     }
-    if (!(await relink([path], true)).length) { notice(`${name} is not linked to a file on disk.`); return; }
+    saveStatus.textContent = `Looking for ${name} on disk…`;
+    if (!(await relink([path], true)).length) { notice(`${name} was not found on disk.`); markUnsaved(); return; }
   }
   if (typedHere.has(path) && unsavedOnDisk(doc)) {
     if (!confirm(`Replace your unsaved edits to ${name} with the version on disk? Your edits stay in History.`)) return;
@@ -1207,6 +1277,16 @@ function bindEvents() {
     void versionHistory(cloudDocument, adoptCloud).catch(error => notice(error instanceof Error ? error.message : "Could not load history."));
   };
   element("reload-disk").onclick = () => void reloadFromDisk();
+  const directButton = element("disk-direct");
+  directButton.setAttribute("aria-pressed", String(diskDirect()));
+  directButton.onclick = () => {
+    const on = !diskDirect();
+    try { localStorage.setItem("readm3:disk-direct", on ? "1" : "0"); } catch { /* This session only. */ }
+    directButton.setAttribute("aria-pressed", String(on));
+    notice(on ? "Auto-save to disk is on: edits are written to the file as you type, and files are read from disk when opened."
+      : "Auto-save to disk is off: edits stay on this device until you press Ctrl+S.");
+    if (on && diskEntries.has(workspace.active)) { writeThrough(workspace.active); void flushToDisk(); }
+  };
   element("open-files").onclick = () => void openFromDisk(false);
   element("open-folder").onclick = () => void openFromDisk(true);
   filesInput.onchange = () => void importFiles(copies(filesInput.files ?? []));
