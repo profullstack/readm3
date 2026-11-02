@@ -103,9 +103,9 @@ interface DesktopBridge {
   reopen?(paths: string[]): Promise<DesktopFile[]>;
   /** Absent in desktop builds before 0.20.0: disk paths of opened files that just changed on disk. */
   onFilesChanged?(callback: (paths: string[]) => void): void;
-  /** Absent before 0.21.0: opened disk files whose path ends in each workspace path. */
-  findOpened?(relatives: string[]): Promise<Record<string, DesktopFile[]>>;
-  /** Absent before 0.21.0: the person picks where a workspace file is on disk. */
+  /** Absent before 0.29.0: opened disk files whose path ends in each workspace path; `search` also looks through the home folder. */
+  findOpened?(relatives: string[], search?: boolean): Promise<Record<string, DesktopFile[]>>;
+  /** Absent before 0.29.0: the person picks where a workspace file is on disk. */
   locate?(name: string): Promise<DesktopFile | null>;
 }
 /** Present only inside the readm3 desktop app (desktop/preload.cjs). */

@@ -60,6 +60,8 @@ test("imports safely, edits, downloads exact source, and restores the draft afte
 test("opens a folder from disk, marks unsaved files, and writes them back with Ctrl+S", async ({ page }) => {
   // Fake File System Access handles: the real pickers cannot be driven headless.
   await page.addInitScript(() => {
+    // Auto-save to disk off: edits wait for Ctrl+S (the optional keep-a-copy way).
+    localStorage.setItem("readm3:disk-direct", "0");
     const written: Record<string, string> = {};
     (window as unknown as { written: typeof written }).written = written;
     const file = (name: string, text: string) => ({
@@ -360,6 +362,48 @@ test("in the desktop app, a file that lost its link to disk is found again, and 
   await menu.getByRole("menuitem", { name: "Close all but this tab" }).click();
   await expect(page.locator("#tabs .tab")).toHaveCount(1);
   await expect(page.locator("#document-name")).toHaveText("list.txt");
+});
+
+test("in the desktop app, edits go straight to disk by default, and a single tab can still be closed", async ({ page }) => {
+  await page.addInitScript(() => {
+    const disk = { text: "milk\n", modified: 1, writes: 0 };
+    Object.assign(window, {
+      disk,
+      readm3Desktop: {
+        takeLaunchFiles: async () => [],
+        onOpenFiles: () => {},
+        onFilesChanged: () => {},
+        pick: async () => [{ path: "/home/me/Desktop/list.txt", name: "list.txt", size: disk.text.length }],
+        reopen: async () => [],
+        readFile: async () => ({ data: new TextEncoder().encode(disk.text), modified: disk.modified }),
+        stat: async () => ({ size: disk.text.length, modified: disk.modified }),
+        readRange: async () => new Uint8Array(),
+        writeFile: async (_path: string, data: Uint8Array) => { disk.text = new TextDecoder().decode(data); disk.modified++; disk.writes++; },
+      },
+    });
+  });
+  await page.reload();
+  await page.locator("#open-files").click();
+  await expect.poll(() => editorText(page)).toContain("milk");
+  await expect(page.locator("#disk-direct")).toHaveAttribute("aria-pressed", "true");
+  // Typed here, written to the file with no Ctrl+S, and nothing left marked unsaved.
+  await page.locator("#edit-mode").click();
+  await editorInput(page).fill("milk\neggs\n");
+  await expect.poll(() => page.evaluate(() => (window as unknown as { disk: { text: string } }).disk.text)).toBe("milk\neggs\n");
+  await expect(page.locator("#save-status")).toHaveText("Saved to disk · list.txt");
+  await expect(page.locator("#document-name")).not.toHaveClass(/unsaved/);
+  // Changed on disk while another file was open: opening it again reads the disk.
+  await page.locator('#file-list button[title="Welcome.md"]').click();
+  await page.evaluate(() => { const d = (window as unknown as { disk: { text: string; modified: number } }).disk; d.text = "milk\neggs\nbread\n"; d.modified++; });
+  await page.locator('#file-list button[title="list.txt"]').click();
+  await expect.poll(() => editorText(page)).toContain("bread");
+  // One tab left still has its ×; closing it shows another file.
+  await page.locator("#tabs .tab", { hasText: "Welcome.md" }).getByRole("button", { name: /Close/ }).click();
+  await expect(page.locator("#tabs .tab")).toHaveCount(1);
+  const close = page.locator("#tabs .tab-close");
+  await expect(close).toBeVisible();
+  await close.click();
+  await expect(page.locator("#document-name")).not.toHaveText("list.txt");
 });
 
 test("in the desktop app, a PDF read from disk still opens after a restart, without opening its folder again", async ({ page }) => {

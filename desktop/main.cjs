@@ -339,23 +339,56 @@ else {
       return files;
     });
     // A workspace file that lost its link to disk (opened before 0.19.0, or it came from sync):
-    // the opened paths that end in its workspace path, so the page can read it from disk again.
-    ipcMain.handle("find-opened", async (event, relatives) => {
+    // found among the paths opened before, else in the home folder, so the page reads it from
+    // disk again without asking. Several matches: the most recently changed one.
+    ipcMain.handle("find-opened", async (event, relatives, search = false) => {
       if (!trusted(event.senderFrame?.url ?? "")) throw new Error("Not allowed.");
       if (!Array.isArray(relatives)) throw new Error("Invalid paths.");
-      const byName = new Map();
-      for (const path of opened) { const name = basename(path); const list = byName.get(name); if (list) list.push(path); else byName.set(name, [path]); }
+      const wanted = relatives.filter((relative) => typeof relative === "string" && relative && !relative.split("/").includes("..") && !NEVER.test(relative));
       const found = {};
-      for (const relative of relatives) {
-        if (typeof relative !== "string" || !relative) continue;
-        const candidates = (byName.get(basename(relative)) ?? []).filter((path) => path === relative || path.endsWith(`/${relative}`) || path.endsWith(`\\${relative.replaceAll("/", "\\")}`));
-        const files = [];
-        for (const path of candidates) {
-          try { const info = await stat(path); if (info.isFile()) files.push({ path, name: basename(path), size: info.size }); }
+      const pick = async (relative, paths) => {
+        let best;
+        for (const path of new Set(paths)) {
+          try { const info = await stat(path); if (info.isFile() && info.size <= MAX_FILE_BYTES && (!best || info.mtimeMs > best.modified)) best = { path, name: basename(path), size: info.size, modified: info.mtimeMs }; }
           catch { /* Moved or deleted. */ }
         }
-        if (files.length) found[relative] = files;
-      }
+        if (!best) return false;
+        remember(best.path);
+        found[relative] = [{ path: best.path, name: best.name, size: best.size }];
+        return true;
+      };
+      const matches = (path, relative) => path === relative || path.endsWith(`/${relative}`) || path.endsWith(`\\${relative.replaceAll("/", "\\")}`);
+      const byName = new Map();
+      for (const path of opened) { const name = basename(path); const list = byName.get(name); if (list) list.push(path); else byName.set(name, [path]); }
+      let missing = [];
+      for (const relative of wanted) if (!await pick(relative, (byName.get(basename(relative)) ?? []).filter((path) => matches(path, relative)))) missing.push(relative);
+      // Searching is asked for only by Reload on one file: a note made in readm3 must never be
+      // tied to some unrelated file of the same name.
+      if (!missing.length || search !== true) return found;
+      // The usual places first: ~/Desktop/notes.md opened as "notes.md" or "Desktop/notes.md".
+      const home = app.getPath("home");
+      const roots = [home, ...["desktop", "documents", "downloads"].map((name) => { try { return app.getPath(name); } catch { return undefined; } }).filter(Boolean), join(home, "src"), join(home, "notes")];
+      const still = [];
+      for (const relative of missing) if (!await pick(relative, roots.map((root) => join(root, relative)))) still.push(relative);
+      missing = still;
+      if (!missing.length) return found;
+      // Then a bounded walk of the home folder, for a file opened from deeper in it.
+      const names = new Map(missing.map((relative) => [basename(relative), []]));
+      const deadline = Date.now() + 4000;
+      let folders = 0;
+      const walk = async (directory, depth) => {
+        if (depth > 6 || folders++ > 50_000 || Date.now() > deadline) return;
+        let entries;
+        try { entries = await readdir(directory, { withFileTypes: true }); } catch { return; }
+        for (const entry of entries) {
+          if (entry.name.startsWith(".") || IGNORED.has(entry.name)) continue;
+          const path = join(directory, entry.name);
+          if (entry.isDirectory()) await walk(path, depth + 1);
+          else if (entry.isFile()) names.get(entry.name)?.push(path);
+        }
+      };
+      await walk(home, 0);
+      for (const relative of missing) await pick(relative, (names.get(basename(relative)) ?? []).filter((path) => matches(path, relative)));
       return found;
     });
     // "Where is this file?": the person points at it in the system dialog, and it is linked again.
