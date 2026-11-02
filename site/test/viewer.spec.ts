@@ -403,7 +403,24 @@ test("in the desktop app, edits go straight to disk by default, and a single tab
   const close = page.locator("#tabs .tab-close");
   await expect(close).toBeVisible();
   await close.click();
-  await expect(page.locator("#document-name")).not.toHaveText("list.txt");
+  // Nothing open: an empty Untitled document, kept nowhere until something is typed.
+  await expect(page.locator("#document-name")).toHaveText("Untitled.md");
+  await expect.poll(() => editorText(page)).toBe("");
+  await page.waitForTimeout(500);
+  await page.reload();
+  await expect(page.locator('#file-list button[title="Untitled.md"]')).toHaveCount(0);
+  await page.locator("#tabs .tab-close").first().click();
+  await expect(page.locator("#document-name")).toHaveText("Untitled.md");
+  await editorInput(page).fill("# Shopping\n");
+  await page.waitForTimeout(500);
+  await page.reload();
+  await expect(page.locator('#file-list button[title="Untitled.md"]')).toHaveCount(1);
+  // The toggle shows when it is on.
+  const toggle = page.locator("#disk-direct");
+  const on = await toggle.evaluate((button) => getComputedStyle(button).borderColor);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  expect(await toggle.evaluate((button) => getComputedStyle(button).borderColor)).not.toBe(on);
 });
 
 test("in the desktop app, a PDF read from disk still opens after a restart, without opening its folder again", async ({ page }) => {
