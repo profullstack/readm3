@@ -522,9 +522,11 @@ It works on every kind of file, not just text:
 | `GET /api/v1/billing/experiment` | admins: per arm accounts, payers, top-ups, summaries, revenue, model cost |
 | `POST /api/v1/billing/coinpay/webhook` | CoinPay's signed webhook (`t=…,v1=` HMAC-SHA256) |
 
-Server configuration: `ANTHROPIC_API_KEY` turns summaries on (`READM3_SUMMARY_MODEL`,
-default `claude-opus-5-5`, run at low effort) and `OPENAI_API_KEY` is the fallback when
-the Claude call fails (`READM3_OPENAI_MODEL`, default `gpt-5.2`); either one alone works.
+Server configuration: `C0MPUTE_API_KEY` turns text summaries on (`C0MPUTE_DISABLED=1` skips
+it), for prompts up to 16,000 characters. `ANTHROPIC_API_KEY` (`READM3_SUMMARY_MODEL`,
+default `claude-opus-5-5`, run at low effort) and then `OPENAI_API_KEY`
+(`READM3_OPENAI_MODEL`, default `gpt-5.2`) are the fallbacks, and the only readers of PDFs,
+images and longer prompts; any one alone works.
 `READM3_FREE_SUMMARIES_PER_WEEK` changes the free allowance (default 10).
 `ELEVENLABS_API_KEY` turns Listen on (`READM3_TTS_VOICE`, default Matilda
 `XrExE9yKIg1WjnnlVkGX`; `READM3_TTS_MODEL`, default `eleven_flash_v2_5`;

@@ -2,7 +2,7 @@ import { test, expect, describe } from "bun:test";
 import { createHmac } from "node:crypto";
 import { Store, id } from "../store.ts";
 import { createApi } from "../api.ts";
-import { ARMS, attachmentPrompt, Billing, costMicros, documentPrompt, elevenlabsSpeaker, fallbackSummarizer, MAX_IMAGE_BYTES, openaiSummarizer, priceMicros, prompt, spokenText, weekStart, type Attachment, type Speak, type Summarize } from "../billing.ts";
+import { ARMS, attachmentPrompt, Billing, c0mputeSummarizer, costMicros, documentPrompt, elevenlabsSpeaker, fallbackSummarizer, MAX_IMAGE_BYTES, openaiSummarizer, priceMicros, prompt, spokenText, weekStart, type Attachment, type Speak, type Summarize } from "../billing.ts";
 import { DOCX, zip } from "./zip.ts";
 import { Payments, verifySignature } from "../payments.ts";
 import { diffLines } from "../../src/diff.ts";
@@ -464,5 +464,25 @@ describe("experiment", () => {
     const mine = arms.find((row) => row.accounts === 1)!;
     expect(mine).toMatchObject({ payers: 1, topupMicros: 5_000_000, summaries: 1, costMicros: 6000 });
     expect(mine.chargedMicros).toBe(6000 * mine.multiplier);
+  });
+});
+
+describe("c0mpute summaries", () => {
+  const answer = async () => ({ text: "<think>hm</think> Short abstract.", model: "qwen", usage: { inputTokens: 100, outputTokens: 10, estimated: true } });
+
+  test("answers ahead of the fallbacks and is priced as c0mpute, not as the default model", async () => {
+    const claude = async () => { throw new Error("should not run"); };
+    const chain = fallbackSummarizer([{ name: "c0mpute", summarize: c0mputeSummarizer({ generate: answer }) }, { name: "anthropic", summarize: claude }])!;
+    const result = await chain("system", "prompt");
+    expect(result).toMatchObject({ text: "Short abstract.", model: "c0mpute", refused: false });
+    expect(costMicros(result.model!, result.usage)).toBeCloseTo(100 * 0.05 + 10 * 0.11);
+  });
+
+  test("hands attachments and long prompts to the fallback", async () => {
+    const generate = async () => { throw new Error("should not run"); };
+    const claude = async () => ({ text: "from claude", usage: { input_tokens: 1, output_tokens: 1 }, refused: false, model: "claude-opus-5-5" });
+    const chain = fallbackSummarizer([{ name: "c0mpute", summarize: c0mputeSummarizer({ generate }) }, { name: "anthropic", summarize: claude }])!;
+    expect((await chain("system", "x".repeat(16_001))).text).toBe("from claude");
+    expect((await chain("system", "prompt", { mime: "application/pdf", data: "AA==", name: "a.pdf" })).text).toBe("from claude");
   });
 });

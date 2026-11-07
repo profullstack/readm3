@@ -4,6 +4,7 @@
  * Public pages stay static. Account APIs use verified email identities and
  * sessions persisted on the mounted database volume.
  */
+import { C0mputeProvider } from "@profullstack/ai-providers";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { footerHtml } from "@profullstack/footer";
 import { dirname, join, normalize, sep } from "node:path";
@@ -13,7 +14,7 @@ import { Accounts } from "../server/accounts.ts";
 import { accountMailer } from "../server/account-mail.ts";
 import { Store } from "../server/store.ts";
 import { createApi } from "../server/api.ts";
-import { anthropicSummarizer, Billing, DEFAULT_MODEL, DEFAULT_OPENAI_MODEL, DEFAULT_TTS_MODEL, DEFAULT_VOICE, elevenlabsSpeaker, fallbackSummarizer, FREE_DOCUMENTS_PER_WEEK, FREE_QUESTIONS_PER_DAY, openaiSummarizer, TTS_DAILY_CHARS, TTS_MICROS_PER_CHAR, type Speak, type Summarize } from "../server/billing.ts";
+import { anthropicSummarizer, Billing, c0mputeSummarizer, DEFAULT_MODEL, DEFAULT_OPENAI_MODEL, DEFAULT_TTS_MODEL, DEFAULT_VOICE, elevenlabsSpeaker, fallbackSummarizer, FREE_DOCUMENTS_PER_WEEK, FREE_QUESTIONS_PER_DAY, openaiSummarizer, TTS_DAILY_CHARS, TTS_MICROS_PER_CHAR, type Speak, type Summarize } from "../server/billing.ts";
 import { Payments, paymentOptions, type PaymentOptions } from "../server/payments.ts";
 import { CoinPay } from "../server/coinpay.ts";
 import { createOAuth } from "../server/oauth.ts";
@@ -125,8 +126,9 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
   );
   const store = new Store(accounts.db);
   // COINPAY_OAUTH_CLIENT_ID/SECRET turn on Sign in with CoinPay; READM3_COINPAY_TRUSTED_CLIENTS lets apps call the API.
-  // ANTHROPIC_API_KEY turns on AI summaries (READM3_SUMMARY_MODEL picks the model), with
-  // OPENAI_API_KEY as the fallback when Claude fails (READM3_OPENAI_MODEL); either one alone works.
+  // C0MPUTE_API_KEY turns on AI summaries of text (C0MPUTE_DISABLED=1 skips it), with
+  // ANTHROPIC_API_KEY (READM3_SUMMARY_MODEL picks the model) and OPENAI_API_KEY
+  // (READM3_OPENAI_MODEL) as fallbacks and the readers of PDFs and images; any one alone works.
   // READM3_FREE_SUMMARIES_PER_WEEK is the free document allowance (default 10);
   // READM3_FREE_QUESTIONS_PER_DAY the free Ask AI questions per day (default 10).
   // ELEVENLABS_API_KEY turns on Listen (READM3_TTS_VOICE, READM3_TTS_MODEL, READM3_TTS_MICROS_PER_CHAR,
@@ -135,6 +137,7 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
   const model = process.env.READM3_SUMMARY_MODEL || DEFAULT_MODEL;
   const openaiModel = process.env.READM3_OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
   const summarize = options.summarize !== undefined ? options.summarize : fallbackSummarizer([
+    ...process.env.C0MPUTE_API_KEY && !/^(1|true|yes|on)$/i.test(process.env.C0MPUTE_DISABLED ?? "") ? [{ name: "c0mpute", summarize: c0mputeSummarizer(new C0mputeProvider({ apiKey: process.env.C0MPUTE_API_KEY })) }] : [],
     ...process.env.ANTHROPIC_API_KEY ? [{ name: "anthropic", summarize: anthropicSummarizer(process.env.ANTHROPIC_API_KEY, model) }] : [],
     ...process.env.OPENAI_API_KEY ? [{ name: "openai", summarize: openaiSummarizer(process.env.OPENAI_API_KEY, openaiModel) }] : [],
   ]);
