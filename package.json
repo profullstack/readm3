@@ -43,6 +43,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
+    "@profullstack/ai-providers": "0.1.2",
     "@profullstack/auth-system": "^0.8.3",
     "@profullstack/cli": "^0.1.0",
     "@profullstack/footer": "latest",

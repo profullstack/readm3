@@ -12,7 +12,8 @@
  * file. A document summary gives it the document, cut to a budget; the first few each
  * week are free (FREE_DOCUMENTS_PER_WEEK), then they are charged like any other.
  *
- * Claude writes the summaries; OpenAI is the fallback when the Claude call fails.
+ * c0mpute writes text summaries; Claude and then OpenAI are the fallbacks, and the only
+ * readers of an attached PDF or image, which c0mpute cannot take.
  *
  * Every summary is kept per account, keyed by a hash of exactly what the model was given,
  * so the same document (or change) asked for again is answered from the cache: no call,
@@ -20,6 +21,7 @@
  * audio is kept too, so it is paid for once and replays free.
  */
 import Anthropic from "@anthropic-ai/sdk";
+import type { C0mputeProvider } from "@profullstack/ai-providers";
 import { createHash } from "node:crypto";
 import { diffLines, type Diff } from "../src/diff.ts";
 import { binaryType } from "../src/code.ts";
@@ -40,6 +42,8 @@ export const ARMS = { "2x": 2, "4x": 4 } as const;
 export type Arm = keyof typeof ARMS;
 const ARM_NAMES = Object.keys(ARMS) as Arm[];
 
+/** How a c0mpute answer is recorded: the peer model varies by node, the price does not. */
+export const C0MPUTE_MODEL = "c0mpute";
 /** Micro-dollars per token for each model the summaries may use (Anthropic list prices). */
 export const MODEL_PRICES: Record<string, { input: number; output: number }> = {
   "claude-opus-5-5": { input: 4, output: 20 },
@@ -48,6 +52,9 @@ export const MODEL_PRICES: Record<string, { input: number; output: number }> = {
   // The OpenAI fallback (OpenAI list prices).
   "gpt-5.2": { input: 1.75, output: 14 },
   "gpt-5-mini": { input: 0.25, output: 2 },
+  // c0mpute bills per job. Rates fitted to its ledger on 2026-11-07: about 40 micro-dollars
+  // for a short answer, 527 for 4,700 tokens.
+  [C0MPUTE_MODEL]: { input: 0.05, output: 0.11 },
 };
 export const DEFAULT_MODEL = "claude-opus-5-5";
 export const DEFAULT_OPENAI_MODEL = "gpt-5.2";
@@ -69,6 +76,9 @@ export const MAX_IMAGE_BYTES = 3_750_000;
 export const MODEL_IMAGES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const MAX_PROMPT_CHARS = 60_000;
 const MAX_OUTPUT_TOKENS = 2_000;
+const C0MPUTE_MAX_PROMPT_CHARS = 16_000;
+const C0MPUTE_MAX_OUTPUT_TOKENS = 450;
+const C0MPUTE_TIMEOUT_MS = 270_000;
 
 export type Usage = { input_tokens: number; output_tokens: number };
 /**
@@ -151,6 +161,25 @@ export function openaiSummarizer(apiKey: string, model: string, fetchImpl: typeo
       usage: { input_tokens: data.usage?.prompt_tokens ?? 0, output_tokens: data.usage?.completion_tokens ?? 0 },
       refused: !!message?.refusal,
       model,
+    };
+  };
+}
+
+/**
+ * The same call on c0mpute, for what a peer node can finish inside nginx's 300 s read
+ * timeout: it writes about 2 tokens a second. An attachment or a longer prompt throws, so
+ * the fallback chain takes it.
+ */
+export function c0mputeSummarizer(provider: Pick<C0mputeProvider, "generate">): Summarize {
+  return async (system, prompt, attachment) => {
+    if (attachment) throw new Error("c0mpute reads no attachments");
+    if (prompt.length > C0MPUTE_MAX_PROMPT_CHARS) throw new Error(`prompt over ${C0MPUTE_MAX_PROMPT_CHARS} characters`);
+    const { text, usage } = await provider.generate({ system, user: prompt, maxTokens: C0MPUTE_MAX_OUTPUT_TOKENS, timeoutMs: C0MPUTE_TIMEOUT_MS });
+    return {
+      text: text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim(),
+      usage: { input_tokens: usage.inputTokens, output_tokens: usage.outputTokens },
+      refused: false,
+      model: C0MPUTE_MODEL,
     };
   };
 }
