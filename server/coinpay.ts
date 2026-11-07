@@ -29,6 +29,7 @@ import {
 import { createHash } from "node:crypto";
 import { saveOpenProfileContact } from "@profullstack/profile";
 import { profiles } from "./profile.ts";
+import { passFromUserinfo, type Pass } from "./pass.ts";
 
 export const COINPAY_SCOPES = "openid profile email";
 const PROVIDER = "coinpay";
@@ -54,7 +55,7 @@ export type Identity = {
   createdAt: string;
   lastUsedAt: string;
 };
-type UserInfo = { sub: string; name: string | null; email: string | null; openprofileUrl: string | null };
+type UserInfo = { sub: string; name: string | null; email: string | null; openprofileUrl: string | null; pass: Pass };
 
 export function coinpayOptions(env = process.env): CoinPayOptions {
   return {
@@ -93,6 +94,16 @@ export class CoinPay {
     string,
     { userId: string; clientId: string; until: number }
   >();
+  /** Called after every sign-in or link with the CoinPay Pass claim (site/server.ts pays it). */
+  onPass: ((userId: string, sub: string, pass: Pass) => void) | null = null;
+  private pass(userId: string, info: UserInfo) {
+    if (!this.onPass) return;
+    try {
+      this.onPass(userId, info.sub, info.pass);
+    } catch (error) {
+      console.error("[coinpay] pass grant failed:", error instanceof Error ? error.message : error);
+    }
+  }
   constructor(
     private store: Store,
     private accounts: Accounts,
@@ -172,6 +183,7 @@ export class CoinPay {
       name: str(result.body.name),
       email: str(result.body.email),
       openprofileUrl: str(result.body.openprofile_url),
+      pass: passFromUserinfo(result.body),
     };
   }
   private async importProfile(userId: string, url: string | null) {
@@ -448,10 +460,12 @@ export class CoinPay {
         const current = this.accounts.authenticate(this.accounts.token(request));
         if (current) {
           this.link(current, info);
+          this.pass(current.id, info);
           await this.importProfile(current.id, info.openprofileUrl);
           return go(pending.next ?? "/account?coinpay=linked");
         }
         const signedIn = this.provision(info, "signin");
+        this.pass(signedIn.id, info);
         await this.importProfile(signedIn.id, info.openprofileUrl);
         const session = this.accounts.startSession(
           signedIn.id,
@@ -477,6 +491,7 @@ export class CoinPay {
         throw new HttpError(400, "redirect_uri must be http://127.0.0.1:PORT/callback.");
       const info = await this.userinfo(await this.exchange(code, redirectUri, verifier));
       const signedIn = this.provision(info, "signin");
+      this.pass(signedIn.id, info);
       const token = this.store.session(signedIn, "api", "CoinPay CLI login");
       return json({ ...token, user: signedIn, identities: this.identities(signedIn.id) }, 201);
     }

@@ -129,6 +129,7 @@ export async function showTopUp(): Promise<void> {
   box.innerHTML = `<div class="dialog-header"><h2>Add funds</h2><button type="button" aria-label="Close">×</button></div>
     <p>Pay as you go, from one balance that never expires: storage over the free 5 GB is $0.05 per GB a month, and each AI summary costs ${per} what the AI call costs us, usually a fraction of a cent.</p>
     <p class="history-account">Balance ${dollars(billing.balanceMicros)}</p>
+    <p class="history-account">Deposit $99 in your CoinPay wallet and get a free month: <a href="https://coinpayportal.com/pass" target="_blank" rel="noopener">CoinPay Pass</a> ($5 of credit when you sign in with CoinPay).</p>
     <form><div class="topup-packs"></div><p class="history-account">Pay with BTC, ETH, SOL, USDC, USDT and more, or PayPal, on CoinPay.</p>
     <p class="history-error" role="alert"></p><button class="primary-action" type="submit">Continue to CoinPay</button></form>`;
   const packs = box.querySelector(".topup-packs")!;

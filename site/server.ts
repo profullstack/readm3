@@ -17,6 +17,7 @@ import { createApi } from "../server/api.ts";
 import { anthropicSummarizer, Billing, c0mputeSummarizer, DEFAULT_MODEL, DEFAULT_OPENAI_MODEL, DEFAULT_TTS_MODEL, DEFAULT_VOICE, elevenlabsSpeaker, fallbackSummarizer, FREE_DOCUMENTS_PER_WEEK, FREE_QUESTIONS_PER_DAY, openaiSummarizer, TTS_DAILY_CHARS, TTS_MICROS_PER_CHAR, type Speak, type Summarize } from "../server/billing.ts";
 import { Payments, paymentOptions, type PaymentOptions } from "../server/payments.ts";
 import { CoinPay } from "../server/coinpay.ts";
+import { applyPass } from "../server/pass.ts";
 import { createOAuth } from "../server/oauth.ts";
 import { createSyncApi } from "../server/sync-api.ts";
 import { Blobs, createBlobApi } from "../server/blobs.ts";
@@ -151,7 +152,12 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
     speak, { voice, microsPerChar: setting("READM3_TTS_MICROS_PER_CHAR", TTS_MICROS_PER_CHAR), dailyChars: setting("READM3_TTS_DAILY_CHARS", TTS_DAILY_CHARS) });
   billing.freeQuestionsPerDay = setting("READM3_FREE_QUESTIONS_PER_DAY", FREE_QUESTIONS_PER_DAY);
   const payments = new Payments(store, billing, options.payments ?? paymentOptions());
-  const api = createApi(store, accounts.origin, new CoinPay(store, accounts, options.coinpay), { billing, payments });
+  const coinpay = new CoinPay(store, accounts, options.coinpay);
+  // Profullstack Pass: the smallest top-up pack, once per pass (server/pass.ts).
+  coinpay.onPass = (userId, sub, pass) => {
+    if (applyPass(store, billing, userId, sub, pass)) console.log(`[coinpay] Profullstack Pass credit granted to ${userId}`);
+  };
+  const api = createApi(store, accounts.origin, coinpay, { billing, payments });
   const syncApi = createSyncApi(store, accounts);
   // Stored files (server/blobs.ts) live beside the database on the same volume. The free
   // allowance and the pay-as-you-go price can be changed without a release.

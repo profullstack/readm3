@@ -557,8 +557,8 @@ export class Billing {
       const row = this.store.get<{ accounts: number; payers: number; topups: number | null; summaries: number; charged: number | null; cost: number | null }>(
         `SELECT
           (SELECT COUNT(*) FROM pricing_arms WHERE arm=?1) AS accounts,
-          (SELECT COUNT(DISTINCT l.userId) FROM billing_ledger l JOIN pricing_arms p ON p.userId=l.userId WHERE p.arm=?1 AND l.kind='topup') AS payers,
-          (SELECT SUM(l.amountMicros) FROM billing_ledger l JOIN pricing_arms p ON p.userId=l.userId WHERE p.arm=?1 AND l.kind='topup') AS topups,
+          (SELECT COUNT(DISTINCT l.userId) FROM billing_ledger l JOIN pricing_arms p ON p.userId=l.userId WHERE p.arm=?1 AND l.kind='topup' AND COALESCE(l.ref,'') NOT LIKE 'coinpay-pass:%') AS payers,
+          (SELECT SUM(l.amountMicros) FROM billing_ledger l JOIN pricing_arms p ON p.userId=l.userId WHERE p.arm=?1 AND l.kind='topup' AND COALESCE(l.ref,'') NOT LIKE 'coinpay-pass:%') AS topups,
           (SELECT COUNT(*) FROM billing_ledger WHERE arm=?1 AND kind='charge' AND ref LIKE 'summary:%') AS summaries,
           (SELECT -SUM(amountMicros) FROM billing_ledger WHERE arm=?1 AND kind='charge') AS charged,
           (SELECT SUM(json_extract(detail,'$.costMicros')) FROM billing_ledger WHERE arm=?1 AND kind='charge') AS cost`,
