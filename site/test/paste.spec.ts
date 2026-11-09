@@ -51,6 +51,11 @@ test("an MP4 opened in the editor plays in the player, and another file ends it"
   await page.locator("#files-input").setInputFiles({ name: "clip.mp4", mimeType: "video/mp4", buffer: clip });
   await expect(page.locator("#document-name")).toHaveText("clip.mp4");
   await expectPlaying(page, "video");
+  // Pointing at the picture must not paint the editor's button background over it:
+  // the big play overlay is a full-size button, and `.reader-app button:hover` blanked the video.
+  const overlay = page.locator("#media-content .pux-player__overlay");
+  await overlay.hover();
+  await expect.poll(() => overlay.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
   await expect(page.locator("#edit-mode")).toBeDisabled();
   await page.locator("#files-input").setInputFiles({ name: "notes.md", mimeType: "text/markdown", buffer: Buffer.from("# Notes\n") });
   await expect(page.locator("#document-name")).toHaveText("notes.md");

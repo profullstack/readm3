@@ -1,10 +1,12 @@
 html, body.reader-app { height: 100%; overflow: hidden; }
 .reader-app { display: flex; flex-direction: column; height: 100dvh; background: var(--bg); color: var(--fg); font-size: 13px; line-height: 1.5; }
 .reader-app [hidden] { display: none !important; }
-.reader-app button, .reader-app input, .reader-app select, .reader-app textarea { font: inherit; color: var(--fg); }
-.reader-app button { cursor: pointer; border: 1px solid var(--border); border-radius: 5px; padding: 6px 11px; background: var(--surface); white-space: nowrap; }
-.reader-app button:hover { border-color: var(--muted); background: color-mix(in srgb, var(--fg) 7%, var(--surface)); }
-.reader-app button:disabled { opacity: .5; cursor: wait; }
+.reader-app button:not(.pux-player *), .reader-app input, .reader-app select, .reader-app textarea { font: inherit; color: var(--fg); }
+/* :not(.pux-player *) keeps the media player's own buttons out of these: its big play overlay is a
+   transparent button over the whole picture, and the hover background below blanked the video. */
+.reader-app button:not(.pux-player *) { cursor: pointer; border: 1px solid var(--border); border-radius: 5px; padding: 6px 11px; background: var(--surface); white-space: nowrap; }
+.reader-app button:not(.pux-player *):hover { border-color: var(--muted); background: color-mix(in srgb, var(--fg) 7%, var(--surface)); }
+.reader-app button:not(.pux-player *):disabled { opacity: .5; cursor: wait; }
 .reader-app :focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 .reader-app input, .reader-app select { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 6px; min-width: 0; }
 .reader-app .brand { color: var(--fg); font-size: 17px; }
