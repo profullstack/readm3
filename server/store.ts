@@ -108,6 +108,9 @@ export class Store {
     const pasteColumns = this.db.query("PRAGMA table_info(pastes)").all() as { name: string }[];
     if (!pasteColumns.some((column) => column.name === "language"))
       this.db.exec("ALTER TABLE pastes ADD COLUMN language TEXT");
+    // A paste kept as a file on disk (server/pastes.ts) rather than in `source`.
+    if (!pasteColumns.some((column) => column.name === "file"))
+      this.db.exec("ALTER TABLE pastes ADD COLUMN file INTEGER NOT NULL DEFAULT 0");
     const shareColumns = this.db.query("PRAGMA table_info(shares)").all() as { name: string }[];
     if (!shareColumns.some((column) => column.name === "code"))
       this.db.exec("ALTER TABLE shares ADD COLUMN code TEXT");

@@ -2,6 +2,9 @@ import { test, expect, describe } from "bun:test";
 import { Store, id } from "../store.ts";
 import { createApi } from "../api.ts";
 import { PASTE_MAX_BYTES, pasteTitle } from "../pastes.ts";
+import { mkdtempSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 function fixture() {
   const store = new Store(":memory:");
@@ -62,6 +65,103 @@ describe("anonymous pastes", () => {
     expect(big.status).toBe(413);
     expect((await call("pastes", "POST", { source: "x".repeat(PASTE_MAX_BYTES) })).status).toBe(201);
   });
+
+describe("file pastes", () => {
+  function files(options: { maxBytes?: number; storageBytes?: number } = {}) {
+    const store = new Store(":memory:");
+    const dir = mkdtempSync(join(tmpdir(), "readm3-paste-test-"));
+    const api = createApi(store, "http://localhost", undefined, undefined, { dir, ...options });
+    const send = async (route: string, init: RequestInit = {}) =>
+      (await api(new Request("http://localhost/api/v1/" + route, init), id()))!;
+    const post = async (body: BodyInit, query = "") => {
+      const response = await send("pastes" + query, { method: "POST", body, headers: { "content-type": "application/octet-stream" } });
+      return { status: response.status, data: (await response.json()) as any };
+    };
+    return { store, dir, send, post };
+  }
+  // An MP3 starts with an ID3 tag full of NUL bytes: binary by any measure.
+  const mp3 = Buffer.concat([Buffer.from("ID3\x04\x00\x00\x00\x00\x00\x00"), Buffer.alloc(300 * 1024, 7)]);
+
+  test("an MP3 sent as bare bytes is kept on disk and streamed back whole or by range", async () => {
+    const { store, dir, send, post } = files();
+    const created = await post(mp3, "?title=song.mp3");
+    expect(created.status).toBe(201);
+    expect(created.data).toMatchObject({ title: "song.mp3", mime: "audio/mpeg", language: "binary", file: true, bytes: mp3.length });
+    const token = tokenOf(created.data.url);
+    const row = store.get<{ id: string; source: string }>("SELECT id,source FROM pastes")!;
+    expect(row.source).toBe("");
+    expect(readdirSync(dir)).toEqual([row.id]);
+
+    const read = await (await send(`pastes/${token}`)).json() as any;
+    expect(read).toMatchObject({ file: true, source: "", bytes: mp3.length, mime: "audio/mpeg" });
+
+    const whole = await send(`pastes/${token}/raw`);
+    expect(whole.headers.get("content-type")).toBe("audio/mpeg");
+    expect(whole.headers.get("content-disposition")).toStartWith("inline");
+    expect(whole.headers.get("accept-ranges")).toBe("bytes");
+    expect(Buffer.from(await whole.arrayBuffer()).equals(mp3)).toBe(true);
+
+    const part = await send(`pastes/${token}/raw`, { headers: { range: "bytes=3-9" } });
+    expect(part.status).toBe(206);
+    expect(part.headers.get("content-range")).toBe(`bytes 3-9/${mp3.length}`);
+    expect(Buffer.from(await part.arrayBuffer()).equals(mp3.subarray(3, 10))).toBe(true);
+    const tail = await send(`pastes/${token}/raw`, { headers: { range: "bytes=-4" } });
+    expect(Buffer.from(await tail.arrayBuffer()).equals(mp3.subarray(-4))).toBe(true);
+    expect((await send(`pastes/${token}/raw`, { headers: { range: `bytes=${mp3.length}-` } })).status).toBe(416);
+
+    const download = await send(`pastes/${token}/raw?download=1`);
+    expect(download.headers.get("content-disposition")).toStartWith("attachment");
+
+    expect((await send(`pastes/${token}`, { method: "DELETE" })).status).toBe(200);
+    expect(readdirSync(dir)).toEqual([]);
+    expect((await send(`pastes/${token}`)).status).toBe(404);
+  });
+
+  test("small text sent as bytes stays in the database; large text becomes a file shown as text", async () => {
+    const { store, send, post } = files();
+    const small = await post("# Notes\n\nhello\n");
+    expect(small.data.file).toBe(false);
+    expect(small.data.title).toBe("Notes.md");
+
+    const log = "2026-11-09 ERROR boom\n".repeat(20000);
+    const large = await post(log, "?title=app.log");
+    expect(large.status).toBe(201);
+    expect(large.data.file).toBe(true);
+    expect(large.data.title).toBe("app.log");
+    const raw = await send(`pastes/${tokenOf(large.data.url)}/raw`);
+    expect(raw.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(await raw.text()).toBe(log);
+    expect(store.get<{ n: number }>("SELECT COUNT(*) AS n FROM pastes WHERE file=1")!.n).toBe(1);
+  });
+
+  test("an unknown binary file is an attachment of its own type", async () => {
+    const { send, post } = files();
+    const created = await post(Buffer.from([0, 1, 2, 3, 0, 0, 255]), "?title=blob.dat");
+    expect(created.data).toMatchObject({ file: true, mime: "application/octet-stream" });
+    const raw = await send(`pastes/${tokenOf(created.data.url)}/raw`);
+    expect(raw.headers.get("content-disposition")).toStartWith("attachment");
+  });
+
+  test("refuses a file over the size cap, and any new file once the storage budget is spent", async () => {
+    const capped = files({ maxBytes: 1000 });
+    expect((await capped.post(Buffer.alloc(1001, 1), "?title=a.bin")).status).toBe(413);
+    expect(readdirSync(capped.dir)).toEqual([]);
+
+    const budget = files({ storageBytes: 400 * 1024 });
+    expect((await budget.post(mp3, "?title=one.mp3")).status).toBe(201);
+    const full = await budget.post(mp3, "?title=two.mp3");
+    expect(full.status).toBe(507);
+    expect(readdirSync(budget.dir)).toHaveLength(1);
+  });
+
+  test("an expired file paste is purged with its file", async () => {
+    const { store, dir, post } = files();
+    await post(mp3, "?title=old.mp3");
+    store.run("UPDATE pastes SET expiresAt=?", new Date(Date.now() - 1000).toISOString());
+    await post("fresh");
+    expect(readdirSync(dir)).toEqual([]);
+  });
+});
 
   test("an unknown, expired or deleted link is a 404, and deletion needs only the link", async () => {
     const { store, call } = fixture();

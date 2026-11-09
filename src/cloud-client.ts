@@ -1,8 +1,11 @@
 import {
+  createReadStream,
   readFileSync,
   existsSync,
   unlinkSync,
 } from "node:fs";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { join } from "node:path";
 import { apiUrl, configDir, freshToken, writeConfig } from "./account.ts";
 export interface CloudConfig {
@@ -67,6 +70,51 @@ export async function cloudAction<T = unknown>(
     );
   return cloudRequest<T>("actions", "POST", { operation, args }, config);
 }
+/** The most a file paste may be (server/pastes.ts PASTE_FILE_MAX_BYTES). */
+export const PASTE_FILE_MAX_BYTES = 2 * 1024 ** 3;
+
+/**
+ * A file pasted as itself: streamed from disk as the request body, with its length, so
+ * a 2 GB file never sits in memory and never becomes base64. No timeout: a large file
+ * on a slow link takes as long as it takes. `onProgress` hears every chunk sent.
+ */
+export async function uploadPaste<T = unknown>(
+  path: string,
+  size: number,
+  query: Record<string, string | undefined>,
+  config = cloudConfig(),
+  onProgress?: (sent: number) => void,
+): Promise<T> {
+  const target = new URL(`${config.api || `${config.url}/api/v1`}/pastes`);
+  for (const [key, value] of Object.entries(query)) if (value) target.searchParams.set(key, value);
+  const request = target.protocol === "https:" ? httpsRequest : httpRequest;
+  return new Promise<T>((resolve, reject) => {
+    const outgoing = request(target, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream", "content-length": String(size) },
+    }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk: Buffer) => chunks.push(chunk));
+      response.on("error", reject);
+      response.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf8");
+        let value: { error?: string } = {};
+        try { value = JSON.parse(text); } catch { /* nginx or a proxy answered with a page */ }
+        if ((response.statusCode ?? 500) >= 400) {
+          const status = response.statusCode === 413 ? "The file is too large for the server." : `HTTP ${response.statusCode}`;
+          reject(new Error(value.error || status));
+        } else resolve(value as T);
+      });
+    });
+    outgoing.on("error", reject);
+    let sent = 0;
+    const stream = createReadStream(path);
+    stream.on("data", (chunk) => { sent += chunk.length; onProgress?.(sent); });
+    stream.on("error", (error) => { outgoing.destroy(error); reject(error); });
+    stream.pipe(outgoing);
+  });
+}
+
 export function pasteLocation(value: string): {
   token: string;
   config: CloudConfig;

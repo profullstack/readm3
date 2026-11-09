@@ -12,7 +12,8 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { Accounts } from "../server/accounts.ts";
 import { accountMailer } from "../server/account-mail.ts";
-import { Store } from "../server/store.ts";
+import { HttpError, Store } from "../server/store.ts";
+import { PASTE_FILE_MAX_BYTES } from "../server/pastes.ts";
 import { createApi } from "../server/api.ts";
 import { anthropicSummarizer, Billing, c0mputeSummarizer, DEFAULT_MODEL, DEFAULT_OPENAI_MODEL, DEFAULT_TTS_MODEL, DEFAULT_VOICE, elevenlabsSpeaker, fallbackSummarizer, FREE_DOCUMENTS_PER_WEEK, FREE_QUESTIONS_PER_DAY, openaiSummarizer, TTS_DAILY_CHARS, TTS_MICROS_PER_CHAR, type Speak, type Summarize } from "../server/billing.ts";
 import { Payments, paymentOptions, type PaymentOptions } from "../server/payments.ts";
@@ -117,6 +118,28 @@ function cacheFor(path: string): string {
   return "public, max-age=300";
 }
 
+/** The most any request but a file paste may send. */
+const MAX_REQUEST_BODY = 40 * 1024 * 1024;
+
+/**
+ * The request, held to `max` bytes of body: refused outright when it says it is larger,
+ * and cut off with a 413 when a body sent without a length runs past it.
+ */
+function limitBody(request: Request, max: number): Request | Response {
+  if (Number(request.headers.get("content-length")) > max)
+    return Response.json({ error: "Request too large." }, { status: 413, headers: { "cache-control": "no-store" } });
+  if (!request.body || request.headers.get("content-length")) return request;
+  let size = 0;
+  const body = request.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      size += chunk.length;
+      if (size > max) controller.error(new HttpError(413, "Request too large."));
+      else controller.enqueue(chunk);
+    },
+  }));
+  return new Request(request, { body, duplex: "half" } as RequestInit);
+}
+
 export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorParameters<typeof CoinPay>[2]; port?: number; hostname?: string; summarize?: Summarize | null; speak?: Speak | null; payments?: PaymentOptions; blobDir?: string; crawlGate?: CrawlGate | null; readGate?: ReadGate | null } = {}) {
   const listenPort = options.port ?? port;
   const database = process.env.READM3_DB || join(dirname(dist), "..", "data", "readm3.sqlite");
@@ -157,7 +180,12 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
   coinpay.onPass = (userId, sub, pass) => {
     if (applyPass(store, billing, userId, sub, pass)) console.log(`[coinpay] Profullstack Pass credit granted to ${userId}`);
   };
-  const api = createApi(store, accounts.origin, coinpay, { billing, payments });
+  // File pastes (server/pastes.ts) live beside the database too; READM3_PASTE_STORAGE_BYTES
+  // is what they may take together (10 GB by default) before new ones are refused.
+  const api = createApi(store, accounts.origin, coinpay, { billing, payments }, {
+    dir: process.env.READM3_PASTE_DIR ?? (database === ":memory:" ? undefined : join(dirname(database), "pastes")),
+    storageBytes: Number(process.env.READM3_PASTE_STORAGE_BYTES) || undefined,
+  });
   const syncApi = createSyncApi(store, accounts);
   // Stored files (server/blobs.ts) live beside the database on the same volume. The free
   // allowance and the pay-as-you-go price can be changed without a release.
@@ -180,9 +208,13 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
   return Bun.serve({
     port: listenPort,
     hostname: options.hostname ?? "0.0.0.0",
-    maxRequestBodySize: 40 * 1024 * 1024,
-    async fetch(request, server) {
-      const url = new URL(request.url);
+    // A file paste may be 2 GB, streamed to disk (server/api.ts). Every other route is
+    // held to 40 MB below, since several of them read their whole body into memory.
+    maxRequestBodySize: PASTE_FILE_MAX_BYTES + 1024 * 1024,
+    async fetch(incoming, server) {
+      const url = new URL(incoming.url);
+      const request = url.pathname === "/api/v1/pastes" ? incoming : limitBody(incoming, MAX_REQUEST_BODY);
+      if (request instanceof Response) return request;
 
       // One canonical host. Railway issues a separate edge target and certificate
       // for www, so both hosts really do serve; send www to the apex rather than
@@ -227,8 +259,8 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
 
       // Railway overwrites X-Real-IP at the edge; never trust client-supplied X-Forwarded-For.
       const ip = process.env.RAILWAY_ENVIRONMENT_ID
-        ? request.headers.get("x-real-ip") || server.requestIP(request)?.address || "unknown"
-        : server.requestIP(request)?.address || "unknown";
+        ? request.headers.get("x-real-ip") || server.requestIP(incoming)?.address || "unknown"
+        : server.requestIP(incoming)?.address || "unknown";
       const accountResponse = await accounts.handle(request, ip);
       if (accountResponse) return accountResponse;
       const oauthResponse = await oauth(request);
