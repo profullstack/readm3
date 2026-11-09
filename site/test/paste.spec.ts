@@ -40,10 +40,14 @@ test("a file paste too large for the database streams into the player, and seeks
   await page.goto(created.url);
   await expectPlaying(page, "audio");
   await expect(page.locator("#media-content audio")).toHaveAttribute("src", /\/p\/[A-Za-z0-9_-]{43}\/raw$/);
+  // The bytes live on the server; the info line still gives their real size.
+  await expect(page.locator("#document-info")).toHaveText(/^MP3 audio · 30\d(\.\d)? KB$/);
 });
 
 test("an MP4 opened in the editor plays in the player, and another file ends it", async ({ page }) => {
   await page.goto("/viewer");
+  // The file inputs are wired once the starter workspace is loaded and saved.
+  await expect(page.locator("#save-status")).toHaveText("Saved on this device");
   await page.locator("#files-input").setInputFiles({ name: "clip.mp4", mimeType: "video/mp4", buffer: clip });
   await expect(page.locator("#document-name")).toHaveText("clip.mp4");
   await expectPlaying(page, "video");

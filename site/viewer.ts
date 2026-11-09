@@ -882,6 +882,12 @@ function setMode(edit: boolean, focus = true, atEnd = false) {
 
 function documentInfo() {
   const active = kind();
+  // A file paste's bytes are on the server; the workspace copy is empty, so say its real size.
+  if (pasteDocument?.file) {
+    const label = active.kind === "binary" ? active.binary.label : pasteDocument.mime;
+    element("document-info").textContent = `${label} · ${formatStorage(pasteDocument.bytes)}`;
+    return;
+  }
   const ref = current().blob;
   if (ref) {
     const label = active.kind === "binary" ? active.binary.label : active.kind === "code" ? active.language.label : "Markdown";
