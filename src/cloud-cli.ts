@@ -1,9 +1,12 @@
 import { login as oauthLogin, logout as oauthLogout } from "@profullstack/auth-system/cli";
 import { oauthStore } from "./account.ts";
-import { pasteLocation } from "./cloud-client.ts";
-import { readFileSync } from "node:fs";
+import { PASTE_FILE_MAX_BYTES, pasteLocation, uploadPaste } from "./cloud-client.ts";
+import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { basename } from "node:path";
-import { binaryType } from "./code.ts";
+import { binaryType, looksBinary } from "./code.ts";
+
+/** The most a paste sent as JSON text may be (server/pastes.ts PASTE_MAX_BYTES). */
+const PASTE_TEXT_MAX_BYTES = 256 * 1024;
 import { MAX_SHARED_BINARY_SOURCE } from "./blob-store.ts";
 import { describeSensitive, scanSensitive, type SensitiveReport } from "./sensitive.ts";
 import {
@@ -36,6 +39,8 @@ export const CLOUD_USAGE = `Shared Markdown
                                           Private link, no account; prints the URL.
                                           Any text: Markdown renders, code is highlighted.
                                           The language is detected from the name or content.
+                                          Any file up to 2 GB (MP3, video, archive) is
+                                          streamed up as itself and plays or downloads.
   readm3 paste get URL [--raw] | delete URL
   readm3 shared update URL FILE --base VERSION
   readm3 orgs list | create --name NAME | update ID --name NAME | delete ID
@@ -159,14 +164,49 @@ export async function cloudMain(argv: string[]) {
         output({ deleted: true });
         return;
       }
-      const paste = await cloudRequest<{ source: string }>(`pastes/${token}`, "GET", undefined, config);
-      if (flags.raw) process.stdout.write(paste.source);
+      const paste = await cloudRequest<{ source: string; file?: boolean }>(`pastes/${token}`, "GET", undefined, config);
+      if (flags.raw && paste.file) {
+        // A file paste's bytes are not in the JSON: stream them from the raw link.
+        const response = await fetch(`${config.url}/p/${token}/raw?download=1`, { redirect: "error" });
+        if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+        const { Readable } = await import("node:stream");
+        const { pipeline } = await import("node:stream/promises");
+        await pipeline(Readable.fromWeb(response.body as unknown as import("node:stream/web").ReadableStream), process.stdout);
+      } else if (flags.raw) process.stdout.write(paste.source);
       else output(paste);
       return;
     }
     if (!positional[0] && process.stdin.isTTY)
       throw new Error("Give a file, or pipe one in.");
     const file = positional[0] ?? "-";
+    // A large or binary file (an MP3, a video, an archive) goes up as itself, streamed
+    // from disk, up to 2 GB; the server keeps it as a file. Small text stays a JSON paste.
+    if (file !== "-") {
+      const size = statSync(file).size;
+      if (!size) throw new Error(`${file} is empty.`);
+      const head = Buffer.alloc(Math.min(size, 8192));
+      const fd = openSync(file, "r");
+      try { readSync(fd, head, 0, head.length, 0); } finally { closeSync(fd); }
+      const binary = !!binaryType(file) || looksBinary(head.toString("utf8"));
+      if (binary || size > PASTE_TEXT_MAX_BYTES) {
+        if (size > PASTE_FILE_MAX_BYTES) throw new Error(`${file} is ${(size / 1024 ** 3).toFixed(2)} GB; a paste can be up to 2 GB.`);
+        // Text is still checked for secrets when it is small enough to read; media has none to find.
+        if (!binary && size <= 16 * 1024 * 1024) checkSensitive(readFileSync(file, "utf8"));
+        const progress = process.stderr.isTTY && size > 4 * 1024 * 1024
+          ? (sent: number) => process.stderr.write(`\rUploading ${basename(file)}… ${Math.floor((sent / size) * 100)}%`)
+          : undefined;
+        const paste = await uploadPaste<{ url: string }>(
+          file,
+          size,
+          { title: flags.title || basename(file), expiresIn: flags.expires, language: flags.language },
+          cloudConfig(),
+          progress,
+        ).finally(() => { if (progress) process.stderr.write("\n"); });
+        if (flags.json) output(paste);
+        else process.stdout.write(paste.url + "\n");
+        return;
+      }
+    }
     const source = fileSource(file);
     checkSensitive(source);
     // The file name carries the language; stdin has none, so the server sniffs the content.

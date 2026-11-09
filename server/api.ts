@@ -1,10 +1,17 @@
 import { createProfileHandlers } from "@profullstack/profile";
 import { profiles } from "./profile.ts";
-import { Store, HttpError, MAX_BINARY_SOURCE, checksum, now, text, type User } from "./store.ts";
+import { Store, HttpError, MAX_BINARY_SOURCE, checksum, id, now, text, type User } from "./store.ts";
 import { type CoinPay, isCoinPayToken } from "./coinpay.ts";
 import { operate } from "./operations.ts";
-import { createPaste, deletePaste, readPaste } from "./pastes.ts";
-import { binaryType } from "../src/code.ts";
+import { mkdirSync, readdirSync, rmSync } from "node:fs";
+import { open, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  BINARY, PASTE_FILE_MAX_BYTES, PASTE_MAX_BYTES, PASTE_STORAGE_BYTES, binaryName, createFilePaste, createPaste, deletePaste,
+  pasteStorageUsed, purgePastes, readPaste, type Paste, type PasteFiles,
+} from "./pastes.ts";
+import { binaryType, looksBinary } from "../src/code.ts";
 import type { Billing } from "./billing.ts";
 import { PACKS_USD, type Payments } from "./payments.ts";
 import { readUrl } from "./read.ts";
@@ -41,38 +48,150 @@ async function body(request: Request, max = MAX_BODY): Promise<Record<string, un
     throw new HttpError(400, "A JSON object is required.");
   }
 }
+/** An upload form is read whole by the runtime, so it stays small; bare bytes stream to disk. */
+const MAX_FORM_BODY = 64 * 1024 * 1024;
+/** Bytes of file pastes being received right now, held against the storage budget. */
+let receiving = 0;
+const gib = (bytes: number) => `${+(bytes / 1024 ** 3).toFixed(2)} GB`;
+
 /**
- * A paste sent as the file itself: an upload (`curl -F file=@app.log`), whose file
- * name is the title, or the bare bytes (`curl --data-binary @app.log`). Title,
- * expiresIn and language come from the query string or the form's other fields. A
- * PDF or image becomes the base64 a JSON paste would carry; anything else is UTF-8.
+ * A paste sent as the file itself: an upload (`curl -F file=@app.log`, up to 64 MB),
+ * whose file name is the title, or the bare bytes (`curl --data-binary @song.mp3`, up
+ * to 2 GB), which are streamed to disk and never held in memory. Title, expiresIn and
+ * language come from the query string or the form's other fields.
+ *
+ * Small text, and a PDF or image whose base64 fits, is kept in the database exactly as
+ * a JSON paste would be. Anything larger, or binary (audio, video, archives), becomes
+ * a file paste (server/pastes.ts).
  */
-async function filePaste(request: Request, url: URL): Promise<Record<string, unknown>> {
+async function filePaste(store: Store, files: PasteFiles, request: Request, url: URL) {
   const args: Record<string, unknown> = {};
   for (const key of ["title", "expiresIn", "language"])
     if (url.searchParams.has(key)) args[key] = url.searchParams.get(key);
-  let bytes: Uint8Array;
-  if (request.headers.get("content-type")?.startsWith("multipart/form-data")) {
-    if (Number(request.headers.get("content-length")) > MAX_BODY)
-      throw new HttpError(413, "Request too large.");
-    const form = await request.formData().catch(() => {
-      throw new HttpError(400, "The upload could not be read.");
-    });
-    let file: File | undefined;
-    for (const [key, value] of form) {
-      if (typeof value !== "string") file ??= value;
-      else if (["title", "expiresIn", "language"].includes(key)) args[key] ??= value;
+  const tooLarge = () => new HttpError(413, `A paste is limited to ${gib(files.maxBytes)}.`);
+  const declared = Number(request.headers.get("content-length")) || 0;
+  if (declared > files.maxBytes) throw tooLarge();
+  mkdirSync(files.dir, { recursive: true });
+  purgePastes(store, files.dir);
+  const used = pasteStorageUsed(store);
+  let reserved = 0;
+  const reserve = (bytes: number) => {
+    if (used + receiving + bytes > files.storageBytes)
+      throw new HttpError(507, "Paste storage is full right now. Try a smaller file, or try again later.");
+    receiving += bytes;
+    reserved += bytes;
+  };
+  const path = join(files.dir, `.incoming-${id()}`);
+  const head = new Uint8Array(8192);
+  let headLength = 0;
+  const keepHead = (chunk: Uint8Array) => {
+    if (headLength >= head.length) return;
+    const part = chunk.subarray(0, head.length - headLength);
+    head.set(part, headLength);
+    headLength += part.length;
+  };
+  let size = 0;
+  try {
+    if (request.headers.get("content-type")?.startsWith("multipart/form-data")) {
+      if (declared > MAX_FORM_BODY)
+        throw new HttpError(413, "An upload form is limited to 64 MB; send a larger file as bare bytes: curl --data-binary @file.");
+      const form = await request.formData().catch(() => {
+        throw new HttpError(400, "The upload could not be read.");
+      });
+      let file: File | undefined;
+      for (const [key, value] of form) {
+        if (typeof value !== "string") file ??= value;
+        else if (["title", "expiresIn", "language"].includes(key)) args[key] ??= value;
+      }
+      if (!file) throw new HttpError(400, "Send the file as a form field: -F file=@app.log");
+      if (file.size > files.maxBytes) throw tooLarge();
+      if (args.title === undefined && file.name) args.title = file.name;
+      reserve(file.size);
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      keepHead(bytes);
+      await writeFile(path, bytes);
+      size = bytes.length;
+    } else {
+      const stream = request.body?.getReader();
+      if (!stream) throw new HttpError(400, "A request body is required.");
+      const handle = await open(path, "w");
+      try {
+        while (true) {
+          const item = await stream.read();
+          if (item.done) break;
+          size += item.value.length;
+          if (size > files.maxBytes) throw tooLarge();
+          reserve(item.value.length);
+          keepHead(item.value);
+          await handle.write(item.value);
+        }
+      } catch (error) {
+        await stream.cancel().catch(() => {});
+        throw error;
+      } finally {
+        stream.releaseLock();
+        await handle.close();
+      }
     }
-    if (!file) throw new HttpError(400, "Send the file as a form field: -F file=@app.log");
-    if (file.size > MAX_BODY) throw new HttpError(413, "Request too large.");
-    if (args.title === undefined && file.name) args.title = file.name;
-    bytes = new Uint8Array(await file.arrayBuffer());
-  } else bytes = await readBytes(request, MAX_BODY);
-  const title = typeof args.title === "string" ? args.title : undefined;
-  args.source = binaryType(title)
-    ? Buffer.from(bytes).toString("base64")
-    : new TextDecoder().decode(bytes);
-  return args;
+    if (!size) throw new HttpError(400, "A source text is required.");
+    const title = typeof args.title === "string" ? args.title : undefined;
+    if (size <= PASTE_MAX_BYTES && !(binaryName(title) && !binaryType(title))) {
+      const bytes = await readFile(path);
+      if (binaryType(title)) {
+        const source = bytes.toString("base64");
+        if (source.length <= PASTE_MAX_BYTES) return createPaste(store, { ...args, source }, files.dir);
+      } else {
+        const source = new TextDecoder().decode(bytes);
+        if (!looksBinary(source)) return createPaste(store, { ...args, source }, files.dir);
+      }
+    }
+    return createFilePaste(store, files.dir, args, path, size, head.subarray(0, headLength));
+  } finally {
+    receiving -= reserved;
+    rmSync(path, { force: true });
+  }
+}
+
+/**
+ * A file paste's bytes, streamed from disk. One byte range is honoured, so an audio or
+ * video player can seek and a download can resume. Audio, video, PDFs and raster images
+ * show inline; text shows as plain text; any other file is an attachment.
+ */
+function servePasteFile(request: Request, files: PasteFiles, found: Paste, download: boolean): Response {
+  const file = Bun.file(join(files.dir, found.id));
+  const total = found.bytes;
+  const filename = `filename*=UTF-8''${encodeURIComponent(found.title)}`;
+  const binary = binaryType(found.title);
+  const media = /^(audio|video)\//.test(found.mime) || (!!binary && binary.mime !== "image/svg+xml" && binary.kind !== "document");
+  const text = found.language !== BINARY;
+  const type = download || (!media && !text) ? found.mime : text ? "text/plain; charset=utf-8" : found.mime;
+  const disposition = download || (!media && !text) ? "attachment" : "inline";
+  const base = {
+    ...headers,
+    "content-type": type,
+    "content-disposition": `${disposition}; ${filename}`,
+    "content-security-policy": "default-src 'none'; sandbox",
+    "x-robots-tag": "noindex, nofollow",
+    "accept-ranges": "bytes",
+  };
+  const range = request.headers.get("range")?.match(/^bytes=(\d*)-(\d*)$/);
+  if (!range || (!range[1] && !range[2]))
+    return new Response(file, { headers: { ...base, "content-length": String(total) } });
+  let start: number;
+  let end: number;
+  if (!range[1]) {
+    start = Math.max(0, total - Number(range[2]));
+    end = total - 1;
+  } else {
+    start = Number(range[1]);
+    end = range[2] ? Math.min(Number(range[2]), total - 1) : total - 1;
+  }
+  if (start >= total || start > end)
+    return new Response(null, { status: 416, headers: { ...base, "content-range": `bytes */${total}` } });
+  return new Response(file.slice(start, end + 1), {
+    status: 206,
+    headers: { ...base, "content-range": `bytes ${start}-${end}/${total}`, "content-length": String(end - start + 1) },
+  });
 }
 async function readBytes(request: Request, max: number): Promise<Uint8Array> {
   if (Number(request.headers.get("content-length")) > max)
@@ -136,7 +255,18 @@ export function createApi(
   configuredOrigin?: string,
   coinpay?: CoinPay,
   money?: Money,
+  pasteFiles: Partial<PasteFiles> = {},
 ) {
+  // File pastes live beside the database in production (site/server.ts); a test gets a
+  // directory of its own. An upload a restart cut off is never finished: drop it.
+  const files: PasteFiles = {
+    dir: pasteFiles.dir ?? join(tmpdir(), `readm3-pastes-${process.pid}-${id()}`),
+    maxBytes: pasteFiles.maxBytes ?? PASTE_FILE_MAX_BYTES,
+    storageBytes: pasteFiles.storageBytes ?? PASTE_STORAGE_BYTES,
+  };
+  try {
+    for (const name of readdirSync(files.dir)) if (name.startsWith(".incoming-")) rmSync(join(files.dir, name), { force: true });
+  } catch { /* No directory yet: nothing was ever received. */ }
   return async (request: Request, ip = "local"): Promise<Response | null> => {
     const url = new URL(request.url);
     if (!url.pathname.startsWith("/api/v1/")) return null;
@@ -288,12 +418,9 @@ export function createApi(
       if (paste) {
         if (!paste[1] && request.method === "POST") {
           limit(`paste-create:${ip}`, 10);
-          const created = createPaste(
-            store,
-            request.headers.get("content-type")?.startsWith("application/json")
-              ? await body(request)
-              : await filePaste(request, url),
-          );
+          const created = request.headers.get("content-type")?.startsWith("application/json")
+            ? createPaste(store, await body(request), files.dir)
+            : await filePaste(store, files, request, url);
           return json(
             {
               id: created.id,
@@ -305,6 +432,7 @@ export function createApi(
               createdAt: created.createdAt,
               expiresAt: created.expiresAt,
               bytes: created.bytes,
+              file: created.file,
               sensitive: created.sensitive,
             },
             201,
@@ -318,6 +446,7 @@ export function createApi(
           // language's own type: an HTML or SVG paste rendered on this origin would
           // run as this site. The download carries the real type, as an attachment.
           const download = url.searchParams.get("download") === "1";
+          if (found.file) return servePasteFile(request, files, found, download);
           const filename = `filename*=UTF-8''${encodeURIComponent(found.title)}`;
           // A PDF or image paste is stored as base64; its real bytes go out. A PDF or
           // raster image is safe to show inline; SVG can carry script, so it is plain text.
@@ -336,7 +465,7 @@ export function createApi(
         }
         if (paste[1] && request.method === "DELETE") {
           limit(`paste-write:${ip}`, 30);
-          deletePaste(store, paste[1]);
+          deletePaste(store, paste[1], files.dir);
           return json({ deleted: true });
         }
         throw new HttpError(

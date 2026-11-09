@@ -45,7 +45,7 @@ const cloudId = new URLSearchParams(location.search).get("doc");
 const pasteToken = location.pathname.match(/^\/p\/([A-Za-z0-9_-]{43})$/)?.[1];
 /** readm3.com/c/437301: a share link's voice code, read-only. */
 const shareCode = location.pathname.match(/^\/c\/(\d{6})$/)?.[1];
-interface PasteView { id: string; title: string; source: string; bytes: number; language: string; mime: string; createdAt: string; expiresAt: string; }
+interface PasteView { id: string; title: string; source: string; bytes: number; language: string; mime: string; file?: boolean; createdAt: string; expiresAt: string; }
 let pasteDocument: PasteView | null = null;
 let cloudSaving = false;
 const codeContent = element("code-content");
@@ -218,6 +218,10 @@ function adoptPaste(paste: PasteView) {
   element<HTMLButtonElement>("edit-mode").disabled = true;
   element("file-pane").querySelectorAll<HTMLElement>(".open-actions,.extra-actions,.filter-label,.local-note").forEach(el => el.hidden = true);
   saveStatus.textContent = `Private link · expires ${new Date(paste.expiresAt).toLocaleString()}`;
+  if (paste.file) {
+    for (const name of ["copy", "summarize", "history"]) element(name).hidden = true;
+    showFilePaste(paste);
+  }
 }
 
 async function saveCloud() {
@@ -647,6 +651,47 @@ function showMedia(blob: Blob, media: BinaryType["kind"], label: string) {
   link.rel = "noopener";
   link.textContent = "Open in a new tab";
   note.append(`${label}, shown by your browser. `, link, ", or Download to keep a copy.");
+  mediaContent.append(note);
+}
+
+/**
+ * A file paste (an MP3, a video, an archive, anything too large for the database): its
+ * bytes stay on the server and are streamed from the raw link, so audio and video play
+ * and seek without downloading the whole file first.
+ */
+function showFilePaste(paste: PasteView) {
+  content.hidden = true;
+  codeContent.hidden = true;
+  mediaContent.hidden = false;
+  codeView = null;
+  mediaContent.replaceChildren();
+  const raw = `/p/${pasteToken}/raw`;
+  const kind = paste.mime.split("/")[0];
+  if (kind === "audio" || kind === "video") {
+    const player = document.createElement(kind);
+    player.controls = true;
+    player.preload = "metadata";
+    player.src = raw;
+    if (kind === "audio") player.style.width = "min(640px, 100%)";
+    else player.style.maxWidth = "100%";
+    mediaContent.append(player);
+  } else if (kind === "image" && paste.mime !== "image/svg+xml") {
+    const image = document.createElement("img");
+    image.src = raw;
+    image.alt = paste.title;
+    mediaContent.append(image);
+  }
+  const note = document.createElement("p");
+  note.className = "media-note";
+  const open = document.createElement("a");
+  open.href = raw;
+  open.target = "_blank";
+  open.rel = "noopener";
+  open.textContent = "Open";
+  const save = document.createElement("a");
+  save.href = `${raw}?download=1`;
+  save.textContent = "Download";
+  note.append(`${paste.title} · ${formatBytes(paste.bytes)}. `, open, " or ", save, ".");
   mediaContent.append(note);
 }
 
