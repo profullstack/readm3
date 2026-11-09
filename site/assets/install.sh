@@ -56,9 +56,10 @@ main() {
     *) fail "unsupported CPU $(uname -m)" ;;
   esac
   if command -v curl >/dev/null 2>&1; then
-    fetch() { curl --proto '=https' --tlsv1.2 -fsSL "$1" -o "$2"; }
+    # Retried: GitHub's release downloads answer 502/504 for minutes at a time.
+    fetch() { curl --proto '=https' --tlsv1.2 -fsSL --retry 4 --retry-delay 3 "$1" -o "$2"; }
   elif command -v wget >/dev/null 2>&1; then
-    fetch() { wget --https-only -q "$1" -O "$2"; }
+    fetch() { wget --https-only -q --tries=5 --waitretry=3 "$1" -O "$2"; }
   else
     fail "curl or wget is required"
   fi
@@ -135,7 +136,10 @@ $BIN/$name"
   done
   IFS="$OLDIFS"
 
-  # The desktop app: the release AppImage, its launcher command, and a menu entry.
+  # The desktop app: the release AppImage, its launcher command, and a menu entry. The
+  # command-line tool is already installed by now, so a download that fails here leaves
+  # the desktop app as it was, says so, and does not fail the install.
+  DESKTOP_READY=0
   if [ "$DESKTOP" = 1 ]; then
     [ "$OS-$ARCH" = linux-x64 ] || fail "the desktop app is built for Linux x64; this is $OS-$ARCH"
     RELEASE="https://github.com/profullstack/readm3/releases/latest/download"
@@ -143,9 +147,28 @@ $BIN/$name"
     APPIMAGE="readm3-linux-x86_64.AppImage"
     DTMP="$(mktemp -d)"
     say "Downloading the readm3 desktop app ..."
-    fetch "$RELEASE/SHA256SUMS" "$DTMP/SHA256SUMS" || fail "no desktop build for this release yet"
-    fetch "$RELEASE/$APPIMAGE" "$DTMP/$APPIMAGE" || fail "cannot download $APPIMAGE"
-    (cd "$DTMP" && grep " $APPIMAGE\$" SHA256SUMS | sha256sum -c - >/dev/null) || fail "checksum mismatch for $APPIMAGE"
+    if ! fetch "$RELEASE/SHA256SUMS" "$DTMP/SHA256SUMS" || ! fetch "$RELEASE/$APPIMAGE" "$DTMP/$APPIMAGE"; then
+      say "readm3 installer: the desktop app could not be downloaded from GitHub (it may be having trouble); readm3 itself is installed. Run 'readm3 update' again later for the app." >&2
+    elif ! (cd "$DTMP" && grep " $APPIMAGE\$" SHA256SUMS | sha256sum -c - >/dev/null); then
+      say "readm3 installer: checksum mismatch for $APPIMAGE; the desktop app was left as it was." >&2
+    else
+      DESKTOP_READY=1
+    fi
+    if [ "$DESKTOP_READY" = 0 ]; then
+      rm -rf "$DTMP"
+      # An app already installed stays installed, and stays in the manifest and uninstaller.
+      if [ -x "$BIN/readm3-desktop" ]; then
+        PATHS="$PATHS
+$BIN/readm3-desktop
+$SHARE/readm3.AppImage
+$SHARE/desktop
+${XDG_DATA_HOME:-$HOME/.local/share}/applications/readm3.desktop
+${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps/readm3.png"
+        NAMES="$NAMES readm3-desktop"
+      fi
+    fi
+  fi
+  if [ "$DESKTOP_READY" = 1 ]; then
     mv "$DTMP/$APPIMAGE" "$SHARE/readm3.AppImage" && chmod 0755 "$SHARE/readm3.AppImage"
     rm -rf "$DTMP" "$SHARE/desktop"
     DESKTOP_EXEC="$SHARE/readm3.AppImage"
