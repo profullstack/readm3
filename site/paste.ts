@@ -1,7 +1,7 @@
 /**
  * readm3.com/paste: make a paste, open one, and see how the CLI, curl and MCP do it.
  *
- * A paste is text (or a PDF or image, sent as base64) behind a secret link with no
+ * A paste is text, or any file up to 2 GB sent as itself, behind a secret link with no
  * account. This page is the front door to that: a textarea that also takes a dropped
  * or chosen file, a name and expiry, and the link when it is made. Everything goes
  * through the same POST /api/v1/pastes the CLI uses.
@@ -24,10 +24,12 @@ const result = element("paste-result");
 const drop = element("paste-drop");
 const encoder = new TextEncoder();
 const gate = sensitiveGate(element("paste-sensitive"), submit);
-/** A chosen PDF or image: its base64 travels as the source while the textarea explains itself. */
-let binary: { name: string; source: string; bytes: number } | null = null;
+/** The most a file paste may be: it goes up as itself, streamed to disk on the server. */
+const PASTE_FILE_MAX_BYTES = 2 * 1024 ** 3;
+/** A chosen file sent as itself (media, a PDF or image, an archive, large text) while the textarea explains it. */
+let binary: { name: string; file: File; bytes: number } | null = null;
 
-const formatBytes = (n: number) => n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`;
+const formatBytes = (n: number) => n < 1024 ? `${n} B` : n < 1024 ** 2 ? `${(n / 1024).toFixed(1)} KB` : n < 1024 ** 3 ? `${(n / 1024 ** 2).toFixed(1)} MB` : `${(n / 1024 ** 3).toFixed(2)} GB`;
 
 function describe() {
   gate.check(binary ? null : sourceInput.value);
@@ -37,7 +39,7 @@ function describe() {
   }
   const text = sourceInput.value;
   const bytes = encoder.encode(text).length;
-  if (!text.trim()) { meta.textContent = "The language is detected from the name or the content. Up to 256 KB."; return; }
+  if (!text.trim()) { meta.textContent = "The language is detected from the name or the content. Up to 256 KB typed, or choose a file up to 2 GB."; return; }
   const language = languageOf(detectLanguage(titleInput.value.trim() || undefined, text));
   meta.textContent = `${language.label} · ${formatBytes(bytes)}${bytes > PASTE_MAX_BYTES ? " · over the 256 KB limit" : ""}`;
 }
@@ -53,26 +55,46 @@ function clearBinary() {
 
 async function takeFile(file: File) {
   error.textContent = "";
-  const kind = binaryType(file.name);
-  const cost = kind ? Math.ceil(file.size * 4 / 3) : file.size;
-  if (cost > PASTE_MAX_BYTES) { error.textContent = `${file.name} is ${formatBytes(file.size)}; a paste holds 256 KB${kind ? " of base64" : ""}.`; return; }
+  if (!file.size) { error.textContent = `${file.name} is empty.`; return; }
+  if (file.size > PASTE_FILE_MAX_BYTES) { error.textContent = `${file.name} is ${formatBytes(file.size)}; a paste can be up to 2 GB.`; return; }
   if (!titleInput.value.trim()) titleInput.value = file.name;
-  if (kind) {
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    let raw = "";
-    for (let i = 0; i < bytes.length; i += 0x8000) raw += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-    binary = { name: file.name, source: btoa(raw), bytes: file.size };
-    sourceInput.value = `${file.name}\n${kind.label}, ${formatBytes(file.size)}. Click "Create private link" to paste it.`;
+  const kind = binaryType(file.name);
+  // Anything that is not small text goes up as the file itself: audio and video then play
+  // on the link, and nothing becomes base64.
+  if (kind || file.size > PASTE_MAX_BYTES || looksBinary(await file.slice(0, 8192).text())) {
+    binary = { name: file.name, file, bytes: file.size };
+    sourceInput.value = `${file.name}\n${kind?.label ?? "File"}, ${formatBytes(file.size)}. Click "Create private link" to paste it.`;
     sourceInput.disabled = true;
     describe();
     return;
   }
   const text = await file.text();
-  if (looksBinary(text)) { error.textContent = `${file.name} is not a text file, PDF or image.`; return; }
   binary = null;
   sourceInput.disabled = false;
   sourceInput.value = text;
   describe();
+}
+
+type Created = { url: string; raw: string; title: string; language: string; expiresAt: string };
+
+/** A file sent as itself, with the upload's progress on the button (fetch cannot report it). */
+function uploadFile(file: File, title: string, expiresIn: string): Promise<Created> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api/v1/pastes?${new URLSearchParams({ title, expiresIn })}`);
+    xhr.setRequestHeader("content-type", "application/octet-stream");
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) submit.textContent = `Uploading… ${Math.floor((event.loaded / event.total) * 100)}%`;
+    };
+    xhr.onload = () => {
+      let value: { error?: string } = {};
+      try { value = JSON.parse(xhr.responseText); } catch { /* a proxy's page */ }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(value as Created);
+      else reject(new Error(value.error || (xhr.status === 413 ? "That file is too large." : `HTTP ${xhr.status}`)));
+    };
+    xhr.onerror = () => reject(new Error("The upload was interrupted. Check the connection and try again."));
+    xhr.send(file);
+  });
 }
 
 function tokenOf(input: string): string | null {
@@ -119,18 +141,20 @@ function showResult(paste: { url: string; raw: string; title: string; language: 
 form.onsubmit = async (event) => {
   event.preventDefault();
   error.textContent = "";
-  const source = binary ? binary.source : sourceInput.value;
-  if (!source.trim()) { error.textContent = "Paste something first."; sourceInput.focus(); return; }
-  if (encoder.encode(source).length > PASTE_MAX_BYTES) { error.textContent = "That is over the 256 KB limit for a paste."; return; }
+  const source = binary ? "" : sourceInput.value;
+  if (!binary && !source.trim()) { error.textContent = "Paste something first."; sourceInput.focus(); return; }
+  if (!binary && encoder.encode(source).length > PASTE_MAX_BYTES) { error.textContent = "That is over the 256 KB limit for typed text; choose it as a file instead (up to 2 GB)."; return; }
   if (gate.blocked()) { element("paste-sensitive").querySelector("input")?.focus(); return; }
   submit.disabled = true;
   submit.textContent = "Creating…";
   try {
-    const paste = await request<{ url: string; raw: string; title: string; language: string; expiresAt: string }>("pastes", "POST", {
-      source,
-      title: binary ? binary.name : titleInput.value.trim() || undefined,
-      expiresIn: expiresInput.value,
-    });
+    const paste = binary
+      ? await uploadFile(binary.file, binary.name, expiresInput.value)
+      : await request<Created>("pastes", "POST", {
+        source,
+        title: titleInput.value.trim() || undefined,
+        expiresIn: expiresInput.value,
+      });
     showResult(paste);
   } catch (cause) {
     showError(error, cause);

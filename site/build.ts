@@ -559,12 +559,19 @@ const bundled = await Bun.build({
 if (!bundled.success) throw new AggregateError(bundled.logs, "Viewer build failed");
 const chunks: string[] = [];
 let script = "";
+// The player's streaming engines (hls.js, mpegts.js: ~880 KB) load only for an HLS or
+// MPEG-TS source, which readm3 never plays (audio and MP4 use the browser's own decoder),
+// so they stay out of the offline precache rather than ride along with every install.
+const streamingEngine = (text: string) => /hls\.js version|mpegts\.js\.LICENSE/.test(text);
 for (const output of bundled.outputs) {
   const path = `/viewer-assets/${output.path.replace(/^\.\//, "")}`;
-  write(path.slice(1), await output.text());
-  if (output.kind === "entry-point") script = path; else chunks.push(path);
+  const text = await output.text();
+  write(path.slice(1), text);
+  if (output.kind === "entry-point") script = path; else if (!streamingEngine(text)) chunks.push(path);
 }
-const viewerCss = asset("viewer.css", readFileSync(join(here, "assets/viewer.css"), "utf8"));
+// The media player's own control bar (@profullstack/player) rides along with the editor's styles.
+const playerCss = readFileSync(join(root, "node_modules/@profullstack/player/dist/player.css"), "utf8");
+const viewerCss = asset("viewer.css", `${readFileSync(join(here, "assets/viewer.css"), "utf8")}\n${playerCss}`);
 const accountBundle = await Bun.build({ entrypoints: [join(here, "account.ts")], target: "browser", minify: true });
 if (!accountBundle.success) throw new AggregateError(accountBundle.logs, "Account build failed");
 const accountScript = asset("account.js", await accountBundle.outputs[0].text());

@@ -18,8 +18,8 @@ export const MAX_FILE_BYTES = 4 * 1024 * 1024;
 export const MAX_WORKSPACE_BYTES = 20 * 1024 * 1024;
 export const MAX_FILES = 1000;
 const IGNORED = new Set(["node_modules", "dist", "build", "out", "target", "vendor", "coverage", "venv", "__pycache__", ".git"]);
-/** Files that are never text and never viewable, so they are skipped without being read. */
-const NEVER = /\.(?:zip|gz|tgz|bz2|xz|7z|rar|tar|exe|dll|so|dylib|o|a|class|jar|war|wasm|bin|dat|db|sqlite|sqlite3|mp3|mp4|m4a|mov|avi|mkv|webm|ogg|wav|flac|woff2?|ttf|otf|eot|psd|ai|iso|dmg|pkg|deb|rpm|apk|lock)$/i;
+/** Files that are never text and never viewable, so they are skipped without being read. Audio and video play. */
+const NEVER = /\.(?:zip|gz|tgz|bz2|xz|7z|rar|tar|exe|dll|so|dylib|o|a|class|jar|war|wasm|bin|dat|db|sqlite|sqlite3|avi|woff2?|ttf|otf|eot|psd|ai|iso|dmg|pkg|deb|rpm|apk|lock)$/i;
 
 /**
  * Whether a path may enter the workspace: not hidden, not build output, not a known

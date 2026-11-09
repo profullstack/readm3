@@ -19,7 +19,8 @@ import { awaitTopUp, showHistory, showTopUp } from "./history-panel.ts";
 import { showSummary } from "./summary-panel.ts";
 import { showAsk } from "./ask-panel.ts";
 import { openPalette, rank, type PaletteItem } from "./palette.ts";
-import { binaryType, detectLanguage, languageForName, looksBinary, MARKDOWN, type BinaryType } from "../src/code.ts";
+import { binaryType, detectLanguage, isPlayable, languageForName, looksBinary, MARKDOWN, type BinaryType } from "../src/code.ts";
+import { createPlayer, type PlayerHandle } from "@profullstack/player";
 import { accepts, bytesOf, comparePaths, kindOf, MAX_FILE_BYTES, MAX_FILES, MAX_WORKSPACE_BYTES, persist, rawUrl, restore, toBase64, type Document, type Workspace } from "./workspace.ts";
 
 /** The starter workspace's content-addressed URL, defined by the build. */
@@ -162,7 +163,8 @@ function applyKind() {
   element("code-tools").hidden = current.kind !== "code" || isTable();
   element("copy").hidden = current.kind === "binary" || isLarge();
   // Any file can be summarized but text too large to open here (a large PDF or image still can).
-  element("summarize").hidden = isLarge() && current.kind !== "binary";
+  // Audio and video have nothing to read.
+  element("summarize").hidden = (isLarge() && current.kind !== "binary") || (current.kind === "binary" && isPlayable(current.binary)) || !!pasteDocument?.file;
   element("file-mark").textContent = current.kind === "markdown" ? "M↓" : current.kind === "code" ? current.language.extensions[0]!.toUpperCase()
     : current.binary.kind === "document" ? workspace.active.split(".").at(-1)!.toUpperCase() : current.binary.label.split(" ")[0]!.toUpperCase();
   element<HTMLButtonElement>("edit-mode").disabled = current.kind === "binary" || isLarge() || !!pasteDocument || (!!cloudDocument && !cloudDocument.canEdit);
@@ -218,10 +220,7 @@ function adoptPaste(paste: PasteView) {
   element<HTMLButtonElement>("edit-mode").disabled = true;
   element("file-pane").querySelectorAll<HTMLElement>(".open-actions,.extra-actions,.filter-label,.local-note").forEach(el => el.hidden = true);
   saveStatus.textContent = `Private link · expires ${new Date(paste.expiresAt).toLocaleString()}`;
-  if (paste.file) {
-    for (const name of ["copy", "summarize", "history"]) element(name).hidden = true;
-    showFilePaste(paste);
-  }
+  if (paste.file) for (const name of ["copy", "summarize", "history"]) element(name).hidden = true;
 }
 
 async function saveCloud() {
@@ -602,14 +601,53 @@ function renderMedia(mime: string, media: BinaryType["kind"], label: string) {
   showMedia(new Blob([bytesOf(current()).buffer as ArrayBuffer], { type: mime }), media, label);
 }
 
+/** The one media player on screen, and the file it plays; any other file shown ends it. */
+let player: PlayerHandle | null = null;
+let playerFor: string | null = null;
+function stopPlayer() {
+  player?.destroy();
+  player = null;
+  playerFor = null;
+}
+
+/**
+ * Audio or video in @profullstack/player: one control bar for every format, keyboard
+ * control, a remembered volume and speed, and a resume position per file. `src` is a
+ * blob URL for a file in the editor, or the streamed raw link of a file paste.
+ */
+function mountPlayer(src: string, media: "audio" | "video", mime: string, mediaId: string) {
+  stopPlayer();
+  const stage = document.createElement("div");
+  stage.className = `media-player media-player-${media}`;
+  mediaContent.append(stage);
+  player = createPlayer(stage, {
+    src,
+    mimeType: mime,
+    kind: media === "audio" ? "audio" : "mp4",
+    audio: media === "audio",
+    mediaId: `readm3:${mediaId}`,
+    unplayableAdvice: "Download it and open it in your own player.",
+  });
+  playerFor = workspace.active;
+}
+
 function showMedia(blob: Blob, media: BinaryType["kind"], label: string) {
   content.hidden = true;
   codeContent.hidden = true;
   mediaContent.hidden = false;
   codeView = null;
+  stopPlayer();
   if (mediaUrl) URL.revokeObjectURL(mediaUrl);
   mediaUrl = URL.createObjectURL(blob);
   mediaContent.replaceChildren();
+  if (media === "audio" || media === "video") {
+    mountPlayer(mediaUrl, media, blob.type, current().path);
+    const note = document.createElement("p");
+    note.className = "media-note";
+    note.textContent = `${label} · ${formatBytes(blob.size)}. Space plays and pauses, the arrows seek; Download keeps a copy.`;
+    mediaContent.append(note);
+    return;
+  }
   if (media === "document") {
     const card = document.createElement("div");
     card.className = "media-card";
@@ -660,6 +698,8 @@ function showMedia(blob: Blob, media: BinaryType["kind"], label: string) {
  * and seek without downloading the whole file first.
  */
 function showFilePaste(paste: PasteView) {
+  if (previousRender === "paste-file") return;
+  previousRender = "paste-file";
   content.hidden = true;
   codeContent.hidden = true;
   mediaContent.hidden = false;
@@ -668,13 +708,7 @@ function showFilePaste(paste: PasteView) {
   const raw = `/p/${pasteToken}/raw`;
   const kind = paste.mime.split("/")[0];
   if (kind === "audio" || kind === "video") {
-    const player = document.createElement(kind);
-    player.controls = true;
-    player.preload = "metadata";
-    player.src = raw;
-    if (kind === "audio") player.style.width = "min(640px, 100%)";
-    else player.style.maxWidth = "100%";
-    mediaContent.append(player);
+    mountPlayer(raw, kind, paste.mime, `paste:${paste.id}`);
   } else if (kind === "image" && paste.mime !== "image/svg+xml") {
     const image = document.createElement("img");
     image.src = raw;
@@ -749,6 +783,10 @@ function renderStored() {
 
 function renderDocument() {
   if (!workspace || editing) return;
+  // A file paste's bytes are on the server, never in the workspace copy: always its own view.
+  if (pasteDocument?.file) { showFilePaste(pasteDocument); return; }
+  // Switching to another file ends the player; re-rendering the same one keeps it playing.
+  if (playerFor !== null && playerFor !== workspace.active) stopPlayer();
   if (current().blob) { renderStored(); progress(); return; }
   const active = kind();
   if (active.kind === "code") {
@@ -926,7 +964,12 @@ function addDocuments(incoming: Document[], name?: string): Document[] {
   return added;
 }
 
-async function importFiles(files: disk.Picked[], name = "Your workspace") {
+/**
+ * `folder` is a whole folder walked at once: there a large audio or video file is left
+ * out unless it stays on disk, so opening a project never copies a media library into
+ * the account. One picked or dropped by itself always opens.
+ */
+async function importFiles(files: disk.Picked[], name = "Your workspace", folder = false) {
   if (importBusy) return;
   importBusy = true;
   try {
@@ -937,6 +980,7 @@ async function importFiles(files: disk.Picked[], name = "Your workspace") {
     let needAccount = 0;
     let overCount = 0;
     let unreadable = 0;
+    let media = 0;
     const existing = new Map(workspace.documents.map((doc) => [doc.path, doc]));
     for (const { file, path, handle, size = file.size, onDisk } of files) {
       if (!accepts(path)) continue;
@@ -946,6 +990,7 @@ async function importFiles(files: disk.Picked[], name = "Your workspace") {
       const cost = binaryType(path) ? Math.ceil(size * 4 / 3) : size;
       // A large file, PDF or image the desktop app opened stays on disk and is read from there: no copy.
       const readFromDisk = !!onDisk && !!handle && (cost > MAX_FILE_BYTES || !!binaryType(path));
+      if (folder && !readFromDisk && cost > MAX_FILE_BYTES && isPlayable(binaryType(path))) { media++; continue; }
       if (cost > MAX_FILE_BYTES || readFromDisk) {
         // Larger files are stored apart as they are (site/blobs.ts), which needs an account.
         if (!signedIn && (!readFromDisk || incoming.length >= MAX_FILES)) { needAccount++; continue; }
@@ -990,11 +1035,12 @@ async function importFiles(files: disk.Picked[], name = "Your workspace") {
       for (const doc of added) if (!binaryType(doc.path) && !doc.blob) void fileHistory.record(doc.path, doc.source, "opened");
       if (handles.some(Boolean)) { void disk.storeEntries(diskEntries); renderFiles(); void save(); }
     }
-    else if (!needAccount) notice(`No readable files found. Open text files (Markdown, JSON, code, config), PDFs or images up to ${signedIn ? "5 GB" : "4 MB"}.`);
+    else if (!needAccount && !media) notice(`No readable files found. Open text files (Markdown, JSON, code, config), PDFs or images up to ${signedIn ? "5 GB" : "4 MB"}.`);
     if (needAccount) notice(`${needAccount} file(s) skipped: over 4 MB, or past 20 MB and 1,000 files, without an account. ${ACCOUNT_LIMITS}`);
     if (skipped) notice(`${skipped} file(s) skipped: larger than 5 GB.`);
     if (overCount) notice(`${overCount} file(s) skipped: a workspace holds up to ${MAX_ACCOUNT_FILES.toLocaleString()} files.`);
-    if (unreadable) notice(`${unreadable} file(s) skipped: not text, a PDF, an image or an office document.`);
+    if (unreadable) notice(`${unreadable} file(s) skipped: not text, a PDF, an image, audio, video or an office document.`);
+    if (media) notice(`${media} audio or video file(s) over 4 MB left out of the folder. Open one by itself to play it.`);
   } catch (error) {
     notice(error instanceof DOMException && error.name === "QuotaExceededError"
       ? "This device's browser storage is full. Free some space, or open fewer large files."
@@ -1221,7 +1267,7 @@ const reading: disk.Progress = (done, total) => {
 async function openFromDisk(folder: boolean) {
   if (!disk.supported()) { (folder ? folderInput : filesInput).click(); return; }
   try {
-    if (folder) { const picked = await disk.pickFolder(reading); if (picked) await importFiles(picked.files, picked.name); }
+    if (folder) { const picked = await disk.pickFolder(reading); if (picked) await importFiles(picked.files, picked.name, true); }
     else { const picked = await disk.pickFiles(reading); if (picked) await importFiles(picked); }
   } catch (error) { notice(error instanceof Error ? error.message : "Could not open from disk."); }
 }
@@ -1365,7 +1411,7 @@ function bindEvents() {
   element("open-files").onclick = () => void openFromDisk(false);
   element("open-folder").onclick = () => void openFromDisk(true);
   filesInput.onchange = () => void importFiles(copies(filesInput.files ?? []));
-  folderInput.onchange = () => void importFiles(copies(folderInput.files ?? []));
+  folderInput.onchange = () => void importFiles(copies(folderInput.files ?? []), undefined, true);
   element("new-file").onclick = () => { addDocuments([{ path: "Untitled.md", source: "# Untitled\n\n" }]); setMode(true, true, true); };
   filter.oninput = () => renderFiles();
   element("read-mode").onclick = () => setMode(false);
