@@ -1,4 +1,57 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+// One second of tone (MP3) and of test pattern (VP9 in MP4): codecs the open-source
+// Chromium Playwright drives can decode, so the player is seen to really play.
+const tone = readFileSync(join(import.meta.dirname, "fixtures/tone.mp3"));
+const clip = readFileSync(join(import.meta.dirname, "fixtures/clip.mp4"));
+
+/** @profullstack/player is on screen with its bar, and its media element decoded the file. */
+async function expectPlaying(page: Page, tag: "audio" | "video") {
+  const root = page.locator("#media-content .pux-player");
+  await expect(root).toBeVisible();
+  await expect(root.locator("[data-control='play']")).toBeVisible();
+  const media = root.locator(tag);
+  await expect(media).toHaveCount(1);
+  await expect.poll(() => media.evaluate((el: HTMLMediaElement) => el.duration), { timeout: 10_000 }).toBeGreaterThan(0.5);
+  await media.evaluate((el: HTMLMediaElement) => { el.muted = true; return el.play(); });
+  await expect.poll(() => media.evaluate((el: HTMLMediaElement) => el.currentTime)).toBeGreaterThan(0);
+}
+
+test("an MP3 chosen on the paste page is pasted as itself and plays in the player", async ({ page }) => {
+  await page.goto("/paste");
+  await page.locator("#paste-file").setInputFiles({ name: "tone.mp3", mimeType: "audio/mpeg", buffer: tone });
+  await expect(page.locator("#paste-meta")).toContainText("tone.mp3");
+  await page.locator("#paste-submit").click();
+  const link = await page.locator("#paste-result .copy-value input").inputValue();
+  await page.goto(link);
+  await expectPlaying(page, "audio");
+  await expect(page.locator("#summarize")).toBeHidden();
+});
+
+test("a file paste too large for the database streams into the player, and seeks by range", async ({ page, request }) => {
+  // Concatenated MP3 frames are still an MP3: ~300 KB, past the 256 KB kept in the database.
+  const long = Buffer.concat(Array.from({ length: 70 }, () => tone));
+  const created = await (await request.post("/api/v1/pastes?title=long.mp3", { headers: { "content-type": "application/octet-stream" }, data: long })).json();
+  expect(created.file).toBe(true);
+  const range = await request.get(`${created.raw}`, { headers: { range: "bytes=0-1023" } });
+  expect(range.status()).toBe(206);
+  await page.goto(created.url);
+  await expectPlaying(page, "audio");
+  await expect(page.locator("#media-content audio")).toHaveAttribute("src", /\/p\/[A-Za-z0-9_-]{43}\/raw$/);
+});
+
+test("an MP4 opened in the editor plays in the player, and another file ends it", async ({ page }) => {
+  await page.goto("/viewer");
+  await page.locator("#files-input").setInputFiles({ name: "clip.mp4", mimeType: "video/mp4", buffer: clip });
+  await expect(page.locator("#document-name")).toHaveText("clip.mp4");
+  await expectPlaying(page, "video");
+  await expect(page.locator("#edit-mode")).toBeDisabled();
+  await page.locator("#files-input").setInputFiles({ name: "notes.md", mimeType: "text/markdown", buffer: Buffer.from("# Notes\n") });
+  await expect(page.locator("#document-name")).toHaveText("notes.md");
+  await expect(page.locator(".pux-player")).toHaveCount(0);
+});
 
 test("the paste page makes a paste from text, links to it, and opens one by link", async ({ page }) => {
   await page.goto("/paste");

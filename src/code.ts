@@ -128,7 +128,8 @@ const AUTO_DETECT = LANGUAGES.filter((language) => language.auto !== false).map(
  * image through <img>; an office document or e-book it cannot show, so it is kept to
  * download or summarize. Their bytes travel as base64 in `source`.
  */
-export interface BinaryType { kind: "pdf" | "image" | "document"; mime: string; label: string }
+/** Audio and video play in @profullstack/player on the web; the rest the browser shows, or a card. */
+export interface BinaryType { kind: "pdf" | "image" | "document" | "audio" | "video"; mime: string; label: string }
 const OOXML = "application/vnd.openxmlformats-officedocument";
 const ODF = "application/vnd.oasis.opendocument";
 const BINARY_TYPES: Record<string, BinaryType> = {
@@ -152,7 +153,27 @@ const BINARY_TYPES: Record<string, BinaryType> = {
   ods: { kind: "document", mime: `${ODF}.spreadsheet`, label: "OpenDocument spreadsheet" },
   odp: { kind: "document", mime: `${ODF}.presentation`, label: "OpenDocument presentation" },
   epub: { kind: "document", mime: "application/epub+zip", label: "EPUB book" },
+  mp3: { kind: "audio", mime: "audio/mpeg", label: "MP3 audio" },
+  m4a: { kind: "audio", mime: "audio/mp4", label: "M4A audio" },
+  aac: { kind: "audio", mime: "audio/aac", label: "AAC audio" },
+  wav: { kind: "audio", mime: "audio/wav", label: "WAV audio" },
+  flac: { kind: "audio", mime: "audio/flac", label: "FLAC audio" },
+  ogg: { kind: "audio", mime: "audio/ogg", label: "Ogg audio" },
+  oga: { kind: "audio", mime: "audio/ogg", label: "Ogg audio" },
+  opus: { kind: "audio", mime: "audio/ogg", label: "Opus audio" },
+  weba: { kind: "audio", mime: "audio/webm", label: "WebM audio" },
+  mp4: { kind: "video", mime: "video/mp4", label: "MP4 video" },
+  m4v: { kind: "video", mime: "video/mp4", label: "M4V video" },
+  webm: { kind: "video", mime: "video/webm", label: "WebM video" },
+  mov: { kind: "video", mime: "video/quicktime", label: "QuickTime video" },
+  ogv: { kind: "video", mime: "video/ogg", label: "Ogg video" },
+  mkv: { kind: "video", mime: "video/x-matroska", label: "Matroska video" },
 };
+
+/** Whether a binary type is something to play: audio or video. */
+export function isPlayable(binary: BinaryType | undefined): boolean {
+  return binary?.kind === "audio" || binary?.kind === "video";
+}
 
 /** The binary type a file name maps to, or undefined for text (which includes unknown names). */
 export function binaryType(name: string | null | undefined): BinaryType | undefined {
