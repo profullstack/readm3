@@ -211,6 +211,15 @@ main { max-width: var(--measure); margin: 0 auto; padding: 0 1.5rem 4rem; }
 .section-head p { color: var(--page-dim); margin: 0; }
 .section-head code { color: var(--page-fg); }
 
+/* /privacy and /terms: one readable column of prose. */
+.legal { max-width: 46rem; padding-top: 0.5rem; line-height: 1.65; }
+.legal h2 { font-size: 1.2rem; font-weight: 620; margin: 2rem 0 0.6rem; }
+.legal p, .legal li { color: var(--page-dim); }
+.legal strong, .legal code { color: var(--page-fg); }
+.legal ul { padding-left: 1.25rem; }
+.legal li { margin: 0.4rem 0; }
+.legal a { color: var(--page-accent); }
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));

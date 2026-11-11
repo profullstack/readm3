@@ -19,6 +19,7 @@ import { VERSION } from "../src/cli.ts";
 import { footerHtml } from "@profullstack/footer";
 import { COLUMNS as PROFILE_COLUMNS, PROFILE_ENHANCE_SCRIPT, renderProfileFields } from "@profullstack/profile";
 import { LANGUAGES } from "../src/code.ts";
+import { LEGAL_PATHS, privacyMain, termsMain } from "./legal.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -41,6 +42,8 @@ const FOOTER_OPTIONS = {
     { label: "Sharing & API", href: "/sharing" },
     { label: "Source", href: REPO },
     { label: "npm", href: NPM },
+    { label: "Privacy", href: "/privacy" },
+    { label: "Terms", href: "/terms" },
   ],
 };
 const PFS_FOOTER = await footerHtml(FOOTER_OPTIONS);
@@ -172,6 +175,8 @@ function themeSwitch(): string {
 }
 
 function shell(options: { title: string; description: string; path: string; main: string; jsonLd: unknown }): string {
+  // No ad unit on the home page or the legal pages.
+  const ads = options.path !== "/" && !(LEGAL_PATHS as readonly string[]).includes(options.path);
   const canonical = options.path === "/" ? SITE : `${SITE}${options.path}`;
   return `<!doctype html>
 <html lang="en">
@@ -211,13 +216,13 @@ function shell(options: { title: string; description: string; path: string; main
   </nav>
 </header>
 <main id="main">
-${options.path === "/" ? "" : `<div class="top-ad"><aside data-cp-ad data-slot="${CP_SLOT}" data-format="text_link"></aside></div>`}
+${!ads ? "" : `<div class="top-ad"><aside data-cp-ad data-slot="${CP_SLOT}" data-format="text_link"></aside></div>`}
 ${options.main}
 </main>
 ${FOOTER}
 <script src="/app.js" defer></script>
 <script data-site="${CP_PROJECT}" src="https://crawlproof.com/stats.js" async></script>
-${options.path === "/" ? "" : `<script src="https://crawlproof.com/ad.js" async></script>`}
+${!ads ? "" : `<script src="https://crawlproof.com/ad.js" async></script>`}
 </body>
 </html>
 `;
@@ -416,6 +421,8 @@ const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
   <url><loc>${SITE}/talk</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
   <url><loc>${SITE}/sharing</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>${SITE}/docs</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>${SITE}/privacy</loc><lastmod>${today}</lastmod><changefreq>yearly</changefreq><priority>0.2</priority></url>
+  <url><loc>${SITE}/terms</loc><lastmod>${today}</lastmod><changefreq>yearly</changefreq><priority>0.2</priority></url>
 </urlset>
 `;
 
@@ -515,6 +522,20 @@ write("sharing/index.html", shell({
   path: "/sharing",
   main: `<section class="hero hero-tight"><p class="eyebrow">Working together</p><h1>Editing, sharing, and your tools.</h1>${INSTALL_BOX}<p class="lede">The same documents and permissions, wherever you work.</p></section>${pane({ title: "sharing.md", body: render(readFileSync(join(here, "content/sharing.md"), "utf8"), 100), percent: "100%" })}`,
   jsonLd: { "@context": "https://schema.org", "@type": "TechArticle", headline: "Markdown sharing, teams, CLI, API and MCP" },
+}));
+write("privacy/index.html", shell({
+  title: "Privacy Policy | readm3",
+  description: "What readm3 stores, why, and who else is involved, including its API and MCP server.",
+  path: "/privacy",
+  main: privacyMain(SITE),
+  jsonLd: { "@context": "https://schema.org", "@type": "WebPage", name: "Privacy Policy", url: `${SITE}/privacy` },
+}));
+write("terms/index.html", shell({
+  title: "Terms of Service | readm3",
+  description: "The terms for using readm3, its API and its MCP server.",
+  path: "/terms",
+  main: termsMain(SITE),
+  jsonLd: { "@context": "https://schema.org", "@type": "WebPage", name: "Terms of Service", url: `${SITE}/terms` },
 }));
 write("styles.css", css);
 write("robots.txt", robots);
