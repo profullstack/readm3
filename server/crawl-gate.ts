@@ -21,7 +21,8 @@ export function createCrawlGate(env: Record<string, string | undefined> = proces
     coinpay: { apiKey },
     payTo,
     contact: "mailto:anthony@profullstack.com",
-    openPaths: ["/api/", "/oauth/", "/llms.txt"],
+    // The legal pages stay readable by every crawler: a connector directory's review bot reads them.
+    openPaths: ["/api/", "/oauth/", "/llms.txt", "/privacy", "/terms", "/privacy/", "/terms/", "/privacy.html", "/terms.html"],
     exempt: (request: Request) => /(?:^|;\s*)(?:__Host-)?readm3_session=/.test(request.headers.get("cookie") ?? ""),
   });
 }
