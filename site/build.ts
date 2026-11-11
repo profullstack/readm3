@@ -192,6 +192,8 @@ function shell(options: { title: string; description: string; path: string; main
 <meta property="og:site_name" content="readm3">
 <meta name="twitter:card" content="summary">
 <script type="application/ld+json">${embedJson(options.jsonLd)}</script>
+<!-- WebMCP (@profullstack/webmcp): tools for the AI agent in the visitor's browser -->
+<script type="module" data-webmcp src="https://cdn.jsdelivr.net/npm/@profullstack/webmcp@0/src/embed.js" data-mcp="/mcp" data-pages='{"editor":"/viewer","paste":"/paste","talk":"/talk","docs":"/docs","sharing":"/sharing"}'></script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
