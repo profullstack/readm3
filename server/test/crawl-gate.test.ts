@@ -31,4 +31,10 @@ describe("crawl gate", () => {
     expect(await ask("/", { "user-agent": GPT, cookie: "__Host-readm3_session=x" })).toBeNull();
     expect(await ask("/api/health", { "user-agent": GPT })).toBeNull();
   });
+  test("leaves the privacy policy and terms open to every crawler", async () => {
+    const CLAUDE = "Mozilla/5.0 (compatible; ClaudeBot/1.0; +claudebot@anthropic.com)";
+    for (const path of ["/privacy", "/terms", "/privacy/", "/terms/", "/privacy.html", "/terms.html"])
+      for (const ua of [GPT, CLAUDE]) expect([path, await ask(path, { "user-agent": ua })]).toEqual([path, null]);
+    expect((await ask("/privacy-not", { "user-agent": GPT }))?.status).toBe(402);
+  });
 });
