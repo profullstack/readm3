@@ -15,7 +15,7 @@ import { TABLE_LANGUAGE } from "../src/csv.ts";
 import type { SourceEditor } from "./code-editor.ts";
 import * as disk from "./disk.ts";
 import * as fileHistory from "./history.ts";
-import { awaitTopUp, showHistory, showTopUp } from "./history-panel.ts";
+import { awaitTopUp, openCheckout, showHistory } from "./history-panel.ts";
 import { showSummary } from "./summary-panel.ts";
 import { showAsk } from "./ask-panel.ts";
 import { openPalette, rank, type PaletteItem } from "./palette.ts";
@@ -501,7 +501,7 @@ function commands(): PaletteItem[] {
       command("File: Close all but this tab", () => closeOtherTabs(workspace.active)),
       command("File: Close all tabs", closeAllTabs),
       command("File: History", openHistory),
-      command("Billing: Add funds", () => void showTopUp()),
+      command("Billing: Add funds", () => openCheckout("palette")),
       command("Billing: Usage and limits", showUsage),
       command("Sync: Sync this workspace to your account", () => element("sync-workspace").click()),
     ] : [],
@@ -1056,13 +1056,13 @@ async function importFiles(files: disk.Picked[], name = "Your workspace", folder
 }
 
 /** Ask AI about the open file, a folder it is in, or the workspace: text as it reads now. */
-function askAi() { void showAsk(() => workspace.documents, workspace.active, () => void showTopUp()); }
+function askAi() { void showAsk(() => workspace.documents, workspace.active, () => openCheckout("ask")); }
 
 /** An AI summary of the open document: text as it reads now (unsaved edits included), or the file itself. */
 function summarize() {
   const doc = current();
   const active = kind();
-  const topUp = () => void showTopUp();
+  const topUp = () => openCheckout("summary");
   if (active.kind !== "binary") {
     if (!isLarge()) void showSummary(doc.path, { text: doc.source }, topUp);
     return;
@@ -1086,7 +1086,7 @@ function openHistory() {
     changed();
     void fileHistory.record(path, source, "restored");
     notice("Restored. Save to write it back to disk; the version you left is in History too.");
-  }, () => void showTopUp());
+  }, () => openCheckout("history"));
 }
 
 /** When each disk file was last seen to change, so the watcher reads it only when it moves. */

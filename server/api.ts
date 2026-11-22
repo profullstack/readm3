@@ -223,7 +223,8 @@ async function readBytes(request: Request, max: number): Promise<Uint8Array> {
   return bytes;
 }
 const buckets = new Map<string, { count: number; until: number }>();
-function limit(key: string, max = 30) {
+/** At most `max` a minute per key. The checkout page (server/checkout.ts) shares the top-up bucket. */
+export function limit(key: string, max = 30) {
   const stamp = Date.now();
   if (buckets.size > 10000)
     for (const [k, v] of buckets) if (v.until < stamp) buckets.delete(k);
@@ -238,6 +239,10 @@ function limit(key: string, max = 30) {
 function token(request: Request, origin: string) {
   const authorization = request.headers.get("authorization");
   if (authorization?.startsWith("Bearer ")) return authorization.slice(7);
+  return sessionCookie(request, origin);
+}
+/** The browser session's token, or "" when the request carries none. */
+export function sessionCookie(request: Request, origin: string) {
   const name = origin.startsWith("https:")
     ? "__Host-readm3_session"
     : "readm3_session";

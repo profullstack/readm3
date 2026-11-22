@@ -20,6 +20,7 @@ import { footerHtml } from "@profullstack/footer";
 import { COLUMNS as PROFILE_COLUMNS, PROFILE_ENHANCE_SCRIPT, renderProfileFields } from "@profullstack/profile";
 import { LANGUAGES } from "../src/code.ts";
 import { LEGAL_PATHS, privacyMain, termsMain } from "./legal.ts";
+import { CHECKOUT_PATH, CHECKOUT_SLOT } from "../server/checkout.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -174,9 +175,13 @@ function themeSwitch(): string {
   return `<div class="chips" role="group" aria-label="Color theme">${buttons}</div>`;
 }
 
-function shell(options: { title: string; description: string; path: string; main: string; jsonLd: unknown }): string {
+/**
+ * `app`: a signed-in page (the checkout), which carries its own `head` tags and nothing
+ * from another origin: no ad, no stats, no WebMCP embed, and it is not indexed.
+ */
+function shell(options: { title: string; description: string; path: string; main: string; jsonLd?: unknown; app?: boolean; head?: string }): string {
   // No ad unit on the home page or the legal pages.
-  const ads = options.path !== "/" && !(LEGAL_PATHS as readonly string[]).includes(options.path);
+  const ads = options.path !== "/" && !(LEGAL_PATHS as readonly string[]).includes(options.path) && !options.app;
   const canonical = options.path === "/" ? SITE : `${SITE}${options.path}`;
   return `<!doctype html>
 <html lang="en">
@@ -196,9 +201,10 @@ function shell(options: { title: string; description: string; path: string; main
 <meta property="og:url" content="${canonical}">
 <meta property="og:site_name" content="readm3">
 <meta name="twitter:card" content="summary">
-<script type="application/ld+json">${embedJson(options.jsonLd)}</script>
+${options.app ? `<meta name="robots" content="noindex">
+${options.head ?? ""}` : `<script type="application/ld+json">${embedJson(options.jsonLd)}</script>
 <!-- WebMCP (@profullstack/webmcp): tools for the AI agent in the visitor's browser -->
-<script type="module" data-webmcp src="https://cdn.jsdelivr.net/npm/@profullstack/webmcp@0/src/embed.js" data-mcp="/mcp" data-pages='{"editor":"/viewer","paste":"/paste","talk":"/talk","docs":"/docs","sharing":"/sharing"}'></script>
+<script type="module" data-webmcp src="https://cdn.jsdelivr.net/npm/@profullstack/webmcp@0/src/embed.js" data-mcp="/mcp" data-pages='{"editor":"/viewer","paste":"/paste","talk":"/talk","docs":"/docs","sharing":"/sharing"}'></script>`}
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -221,7 +227,7 @@ ${options.main}
 </main>
 ${FOOTER}
 <script src="/app.js" defer></script>
-<script data-site="${CP_PROJECT}" src="https://crawlproof.com/stats.js" async></script>
+${options.app ? "" : `<script data-site="${CP_PROJECT}" src="https://crawlproof.com/stats.js" async></script>`}
 ${!ads ? "" : `<script src="https://crawlproof.com/ad.js" async></script>`}
 </body>
 </html>
@@ -609,6 +615,20 @@ write("account/index.html", readFileSync(join(here, "assets/account.html"), "utf
   .replace("__PROFILE_SCRIPT__", profileScript)
   .replace("__SIGNUP_FIELDS__", renderProfileFields({ fields: profileFields, idPrefix: "signup-" }))
   .replace("__DETAILS_FIELDS__", renderProfileFields({ fields: profileFields, idPrefix: "details-", importOpenProfile: true })));
+// readm3.com/checkout (server/checkout.ts): the site page around the Add funds form. The
+// stylesheet and the one-file browser script are @profullstack/checkout's own, served
+// from here; the server puts the form where CHECKOUT_SLOT is, per request.
+const checkoutPackage = join(root, "node_modules/@profullstack/checkout");
+const checkoutCss = asset("checkout.css", `${readFileSync(join(checkoutPackage, "checkout.css"), "utf8")}\n${readFileSync(join(here, "assets/checkout.css"), "utf8")}`);
+const checkoutScript = asset("checkout.js", readFileSync(join(checkoutPackage, "dist/browser.js"), "utf8"));
+write("checkout/index.html", shell({
+  title: "Add funds | readm3",
+  description: "Add to your readm3 balance: pay as you go for AI summaries and storage over the free allowance.",
+  path: CHECKOUT_PATH,
+  main: CHECKOUT_SLOT,
+  app: true,
+  head: `<link rel="stylesheet" href="${checkoutCss}">\n<script type="module" src="${checkoutScript}"></script>`,
+}));
 const sharedCss = asset("styles.css", css);
 const adminCss = asset("admin.css", readFileSync(join(here, "assets/admin.css"), "utf8"));
 const adminBundle = await Bun.build({ entrypoints: [join(here, "admin.ts")], target: "browser", minify: true });

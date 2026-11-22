@@ -1,0 +1,23 @@
+/*
+ * readm3.com/checkout: @profullstack/checkout in the site's own colors. The site
+ * pages are dark whatever the system prefers, so every color is set here.
+ */
+.pfc {
+  --pfc-accent: var(--page-accent);
+  --pfc-accent-fg: var(--page-bg);
+  --pfc-fg: var(--page-fg);
+  --pfc-muted: var(--page-dim);
+  --pfc-card: var(--page-panel);
+  --pfc-border: var(--page-line);
+  --pfc-error: #ff8f8f;
+  --pfc-radius: 6px;
+  padding: 3rem 0 1.5rem;
+}
+.checkout-notes {
+  max-width: 24rem;
+  margin: 0 auto;
+  color: var(--page-dim);
+  font-size: 0.85rem;
+  text-align: center;
+}
+.checkout-notes p { margin: 0 0 0.6rem; }

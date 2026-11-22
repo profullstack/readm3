@@ -6,7 +6,7 @@
  */
 import { modal } from "./cloud.ts";
 import * as stored from "./blobs.ts";
-import { showTopUp } from "./history-panel.ts";
+import { openCheckout } from "./history-panel.ts";
 import { formatStorage, FREE_STORAGE_BYTES, MAX_ACCOUNT_FILES, MAX_BLOB_BYTES, STORAGE_MICROS_PER_GIB_MONTH } from "../src/blob-store.ts";
 
 export const LOCAL_FILES = 1000;
@@ -95,7 +95,7 @@ export function showUsage() {
     add.type = "button";
     add.className = "primary";
     add.textContent = "Add funds";
-    add.onclick = () => { box.close(); void showTopUp(); };
+    add.onclick = () => { box.close(); openCheckout("usage"); };
     actions.append(add);
   } else {
     const link = document.createElement("a");

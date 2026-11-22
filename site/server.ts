@@ -15,6 +15,7 @@ import { accountMailer } from "../server/account-mail.ts";
 import { HttpError, Store } from "../server/store.ts";
 import { PASTE_FILE_MAX_BYTES } from "../server/pastes.ts";
 import { createApi } from "../server/api.ts";
+import { CHECKOUT_PATH, createCheckoutPage } from "../server/checkout.ts";
 import { anthropicSummarizer, Billing, c0mputeSummarizer, DEFAULT_MODEL, DEFAULT_OPENAI_MODEL, DEFAULT_TTS_MODEL, DEFAULT_VOICE, elevenlabsSpeaker, fallbackSummarizer, FREE_DOCUMENTS_PER_WEEK, FREE_QUESTIONS_PER_DAY, openaiSummarizer, TTS_DAILY_CHARS, TTS_MICROS_PER_CHAR, type Speak, type Summarize } from "../server/billing.ts";
 import { Payments, paymentOptions, type PaymentOptions } from "../server/payments.ts";
 import { CoinPay } from "../server/coinpay.ts";
@@ -174,7 +175,19 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
     Number.isFinite(freePerWeek) && freePerWeek >= 0 ? freePerWeek : FREE_DOCUMENTS_PER_WEEK,
     speak, { voice, microsPerChar: setting("READM3_TTS_MICROS_PER_CHAR", TTS_MICROS_PER_CHAR), dailyChars: setting("READM3_TTS_DAILY_CHARS", TTS_DAILY_CHARS) });
   billing.freeQuestionsPerDay = setting("READM3_FREE_QUESTIONS_PER_DAY", FREE_QUESTIONS_PER_DAY);
-  const payments = new Payments(store, billing, options.payments ?? paymentOptions());
+  const paymentConfig = options.payments ?? paymentOptions();
+  const payments = new Payments(store, billing, paymentConfig);
+  // readm3.com/checkout: the Add funds page, inside the site page built for it (site/build.ts).
+  let payOrigin: string | undefined;
+  try { payOrigin = paymentConfig.url ? new URL(paymentConfig.url).origin : undefined; } catch { payOrigin = undefined; }
+  const checkoutPage = createCheckoutPage(store, { billing, payments }, accounts.origin, {
+    shell: async () => {
+      const frame = join(dist, "checkout", "index.html");
+      const { body } = await pageBody(frame, true);
+      return typeof body === "string" ? body : Bun.file(frame).text();
+    },
+    payOrigin,
+  });
   const coinpay = new CoinPay(store, accounts, options.coinpay);
   // Profullstack Pass: the smallest top-up pack, once per pass (server/pass.ts).
   coinpay.onPass = (userId, sub, pass) => {
@@ -283,6 +296,11 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
 
       // readm3.com/talk: Ask AI about your files, which is the editor with the Ask AI dialog open.
       if (url.pathname === "/talk") return new Response(null, { status: 302, headers: { location: "/viewer?ask=1" } });
+
+      // Add funds. The built page is only the frame, so its other spellings settle on /checkout.
+      if (/^\/checkout(?:\.html|\/index(?:\.html)?)$/.test(url.pathname)) return Response.redirect(`${url.origin}${CHECKOUT_PATH}${url.search}`, 308);
+      const checkoutResponse = await checkoutPage(request);
+      if (checkoutResponse) return checkoutResponse;
 
       // /p/<token>/raw is the paste's text, the address a curl or a "Raw" link wants.
       const rawPaste = url.pathname.match(/^\/p\/([A-Za-z0-9_-]{43})\/raw$/);

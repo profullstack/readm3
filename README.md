@@ -475,7 +475,7 @@ be restored. All of that is free and never leaves the device.
 
 **AI summaries** are the paid part: one click writes a short abstract of a version's
 change plus the specific edits. They are pay as you go from a prepaid balance (top up
-$5, $10 or $25 through CoinPay, in USDC, USDT, BTC, ETH, SOL or POL; the balance never
+$5, $10 or $25 at [readm3.com/checkout](https://readm3.com/checkout) through CoinPay, in USDC, USDT, BTC, ETH, SOL or POL; the balance never
 expires). Only the changed lines are sent, never the whole file. Each summary is charged
 at a multiple of what the model call cost; the multiple is a two-arm price experiment
 (2x or 4x), assigned once per account. A refused or failed call is not charged.

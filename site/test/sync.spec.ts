@@ -283,7 +283,10 @@ test("the header shows usage against the plan's limits, signed out and signed in
   await expect(dialog).toContainText("Free account");
   await expect(dialog).toContainText("$0.05 per GB a month");
   await expect(dialog).toContainText("Balance");
-  await expect(dialog.getByRole("button", { name: "Add funds" })).toBeVisible();
+  // Add funds is its own page, opened with where the buyer came from.
+  await dialog.getByRole("button", { name: "Add funds" }).click();
+  await expect(page).toHaveURL(/\/checkout\?source=usage$/);
+  await expect(page.getByRole("heading", { name: "Add funds" })).toBeVisible();
 });
 
 test("signed out, a file over 4 MB asks for a free account", async ({ page }) => {

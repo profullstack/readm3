@@ -117,52 +117,13 @@ export async function showHistory(path: string, restore: (source: string) => voi
   await paint();
 }
 
-/** Choose an amount, then pay with any coin or PayPal on CoinPay's page; the balance arrives by webhook. */
-export async function showTopUp(): Promise<void> {
-  let billing: Account & { topups: boolean; packs: number[] };
-  try { billing = await request("billing"); }
-  catch { location.href = `/account?next=${encodeURIComponent(location.pathname + location.search)}`; return; }
-  const box = document.createElement("dialog");
-  box.className = "history-dialog topup-dialog";
-  box.setAttribute("aria-label", "Add funds");
-  const per = billing.multiplier === 2 ? "twice" : `${billing.multiplier} times`;
-  box.innerHTML = `<div class="dialog-header"><h2>Add funds</h2><button type="button" aria-label="Close">×</button></div>
-    <p>Pay as you go, from one balance that never expires: storage over the free 5 GB is $0.05 per GB a month, and each AI summary costs ${per} what the AI call costs us, usually a fraction of a cent.</p>
-    <p class="history-account">Balance ${dollars(billing.balanceMicros)}</p>
-    <p class="history-account">Deposit $99 in your CoinPay wallet and get a free month: <a href="https://coinpayportal.com/pass" target="_blank" rel="noopener">CoinPay Pass</a> ($5 of credit when you sign in with CoinPay).</p>
-    <form><div class="topup-packs"></div><p class="history-account">Pay with BTC, ETH, SOL, USDC, USDT and more, or PayPal, on CoinPay.</p>
-    <p class="history-error" role="alert"></p><button class="primary-action" type="submit">Continue to CoinPay</button></form>`;
-  const packs = box.querySelector(".topup-packs")!;
-  billing.packs.forEach((usd, index) => {
-    const label = el("label", "topup-pack");
-    const input = document.createElement("input");
-    input.type = "radio";
-    input.name = "amount";
-    input.value = String(usd);
-    input.checked = index === 1;
-    label.append(input, ` $${usd}`);
-    packs.append(label);
-  });
-  const error = box.querySelector<HTMLElement>(".history-error")!;
-  const form = box.querySelector("form")!;
-  if (!billing.topups) { error.textContent = "Top-ups open soon."; form.querySelector("button")!.disabled = true; }
-  form.onsubmit = async (event) => {
-    event.preventDefault();
-    const data = new FormData(form);
-    const submit = form.querySelector("button")!;
-    submit.disabled = true;
-    try {
-      const created = await request<{ payUrl: string }>("billing/topups", "POST", { amountUsd: Number(data.get("amount")) });
-      location.href = created.payUrl;
-    } catch (cause) {
-      error.textContent = cause instanceof Error ? cause.message : "Could not start the payment.";
-      submit.disabled = false;
-    }
-  };
-  box.querySelector<HTMLButtonElement>(".dialog-header button")!.onclick = () => box.close();
-  box.addEventListener("close", () => box.remove());
-  document.body.append(box);
-  box.showModal();
+/**
+ * Add funds is its own page, /checkout (server/checkout.ts): choose an amount there, pay
+ * with any coin or PayPal on CoinPay's page, and the balance arrives by webhook.
+ * `source` says which part of the app sent the buyer.
+ */
+export function openCheckout(source: string): void {
+  location.href = `/checkout?source=${encodeURIComponent(source)}`;
 }
 
 /** Back from CoinPay with ?topup=<id>: wait for the webhook, then say what the balance is. */
