@@ -30,6 +30,7 @@ import { createHash } from "node:crypto";
 import { saveOpenProfileContact } from "@profullstack/profile";
 import { profiles } from "./profile.ts";
 import { passFromUserinfo, type Pass } from "./pass.ts";
+import { coinpayFetch } from "./coinpay-ua.ts";
 
 export const COINPAY_SCOPES = "openid profile email";
 const PROVIDER = "coinpay";
@@ -128,7 +129,7 @@ export class CoinPay {
   private async call(path: string, init: RequestInit) {
     let response: Response;
     try {
-      response = await fetch(`${this.url}/api/oauth/${path}`, {
+      response = await coinpayFetch(`${this.url}/api/oauth/${path}`, {
         ...init,
         redirect: "error",
         signal: AbortSignal.timeout(15_000),
