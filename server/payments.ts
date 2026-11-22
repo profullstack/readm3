@@ -99,7 +99,7 @@ export class Payments {
   }
 
   /** The account's verified email, else the email on a linked sign-in identity (CoinPay). */
-  private emailFor(user: User): string | null {
+  emailFor(user: User): string | null {
     const verified = this.store.get<{ email: string }>("SELECT email FROM account_emails WHERE userId=?", user.id);
     if (verified?.email) return verified.email;
     try {

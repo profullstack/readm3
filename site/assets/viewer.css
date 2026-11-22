@@ -232,10 +232,6 @@ html, body.reader-app { height: 100%; overflow: hidden; }
 .reader-app .history-actions small { color: var(--muted); }
 .reader-app .history-error { color: var(--danger); font-size: 12px; }
 .reader-app .history-empty { color: var(--muted); font-size: 13px; }
-.reader-app .topup-packs { display: flex; gap: 10px; margin: 8px 0 12px; }
-.reader-app .topup-pack { display: flex; gap: 6px; align-items: center; padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px; font: 14px var(--mono); }
-.reader-app .topup-dialog select { margin-left: 6px; }
-.reader-app .topup-dialog .primary-action { margin-top: 10px; }
 .reader-app .history-actions:empty { display: none; }
 .reader-app .summary-dialog { width: min(640px, calc(100vw - 32px)); }
 .reader-app .summary-dialog .summary-body, .reader-app .summary-dialog > p { padding: 0 18px; }

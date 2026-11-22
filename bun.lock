@@ -8,6 +8,7 @@
         "@modelcontextprotocol/sdk": "^1.32.2",
         "@profullstack/ai-providers": "0.1.2",
         "@profullstack/auth-system": "^0.8.3",
+        "@profullstack/checkout": "^0.1.2",
         "@profullstack/cli": "^0.1.0",
         "@profullstack/footer": "latest",
         "@profullstack/hqtui": "^0.11.1",
@@ -151,6 +152,8 @@
     "@profullstack/ai-providers": ["@profullstack/ai-providers@0.1.2", "", { "bin": { "ai-providers": "src/cli.js" } }, "sha512-nOcKaOhfcDM+RNruA4+znva5xXxI4HF77iqUCgieuou2w8yY8LIF2p5ajSVD4kzFtfIUjC7GhGV8eyOrliHg1w=="],
 
     "@profullstack/auth-system": ["@profullstack/auth-system@0.8.3", "", { "dependencies": { "bcryptjs": "^2.4.3", "jsonwebtoken": "^9.0.2", "uuid": "^11.1.0" }, "peerDependencies": { "@supabase/supabase-js": "^2.49.4", "mongodb": "^6.5.0", "mysql2": "^3.9.2", "pg": "^8.11.3", "pocketbase": "^0.21.1" }, "optionalPeers": ["@supabase/supabase-js", "mongodb", "mysql2", "pg", "pocketbase"] }, "sha512-goafDEaq8XDDCChfAfi8wvUxn1xMeGWXpr7XEH9czFU/eIq9PkehGRTy3d/YP2BGzO1iIxrTAb2m2eOMTMdYUA=="],
+
+    "@profullstack/checkout": ["@profullstack/checkout@0.1.2", "", { "peerDependencies": { "react": ">=18" }, "optionalPeers": ["react"] }, "sha512-aukshiCAbdK3fz+dxUrXefqnsVqWC/a2TGFrRVyprdx7HchRHoTi8nzlF/C0yRDtq+DiEfIABBQp4kfycNWRRA=="],
 
     "@profullstack/cli": ["@profullstack/cli@0.1.0", "", {}, "sha512-kX2mMvxsfsz89u3RIj2cGRIb89TUVUgwNO1rlTowPuHQrsStsOCNtz8KQ/VqPgJ2FjpfAj0CCQwCRgXaehPL5w=="],
 

@@ -43,7 +43,7 @@ export const isOAuthAccessToken = (token: string) => token.length > 43 && token.
 export const OAUTH_ACCESS_JOIN = "oauth_tokens t JOIN users u ON u.id=t.userId";
 export const OAUTH_ACCESS_WHERE = "t.tokenHash=? AND t.kind='access' AND t.revoked=0 AND t.expiresAt>?";
 /** Where a sign-in may send the browser afterwards: same-origin pages only. */
-export const SAFE_NEXT = /^\/(?:admin|viewer|account|oauth\/authorize)(?:\?|$)/;
+export const SAFE_NEXT = /^\/(?:admin|viewer|account|checkout|oauth\/authorize)(?:\?|$)/;
 /** A user may authenticate with a verified email, or with a linked identity. Email alone stays the only way to create one by mail. */
 export const VERIFIED_IDENTITY = "(EXISTS (SELECT 1 FROM account_emails ae WHERE ae.userId=u.id) OR EXISTS (SELECT 1 FROM user_identities ui WHERE ui.userId=u.id))";
 
