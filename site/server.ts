@@ -200,11 +200,13 @@ export function serveSite(options: { accounts?: Accounts; coinpay?: ConstructorP
   setInterval(() => { try { blobs.tick(); } catch (error) { console.error("readm3 storage charge:", error instanceof Error ? error.message : error); } }, 3600_000).unref();
   // `readm3 login`: OAuth 2.1 for the CLI (server/oauth.ts).
   const oauth = createOAuth(accounts);
-  const crawlGate = options.crawlGate !== undefined ? options.crawlGate : createCrawlGate();
-  // The document reader's meter: a free allowance, then an x402 pass (server/read-gate.ts).
-  const readGate = options.readGate !== undefined ? options.readGate : createReadGate(process.env, (token) => {
+  // Both gates exempt a signed-in browser only when its session verifies.
+  const verifySession = (token: string) => {
     try { return store.authenticate(token) ? true : false; } catch { return false; }
-  });
+  };
+  const crawlGate = options.crawlGate !== undefined ? options.crawlGate : createCrawlGate(process.env, verifySession);
+  // The document reader's meter: a free allowance, then an x402 pass (server/read-gate.ts).
+  const readGate = options.readGate !== undefined ? options.readGate : createReadGate(process.env, verifySession);
   return Bun.serve({
     port: listenPort,
     hostname: options.hostname ?? "0.0.0.0",

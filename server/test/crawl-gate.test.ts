@@ -9,7 +9,7 @@ const CHROME = {
   "sec-fetch-site": "none",
   "sec-fetch-dest": "document",
 };
-const gate = createCrawlGate({ COINPAY_X402_KEY: "cp_live_test", CRAWL_PAY_TO: "0xCC3b072391AE7A8d10cF00DdC5F61DB2cA5541E5" })!;
+const gate = createCrawlGate({ COINPAY_X402_KEY: "cp_live_test", CRAWL_PAY_TO: "0xCC3b072391AE7A8d10cF00DdC5F61DB2cA5541E5" }, (token) => token === "real")!;
 const ask = (path: string, headers: Record<string, string>) => gate.handle(new Request(`https://readm3.com${path}`, { headers }));
 
 describe("crawl gate", () => {
@@ -28,8 +28,12 @@ describe("crawl gate", () => {
   });
   test("passes browsers, signed-in users and the API", async () => {
     expect(await ask("/", CHROME)).toBeNull();
-    expect(await ask("/", { "user-agent": GPT, cookie: "__Host-readm3_session=x" })).toBeNull();
+    expect(await ask("/", { "user-agent": GPT, cookie: "__Host-readm3_session=real" })).toBeNull();
     expect(await ask("/api/health", { "user-agent": GPT })).toBeNull();
+  });
+  test("a forged session cookie does not exempt GPTBot", async () => {
+    expect((await ask("/", { "user-agent": GPT, cookie: "__Host-readm3_session=forged" }))?.status).toBe(402);
+    expect((await ask("/", { "user-agent": GPT, cookie: "readm3_session=forged" }))?.status).toBe(402);
   });
   test("leaves the privacy policy and terms open to every crawler", async () => {
     const CLAUDE = "Mozilla/5.0 (compatible; ClaudeBot/1.0; +claudebot@anthropic.com)";
