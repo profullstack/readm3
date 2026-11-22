@@ -21,6 +21,8 @@ ENV READM3_URL=https://readm3.com
 COPY --from=builder --chown=bun:bun /app/site/dist ./site/dist
 COPY --from=builder --chown=bun:bun /app/site/server.ts ./site/server.ts
 COPY --from=builder --chown=bun:bun /app/server ./server
+# package.json only for the version in the CoinPay User-Agent (server/coinpay-ua.ts).
+COPY --from=builder --chown=bun:bun /app/package.json ./package.json
 # Only the src modules the server imports at runtime: sync-api needs sync-schema, and
 # pastes needs code.ts (language detection; its one dependency, highlight.js, is in node_modules),
 # and billing needs diff.ts (the AI summary is asked about the changed lines).

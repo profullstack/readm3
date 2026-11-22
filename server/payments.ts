@@ -15,6 +15,7 @@
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Billing } from "./billing.ts";
+import { coinpayFetch } from "./coinpay-ua.ts";
 import { HttpError, id, now, type Store, type User } from "./store.ts";
 
 export const TOPUP_SCHEMA = `
@@ -63,7 +64,7 @@ export class Payments {
     const email = this.emailFor(user);
     if (!email) throw new HttpError(400, "Add an email to your account to top up.");
     const topupId = id();
-    const response = await fetch(`${this.options.url}/api/checkout/sessions`, {
+    const response = await coinpayFetch(`${this.options.url}/api/checkout/sessions`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.options.apiKey}`, "content-type": "application/json" },
       body: JSON.stringify({

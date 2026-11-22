@@ -11,6 +11,7 @@
  * without them the free allowance still applies and running out is still a 402.
  */
 import { createGateway } from "@profullstack/x402-gateway";
+import { coinpayFetch } from "./coinpay-ua.ts";
 
 export const READ_PATHS = ["/api/v1/read", "/mcp"];
 
@@ -35,6 +36,8 @@ export function createReadGate(
     siteName: "readm3 reader",
     ...(apiKey ? { coinpay: { apiKey } } : {}),
     ...(payTo ? { payTo } : {}),
+    // x402-gateway 0.16 has no User-Agent of its own; this names the app to CoinPay.
+    fetch: coinpayFetch,
     priceCents: number(env.READM3_READ_PRICE_CENTS, 100),
     path: "/read/pass",
     contact: "mailto:anthony@profullstack.com",

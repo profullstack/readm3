@@ -8,6 +8,7 @@
  * self-hosted server never sells.
  */
 import { createGateway } from "@profullstack/x402-gateway";
+import { coinpayFetch } from "./coinpay-ua.ts";
 
 export type CrawlGate = { handle: (request: Request) => Promise<Response | null> };
 
@@ -20,6 +21,8 @@ export function createCrawlGate(env: Record<string, string | undefined> = proces
     siteName: "readm3",
     coinpay: { apiKey },
     payTo,
+    // x402-gateway 0.16 has no User-Agent of its own; this names the app to CoinPay.
+    fetch: coinpayFetch,
     contact: "mailto:anthony@profullstack.com",
     // The legal pages stay readable by every crawler: a connector directory's review bot reads them.
     openPaths: ["/api/", "/oauth/", "/llms.txt", "/privacy", "/terms", "/privacy/", "/terms/", "/privacy.html", "/terms.html"],
